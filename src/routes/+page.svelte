@@ -5,6 +5,7 @@
   import { ArrowRight, CalendarClock, ChevronRight, Layers, Tag } from '@lucide/svelte';
   import Badge from '$lib/components/atoms/Badge.svelte';
   import Button from '$lib/components/atoms/Button.svelte';
+  import type { TopicSchema } from '$lib/content/schema';
   import type { HomeData } from './+page.server';
 
   let { data }: { data: HomeData } = $props();
@@ -59,8 +60,19 @@
 
   const recentTopics = $derived(data.allTopics.slice(0, 5));
 
-  function topicCount(subcategory: string): number {
-    return data.topicsBySubcategory[subcategory]?.length ?? 0;
+  const visibleTopicsBySubcategory = $derived(
+    visibleTopics.reduce<Record<string, TopicSchema[]>>((acc, t) => {
+      (acc[t.subcategory] ??= []).push(t);
+      return acc;
+    }, {})
+  );
+
+  const visibleSubcategoryNames = $derived(
+    subcategoryNames.filter((name) => (visibleTopicsBySubcategory[name]?.length ?? 0) > 0)
+  );
+
+  function visibleCount(subcategory: string): number {
+    return visibleTopicsBySubcategory[subcategory]?.length ?? 0;
   }
 
   function setTag(tag: string): void {
@@ -128,45 +140,60 @@
     {/if}
   </p>
 
-  {#each categoryOrder as category (category)}
-    <h3 id={category} class="mt-8 scroll-mt-24 text-lg font-semibold text-text">
-      {CATEGORY_LABELS[category]}
-    </h3>
-    <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {#each subcategoryNames.filter(
-        (name) => data.topicsBySubcategory[name]?.[0]?.category === category
-      ) as name (name)}
-        {@const topics = data.topicsBySubcategory[name] ?? []}
-        <article
-          class:ring-2={urlFilter === name}
-          class:ring-accent={urlFilter === name}
-          class="flex flex-col rounded-xl border border-border bg-surface p-4 transition-colors hover:border-accent/60"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <h4 class="font-mono text-base font-semibold text-text" translate="no">{name}</h4>
-            <Badge label={`${topicCount(name)} topics`} tone="neutral" />
-          </div>
-          <ul class="mt-3 flex flex-1 flex-col gap-0.5">
-            {#each topics as topic (topic.id)}
-              <li>
-                <a
-                  href={`/${topic.category}/${topic.subcategory}/${topic.id}/`}
-                  class="group flex min-h-11 items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-text-muted transition-colors hover:bg-canvas hover:text-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
-                  data-sveltekit-preload-data="hover"
-                >
-                  <span class="min-w-0 truncate">{topic.title}</span>
-                  <ChevronRight
-                    class="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                    aria-hidden="true"
-                  />
-                </a>
-              </li>
-            {/each}
-          </ul>
-        </article>
-      {/each}
+  {#if visibleTopics.length > 0}
+    {#each categoryOrder as category (category)}
+      {@const namesInCategory = visibleSubcategoryNames.filter(
+        (name) => (visibleTopicsBySubcategory[name]?.[0]?.category ?? 'frontend') === category
+      )}
+      {#if namesInCategory.length > 0}
+        <h3 id={category} class="mt-8 scroll-mt-24 text-lg font-semibold text-text">
+          {CATEGORY_LABELS[category]}
+        </h3>
+        <div class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {#each namesInCategory as name (name)}
+            {@const topics = visibleTopicsBySubcategory[name] ?? []}
+            <article
+              class:ring-2={urlFilter === name}
+              class:ring-accent={urlFilter === name}
+              class="flex flex-col rounded-xl border border-border bg-surface p-4 transition-colors hover:border-accent/60"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <h4 class="font-mono text-base font-semibold text-text" translate="no">{name}</h4>
+                <Badge label={`${visibleCount(name)} topics`} tone="neutral" />
+              </div>
+              <ul class="mt-3 flex flex-1 flex-col gap-0.5">
+                {#each topics as topic (topic.id)}
+                  <li>
+                    <a
+                      href={`/${topic.category}/${topic.subcategory}/${topic.id}/`}
+                      class="group flex min-h-11 items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-text-muted transition-colors hover:bg-canvas hover:text-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                      data-sveltekit-preload-data="hover"
+                    >
+                      <span class="min-w-0 truncate">{topic.title}</span>
+                      <ChevronRight
+                        class="h-4 w-4 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                        aria-hidden="true"
+                      />
+                    </a>
+                  </li>
+                {/each}
+              </ul>
+            </article>
+          {/each}
+        </div>
+      {/if}
+    {/each}
+  {:else}
+    <div class="mt-8 rounded-xl border border-dashed border-border bg-surface p-8 text-center">
+      <p class="text-sm text-text-muted">No topics found matching this filter.</p>
+      <a
+        href="/"
+        class="mt-3 inline-flex min-h-11 items-center rounded-md border border-border bg-canvas px-4 py-2 text-sm font-medium text-text transition-colors hover:border-accent hover:text-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+      >
+        Reset filter
+      </a>
     </div>
-  {/each}
+  {/if}
 </section>
 
 <!-- Concept matrix -->

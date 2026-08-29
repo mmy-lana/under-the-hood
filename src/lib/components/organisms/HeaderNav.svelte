@@ -1,5 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { browser } from '$app/environment';
+  import { page } from '$app/state';
   import { Menu, Search, Wrench } from '@lucide/svelte';
   import IconButton from '$lib/components/atoms/IconButton.svelte';
   import ThemeToggle from '$lib/components/atoms/ThemeToggle.svelte';
@@ -14,6 +16,8 @@
   let { onnav, onsearch }: HeaderNavProps = $props();
 
   const subcategoryNames = Object.keys(topicsBySubcategory).sort();
+
+  const currentFilter = $derived(browser ? (page.url.searchParams.get('filter') ?? 'all') : 'all');
 
   function onFilterChange(event: Event): void {
     const value = (event.currentTarget as HTMLSelectElement).value;
@@ -66,6 +70,7 @@
         <span class="sr-only">Filter topics by framework</span>
         <select
           class="min-h-11 rounded-md border border-border bg-surface px-2 py-2 text-sm text-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+          value={currentFilter}
           onchange={onFilterChange}
           aria-label="Filter topics by framework"
         >
