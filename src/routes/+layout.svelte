@@ -58,9 +58,9 @@
 <div id="app-shell">
   <HeaderNav onnav={openDrawer} onsearch={openSearch} />
 
-  <div class="mx-auto flex max-w-screen-2xl px-3 sm:px-4">
+  <div class="mx-auto flex max-w-screen-2xl gap-6 px-3 sm:px-4 xl:gap-8">
     <SidebarToC topics={allTopics} activeId={activeId} open={drawerOpen} onclose={closeDrawer} />
-    <main id="main" tabindex="-1" class="min-w-0 flex-1 py-6 sm:py-8">
+    <main id="main" tabindex="-1" class="min-w-0 flex-1 px-1 py-6 sm:px-2 sm:py-8">
       {@render children()}
     </main>
   </div>
