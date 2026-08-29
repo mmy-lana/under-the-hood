@@ -1,0 +1,58 @@
+{
+  "id": "snippet-vs-slots",
+  "title": "Svelte 5 snippets vs slots",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (snippets stable)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["svelte", "snippets", "slots", "composition", "svelte5", "templates"],
+  "prerequisites": ["Svelte component basics", "Experience with named/default slots in Svelte 4"],
+  "progressiveExplaining": {
+    "eli5": "A slot is like a blank sticker space on a gift box: the box maker decides where stickers can go, and you can only put stickers in those exact spots. A snippet is like handing the box maker a recipe card that says 'wherever you need a header, here is how to draw mine' — the card can be passed to any room, reused in three places, and even folded up and mailed to another workshop (a function). Slots are fixed holes; snippets are portable instructions.",
+    "junior": "Slots let a parent project content into a child: <Card><p>hello</p></Card> fills Card's default <slot />. Snippets change the model: the child declares {@render header()} where it wants content, and the parent defines {#snippet header()}...{/snippet} and passes it as header. Snippets are first-class values: you can pass multiple named ones, reuse one snippet in several places inside the child, and even pass a snippet to a snippet ({@render} with args — parameterized content like {#snippet row(item)}). With snippets you can pass snippets from one component to another as props, which slots could not do cleanly.",
+    "senior": "Architecturally, snippets remove the slot compiler machinery: Svelte 4 compiled slots into a special slot object on the component instance with its own $$slot handling and fallback logic; snippets compile to plain functions in the parent scope that are passed as regular props. This makes content projection a normal data-flow relationship: the child just calls a function. Consequences: snippets are typed (you can type their parameters), they are easier to unit-test (they are just functions), they compose with control flow ({#each} with a row snippet), and they eliminate the slot forwarding dance ($$slots checks, passing slots through wrapper components). The trade-off is explicitness — every render site must be declared with {@render}.",
+    "underTheHood": "The Svelte 5 compiler lowers {#snippet name(args)} into a function declaration in the component's output scope, and {@render name(args)} into a call expression with the current scope bound as the function's context. Since snippets are just functions, they are passed as props into the child component's render and can close over the parent's reactive state — which is why a snippet re-renders when the parent state it reads changes. Under runes, the snippet body compiles like any template block: reads of $state sources inside it register dependencies, and the DOM statements inside re-run through the same signal invalidation as inline template code. The legacy slot implementation, by contrast, created a slot proxy object per component with default-slot resolution in the child's mount phase."
+  },
+  "rosettaStone": {
+    "react": "// React: children props and render props\n<Card header={(h) => <h2>{h}</h2>}>…</Card>",
+    "angular": "// Angular: <ng-content> for slots; <ng-template> + ngTemplateOutlet\n// for passable content fragments",
+    "vue": "// Vue: <slot> for projection; scoped slots via\n// <template #default=\"{ item }\"> for parameterized content",
+    "svelte": "{#snippet header()}<h2>Title</h2>{/snippet}\n<Card {header} />"
+  },
+  "codeComparison": {
+    "title": "Named slots vs snippets with parameters",
+    "summary": "Slots only pass markup into fixed holes; snippets are functions that can take arguments, be reused, and be forwarded — enabling parameterized row rendering.",
+    "legacyOrBad": {
+      "label": "Svelte 4 slots",
+      "snippet": "<Card>\n  <svelte:fragment slot=\"footer\">\n    <p>Done</p>\n  </svelte:fragment>\n</Card>",
+      "fullFile": {
+        "filename": "ListWithSlots.svelte",
+        "language": "svelte",
+        "code": "<script>\n  export let items = [];\n  export let title = 'List';\n</script>\n\n<!-- Svelte 4: the slot is a fixed hole. The parent can pass\n     markup, but the child cannot call it with per-item data,\n     so per-row customization requires a second round-trip\n     (a slot per row, or props drilled into a row component). -->\n<section>\n  <h2>{title}</h2>\n  <ul>\n    {#each items as item}\n      <li>\n        <slot name=\"row\" item={item}>\n          {item}\n        </slot>\n      </li>\n    {/each}\n  </ul>\n  <footer>\n    <slot name=\"footer\"><small>default footer</small></slot>\n  </footer>\n</section>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Svelte 5 snippets",
+      "snippet": "{#snippet row(item)}<li><strong>{item.name}</strong></li>{/snippet}\n<List {items} {row} />",
+      "fullFile": {
+        "filename": "ListWithSnippets.svelte",
+        "language": "svelte",
+        "code": "<script lang=\"ts\">\n  interface ListProps {\n    items: Array<{ id: number; name: string }>;\n    row: (item: { id: number; name: string }) => unknown;\n  }\n\n  let { items, row }: ListProps = $props();\n</script>\n\n<!-- Snippets are plain functions passed as props: the child\n     calls {@render row(item)} with real data, and the same\n     snippet can be rendered in several places. -->\n<ul>\n  {#each items as item (item.id)}\n    {@render row(item)}\n  {/each}\n</ul>\n\n<!-- Parent usage:\n  <script>\n    import List from './ListWithSnippets.svelte';\n    let items = [\n      { id: 1, name: 'Ada' },\n      { id: 2, name: 'Grace' }\n    ];\n  </script>\n\n  {#snippet row(item)}\n    <li><strong>{item.name}</strong></li>\n  {/snippet}\n\n  <List {items} {row} /> -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What can snippets do that slots cannot, and what does that mean for the component API design?",
+      "contextIntro": "This checks whether the candidate understands content projection as data flow, not just 'a nicer syntax for slots'.",
+      "detailedAnswer": "Snippets are functions: they can take parameters (so a list can call the same snippet per item with real data), be rendered multiple times, be forwarded through wrapper components as ordinary props, and be typed. Slots were fixed, named holes that required a slot-proxy mechanism and special forwarding ($$slots, slot inheritance) to pass through wrappers. With snippets, a component's content contract becomes an explicit, typed prop list, which makes the API introspectable, testable, and safe to refactor. The design consequence is that libraries move from 'slot conventions' to 'documented snippet props', and composition such as higher-order layouts becomes plain function passing.",
+      "trapWarning": "The naive answer is 'snippets are just named slots'. They are a different mechanism: slots are a runtime projection mechanism with a slot object; snippets are compiled-down function props called with {@render}. Also, candidates often claim snippets replaced slots entirely — Svelte 5 still supports <slot> for compatibility, but new code uses snippets, and the slot mechanism is legacy. Mentioning parameterized rendering ({#snippet row(item)}) as the genuinely new capability is the differentiator."
+    },
+    {
+      "question": "Why are snippets passed as props able to stay reactive to the parent's state even inside the child?",
+      "contextIntro": "This targets the compiled data-flow model: the interviewer wants to know what a snippet closes over and how the signal graph connects parent and child.",
+      "detailedAnswer": "A snippet is a function declared in the parent component's scope; the compiler lowers it to a function that closes over the parent's reactive state (its $state sources) and DOM update instructions. When the parent passes that function to the child and the child renders it with {@render}, the execution context is still the parent's scope — reads of the parent's $state inside the snippet body register dependencies against those sources, and the DOM statements in the snippet re-run when those sources change, regardless of which component called {@render}. That is why a snippet's content updates with the parent's state even though it renders inside the child's tree: reactivity follows the function's closure, not the render location.",
+      "trapWarning": "The trap answer is 'snippets are reactive because the child re-renders'. The child does not re-run the snippet; the snippet's own dependencies drive its updates. Another trap: claiming snippets are re-created on every parent render like inline arrow functions in React — the compiler hoists and caches the snippet function per component instance, so it is not a per-render allocation. Candidates who describe the closure-over-parent-scope model demonstrate the real understanding."
+    }
+  ]
+}

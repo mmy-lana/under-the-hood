@@ -1,0 +1,53 @@
+{
+  "id": "tokio-runtime-work-stealing",
+  "title": "Tokio runtime: work stealing and task scheduling",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Tokio 1.x",
+  "lastUpdated": "2026-08-29",
+  "tags": ["rust", "tokio", "async", "runtime", "work-stealing", "scheduler"],
+  "prerequisites": ["Rust async/await basics", "Familiarity with Tokio's multi-threaded runtime",
+    "tokio::main macro usage"],
+  "progressiveExplaining": {
+    "eli5": "A kitchen with several chefs (worker threads) and a shared order board. Each chef has a small personal stack of tickets in front of them (their local queue) and works through it. When a chef's stack is empty, he doesn't stand idle — he walks over to the busiest chef's stack and pulls tickets from the bottom, so no one is overworked while another loafs. The tickets themselves are the async tasks, and the oven timers (timers) plus the door bell (I/O events) decide when a ticket becomes ready to work again.",
+    "junior": "#[tokio::main] async fn main() starts a Tokio runtime. The multi-threaded runtime (default with the rt-multi-thread feature) spawns one worker thread per core, each with its own task queue, and work-stealing balances load. spawn(async { ... }) schedules a task; await points yield control back to the runtime; timers (tokio::time) and I/O (tokio::net, tokio::fs) integrate with the reactor. The single-threaded runtime (flavor = \"current_thread\") is the lightweight option for CPU-bound or simple I/O programs. Tasks are Send because the runtime may move them across worker threads — that is why spawned futures must be Send + 'static.",
+    "senior": "Architecturally, Tokio is an M:N scheduler over OS threads: many async tasks (cheap state machines) multiplexed onto a handful of workers. Each worker has a local run queue; when it empties, it steals from other workers' queues (LIFO/FIFO rules: a worker processes its own queue LIFO for cache locality and steals FIFO from others). The runtime separates the scheduler (the executor) from the reactor (I/O readiness), which is why you can swap drivers or run multiple runtimes. The cross-thread spawn path locks the destination queue and pushes; wakeups go through a shared ready queue with a synchronization guard. Task cancellation via dropping the JoinHandle is what makes Tokio's model different from a thread pool — dropping a task just stops polling it; it is not forcibly preempted.",
+    "underTheHood": "The multi-threaded runtime is built from worker threads each running a run loop: pop a task from the local queue (LIFO), else steal from another worker's queue (FIFO), else wait on the shared synchronization primitive. Each worker holds a Rc-like task reference and polls the future; when the future returns Pending, the waker (a raw pointer into the task's state machine) is registered with the reactor (mio-based) for I/O or the timer wheel for deadlines, and the task is parked. On readiness, the reactor schedules the task's waker, which enqueues the task into the ready queue of the worker that owns it (or the global queue if the task is shared). The timer implementation uses a hierarchical hashed timing wheel, and I/O uses epoll/kqueue through mio, with an I/O driver thread (or one per worker) collecting events. The stealing is implemented in the runtime's shared scheduler (a hybrid of a global queue and per-worker local queues protected by locks)."
+  },
+  "codeComparison": {
+    "title": "Blocking a worker thread vs proper async spawn",
+    "summary": "Synchronous blocking inside async code stalls the whole worker; delegating the blocking call to spawn_blocking keeps the scheduler responsive.",
+    "legacyOrBad": {
+      "label": "Blocking inside async",
+      "snippet": "async fn handle() {\n  std::thread::sleep(Duration::from_millis(500)); // blocks the worker\n  process(&data);\n}",
+      "fullFile": {
+        "filename": "src/main.rs",
+        "language": "rust",
+        "code": "use std::thread;\nuse std::time::{Duration, Instant};\n\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {\n    // A synchronous blocking sleep inside an async task BLOCKS the\n    // entire worker thread: no other task scheduled on this worker\n    // makes progress for 500ms. With 4 workers, 4 concurrent\n    // blocking calls stall all cores — the runtime cannot preempt.\n    let start = Instant::now();\n    thread::sleep(Duration::from_millis(500));\n    println!(\"blocked the worker for {:?}\", start.elapsed());\n\n    // The same applies to sync file/socket reads and mutexes held\n    // across awaits — anything that parks the OS thread, not the\n    // async task. See main.rs in the \"good\" version for the fix.\n    Ok(())\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "spawn_blocking delegation",
+      "snippet": "let data = tokio::task::spawn_blocking(|| fs::read(\"big.bin\")).await??;",
+      "fullFile": {
+        "filename": "src/main.rs",
+        "language": "rust",
+        "code": "use std::fs;\nuse tokio::task;\n\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {\n    // spawn_blocking hands the synchronous work to a dedicated\n    // blocking thread pool, so the async worker threads keep\n    // polling tasks. The JoinHandle awaits the blocking result\n    // without stalling the scheduler.\n    let data = task::spawn_blocking(|| fs::read(\"big.bin\")).await??;\n\n    // The same rule applies to any CPU-heavy synchronous work:\n    // use spawn_blocking for blocking I/O and CPU crunch, or\n    // better, use the async versions (tokio::fs::read) which\n    // delegate to the blocking pool internally.\n    let data2 = tokio::fs::read(\"big.bin\").await?;\n\n    assert_eq!(data.len(), data2.len());\n    Ok(())\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if you call a blocking function inside an async task on the multi-threaded runtime?",
+      "contextIntro": "This is the first real-world Tokio pitfall — the interviewer wants the scheduler mechanics (worker starvation), not just 'don't block'.",
+      "detailedAnswer": "A blocking call (std::fs::read, std::net::TcpStream read, thread::sleep, a lock held across an await) occupies the worker thread for its duration. Tokio cannot preempt the task — it is cooperative — so all other tasks scheduled on that worker stop making progress; with the default worker-per-core setup, N simultaneous blocking calls can stall the entire runtime (the reactor thread still processes events, but polled tasks starve). Tokio detects long-blocking threads (after a 100ms-ish threshold it can grow or emit a warning via the blocking pool heuristic) but it cannot fix it. The correct pattern is tokio::fs/tokio::net or spawn_blocking for CPU/blocking work.",
+      "trapWarning": "The trap answer is 'the task will be moved to another thread'. Tasks are not migrated while running — they are only migrated between polls, and a blocked task cannot be polled. Another trap: 'std sleeps are fine because they're short' — any blocking in a hot task skews latency for co-located tasks. Candidates who name the cooperative-polling model and spawn_blocking show they understand why this is a scheduling property, not a style preference."
+    },
+    {
+      "question": "How does work stealing keep all cores busy, and what makes Tokio different from a plain thread pool?",
+      "contextIntro": "The interviewer wants the queueing model (local queues, LIFO/FIFO, stealing) and the async-specific semantics (wakeups, cancellation, Send bounds).",
+      "detailedAnswer": "Each worker has a local run queue. It pops its own tasks LIFO (the most recently spawned is most likely to be cache-hot); when empty, it steals from another worker's queue FIFO (the least recently added, minimizing contention with the owner). If all queues are empty, the worker parks until a waker enqueues something. Unlike a thread pool, tasks are state machines resumed by wakers — a blocked-on-I/O task is not occupying any thread at all, and dropping its JoinHandle simply stops polling it. The Send bound on spawned tasks exists because stealing can move a task to another worker's thread, so the future's captured state must be safe to move across threads.",
+      "trapWarning": "The naive answer is 'Tokio spawns a thread per task'. It is M:N — many tasks per worker thread. Another trap: 'cancellation preempts the task' — dropping a task does not interrupt currently-running code; it stops future polls, so a cancelled task that is mid-await just stops being driven. Candidates who describe LIFO/FIFO stealing asymmetry and the waker/reactor handoff demonstrate the real architecture."
+    }
+  ]
+}

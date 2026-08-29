@@ -1,0 +1,58 @@
+{
+  "id": "v-memo-dom-skip",
+  "title": "Vue v-memo: skipping DOM patch work",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.2+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["vue", "v-memo", "rendering", "virtual-dom", "patch", "performance"],
+  "prerequisites": ["Vue template basics", "Basic understanding of the virtual DOM patch process"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a teacher taking attendance. Every morning she calls every student's name one by one, even the forty kids who were here yesterday and will be here today. v-memo is like a note she writes on each desk: 'This student was here and nothing about them changed — skip them.' On the next call, she only looks at the few desks without a note. She still checks the note every time, but she skips the slow part — asking each kid forty questions.",
+    "junior": "v-memo=\"[deps]\" tells Vue: if every value in the deps array is identical (Object.is) since the last render, reuse the rendered virtual nodes of this block and skip the diff/patch entirely. Typical usage: v-for with v-memo=\"[item.id, item.updatedAt]\" so a row only re-renders when its own data changed: <div v-for=\"item in items\" :key=\"item.id\" v-memo=\"[item.id, item.updatedAt]\">. The deps array is compared with shallow equality against the previous render's values. When a dependency changes, the whole block re-renders and the memo caches the new values.",
+    "senior": "Architecturally, v-memo is a patch-level bailout: when deps are unchanged, Vue skips the createVNode/patch recursive walk for that subtree entirely — no new vnodes, no diff, no DOM reads or writes for that block. This is a different lever from memoized components (which bail at the component boundary by comparing props); v-memo operates at the template block level and is especially useful inside v-for, where per-row components would be overkill or where rows are cheap but numerous. The trade-off is correctness: the memo condition is your responsibility. Any value that affects the subtree must be listed, or you get stale DOM — the classic trap is forgetting to include the reactive source that the block reads, so the UI stops updating.",
+    "underTheHood": "In the compiled render function, v-memo becomes an argument to createBlock or to the openBlock/block setup: the compiler emits the memo deps array as a runtime argument to the block's patch flag (PatchFlags.BAIL / dynamic props handling). At patch time, Vue's baseCreateRenderer compares the memoized deps (stored on the block vnode as patchFlag & shape) with the new deps using isMemoSame (a loop of Object.is comparisons). If equal, the vnode is reused as-is (the old vnode is returned and patching stops); if different, the normal mount/patch path runs and the memo is updated. Inside v-for, this effectively creates per-row memo slots in the fragment's dynamic children list, so unchanged rows cost one small array compare per row instead of a subtree diff."
+  },
+  "rosettaStone": {
+    "react": "// memo() on the row component compares props shallowly\nconst Row = memo(RowView);\n// or skip work in the parent with useMemo for the list",
+    "angular": "// Angular: track in @for + OnPush; rows only re-check\n// when their signals/props change",
+    "vue": "<div v-for=\"item in items\" :key=\"item.id\"\n     v-memo=\"[item.id, item.updatedAt]\">…</div>",
+    "svelte": "// Svelte compiles per-component granular updates —\n// no manual row memoization needed"
+  },
+  "codeComparison": {
+    "title": "Large list without v-memo vs with v-memo",
+    "summary": "Without v-memo every render re-diffs all rows; with v-memo each row costs one shallow compare of its memo deps when nothing changed.",
+    "legacyOrBad": {
+      "label": "Full re-diff",
+      "snippet": "<div v-for=\"item in items\" :key=\"item.id\">\n  <p>{{ item.title }}</p>\n</div>",
+      "fullFile": {
+        "filename": "Feed.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  // Every tick touches only the first item, but the entire\n  // list is re-diffed: 1000 rows of vnode creation + patch.\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "v-memo per row",
+      "snippet": "<div v-for=\"item in items\" :key=\"item.id\"\n     v-memo=\"[item.id, item.likes]\">\n  <p>{{ item.title }}</p>\n</div>",
+      "fullFile": {
+        "filename": "Feed.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li\n      v-for=\"item in items\"\n      :key=\"item.id\"\n      v-memo=\"[item.id, item.likes]\"\n    >\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>\n\n<!-- Only the row whose [id, likes] changed is patched; the\n     other 999 rows skip vnode creation and diff entirely. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "When is v-memo the wrong tool compared to component-level memoization?",
+      "contextIntro": "Interviewers use this to check whether the candidate understands the two bailout levels in Vue: component props comparison vs template-block memo.",
+      "detailedAnswer": "v-memo skips the vnode diff for a template block; memoized components skip the whole component render when props are shallowly equal. If the row itself is a component with expensive setup/effects, memo() on the component is the better lever because it avoids re-running the render function and lifecycle entirely. v-memo shines for large flat lists of cheap rows where component overhead per row would itself be wasteful. The wrong use is putting v-memo around a block that reads many reactive sources — the deps array grows, the compare cost approaches the patch cost, and you risk stale output if you miss a source.",
+      "trapWarning": "The trap answer is 'v-memo is like memo()'. They operate at different layers — one is a template patch optimization, the other is a component render bailout — and v-memo has a correctness hazard memo() does not: memo() compares props automatically, while v-memo trusts your deps array completely. Missing a dependency silently freezes that part of the UI, which is the failure interviewers want you to name."
+    },
+    {
+      "question": "What happens under the hood when v-memo's deps match — what exactly is skipped?",
+      "contextIntro": "This targets mechanical understanding of the renderer: does the candidate know the difference between vnode creation, diffing, and DOM patching?",
+      "detailedAnswer": "When isMemoSame returns true, the renderer returns the old block vnode and skips the entire mount/patch branch for that subtree: no new vnodes are created, the diff (patchChildren with keyed or unkeyed comparison) never runs, and no DOM insert/update/remove is performed. The vnode is also marked so nested dynamic children are not re-traversed. The one cost that remains is the deps comparison itself — a shallow loop of Object.is over the array — which is O(deps) and trivially cheap. So a 1000-row list with one changed row costs 999 small array compares plus one real patch, versus 1000 full row patches.",
+      "trapWarning": "The classic misunderstanding is that v-memo 'prevents re-renders of the component'. The component's render function still runs on parent updates (it must, to evaluate the deps array); only the subtree patch is skipped. Another trap: claiming it skips the reactive effect — v-memo does not change reactivity at all; it changes the renderer's patch decision. Candidates who say 'the reactive effect doesn't run' reveal they conflate the render/patch pipeline with reactivity tracking."
+    }
+  ]
+}

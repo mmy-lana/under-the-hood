@@ -1,0 +1,52 @@
+{
+  "id": "bean-lifecycle-proxies",
+  "title": "Spring bean lifecycle and proxies",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Framework 6.x / Boot 3.x",
+  "lastUpdated": "2026-08-29",
+  "tags": ["spring", "springboot", "ioc", "proxy", "aop", "bean-lifecycle"],
+  "prerequisites": ["Spring Boot basics", "Understanding of dependency injection and annotations"],
+  "progressiveExplaining": {
+    "eli5": "A hotel hires a concierge who has a master key to every room. When a guest asks for a service (a bean), the concierge doesn't hand over the key — he fetches the room's card, wraps it in a special envelope, and only then hands it over. If someone later asks the envelope for the same service, the concierge can check the guest's permissions first. The envelope is the proxy: same card inside, but every request now passes through a front desk. Some rooms (singletons) keep the same card forever; others (prototypes) get a fresh card every time someone asks.",
+    "junior": "Spring creates beans via the ApplicationContext: @Component/@Service/@Repository classes are instantiated, dependencies injected, then post-processed. The bean lifecycle is: instantiation → populate properties → @PostConstruct / InitializingBean.afterPropertiesSet → proxy wrapping (if needed) → ready. @PreDestroy / DisposableBean.destroy runs on shutdown. AOP advice (@Transactional, @Secured, @Async, custom @Aspect) is applied by wrapping the bean in a proxy: Spring creates either a JDK dynamic proxy (interface-based) or a CGLIB subclass proxy (class-based). Method calls on the injected reference go through the proxy, which applies the advice, then delegates to the real bean.",
+    "senior": "Architecturally, the proxy is the mechanism that makes annotations declarative: @Transactional does not touch the business code — the proxy begins/commits/rolls back the transaction around the invocation. The subtle failure mode: self-invocation. A call to this.otherMethod() inside the same bean bypasses the proxy (this is the raw bean), so @Transactional on otherMethod silently does nothing. Circular dependencies are resolved via early references, which for prototype beans or proxied beans can inject the proxy or trigger issues. Lifecycle ordering matters: proxy wrapping happens after property population, so @PostConstruct runs on the raw bean — a call to a proxied method there also bypasses the proxy.",
+    "underTheHood": "The BeanFactory's getBean returns the bean or its proxy: for singleton scope, a single instance (possibly wrapped once) is cached in the singleton registry keyed by name. Proxies are created by the ProxyFactory: for each target, an AdvisorChainFactory resolves the matching advisors (from @Aspect beans, pointcut matching by method signature) and builds a chain of MethodInterceptors. JDK dynamic proxies implement the target's interfaces via Proxy.newProxyInstance (InvocationHandler dispatches through the interceptor chain); CGLIB generates a subclass at runtime (bytecode generation), overriding non-final methods to intercept. Transaction handling uses TransactionInterceptor, which binds a connection to the thread (DataSourceTransactionManager), flushes at commit, and marks rollback-only on runtime exceptions. Self-invocation bypasses because the interceptor chain only exists in the proxy object, not in the raw target."
+  },
+  "codeComparison": {
+    "title": "Transaction via self-invocation vs via the proxied reference",
+    "summary": "Calling a @Transactional method through this bypasses the proxy and silently loses the transaction; going through the injected proxy applies the advice.",
+    "legacyOrBad": {
+      "label": "Self-invocation",
+      "snippet": "@Service\nclass OrderService {\n  public void place(Order o) {\n    saveAndCharge(o); // this.saveAndCharge → raw bean, no proxy\n  }\n  @Transactional\n  void saveAndCharge(Order o) { ... }\n}",
+      "fullFile": {
+        "filename": "OrderService.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\n\n@Service\npublic class OrderService {\n  private final OrderRepository orderRepository;\n  private final PaymentClient paymentClient;\n\n  public OrderService(OrderRepository orderRepository, PaymentClient paymentClient) {\n    this.orderRepository = orderRepository;\n    this.paymentClient = paymentClient;\n  }\n\n  public void place(Order order) {\n    // BUG: this.saveAndCharge(...) calls the RAW bean. The\n    // @Transactional proxy wraps the bean injected elsewhere,\n    // but `this` is the original instance — no transaction\n    // boundary is created, so if the payment call fails, the\n    // order insert still commits.\n    saveAndCharge(order);\n  }\n\n  @Transactional\n  public void saveAndCharge(Order order) {\n    orderRepository.save(order);\n    paymentClient.charge(order.total());\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Proxied reference",
+      "snippet": "@Service\nclass OrderService {\n  public void place(Order o) {\n    self().saveAndCharge(o); // through the proxy\n  }\n  @Transactional\n  void saveAndCharge(Order o) { ... }\n}",
+      "fullFile": {
+        "filename": "OrderService.java",
+        "language": "java",
+        "code": "import org.springframework.context.annotation.Lazy;\nimport org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\n\n@Service\npublic class OrderService {\n  private final OrderRepository orderRepository;\n  private final PaymentClient paymentClient;\n\n  // Self-injection: the container injects the PROXY (with the\n  // transaction interceptor chain) instead of the raw bean, so\n  // calling through it applies @Transactional correctly.\n  @Lazy\n  private final OrderService self;\n\n  public OrderService(OrderRepository orderRepository, PaymentClient paymentClient,\n                      @Lazy OrderService self) {\n    this.orderRepository = orderRepository;\n    this.paymentClient = paymentClient;\n    this.self = self;\n  }\n\n  public void place(Order order) {\n    self.saveAndCharge(order); // goes through the proxy\n  }\n\n  @Transactional\n  public void saveAndCharge(Order order) {\n    orderRepository.save(order);\n    paymentClient.charge(order.total());\n  }\n}\n\n// Cleaner alternatives: extract the transactional work into a\n// separate @Service, or use TransactionTemplate directly."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does @Transactional fail silently when called from within the same class?",
+      "contextIntro": "This is the classic Spring proxy question — the interviewer wants the mechanism (proxy wrapping, self-invocation bypass), not just 'it doesn't work'.",
+      "detailedAnswer": "Spring wraps the bean in a proxy whose interceptor chain contains the transaction advisor. Any external caller holds the proxy, so calls flow through TransactionInterceptor, which begins/commits/rolls back. A call to this.method() resolves against the raw target instance — this is never the proxy — so the invocation never enters the interceptor chain and no transaction is created. The failure is silent because the method body still runs (the missing piece is the boundary). Fixes: self-injection of the proxy, moving the method to a collaborating bean, or using TransactionTemplate (programmatic, no proxy needed).",
+      "trapWarning": "The naive answer is 'make the method public' — visibility is not the cause; proxy interceptor chains apply to public methods but the bypass is about the invocation target, not visibility. Another trap: claiming the transaction rolls back on checked exceptions by default — default rollback is only on RuntimeException/Error, which is a separate classic gotcha candidates should name. Combining both shows real Spring experience."
+    },
+    {
+      "question": "What is the difference between JDK dynamic proxies and CGLIB proxies, and when does Spring pick each?",
+      "contextIntro": "The interviewer wants to verify knowledge of the two proxy strategies and their constraints — a common senior-adjacent question.",
+      "detailedAnswer": "JDK dynamic proxies use Proxy.newProxyInstance to create a class implementing the bean's interfaces; the InvocationHandler routes calls through the advisor chain. They require the target to have at least one interface and cannot intercept non-interface (concrete-class) methods. CGLIB subclasses the target class at runtime, overriding non-final, non-private methods, so it works for concrete classes. Since Spring Boot 2.x defaults proxyTargetClass=true, CGLIB is the default even when interfaces exist. CGLIB constraints: final classes and final methods cannot be proxied, constructors run twice (proxy + target instantiation), and the proxy calls the target's constructor, which matters for expensive construction or self-initialization in the constructor.",
+      "trapWarning": "The trap answer is 'Spring always uses CGLIB'. Pre-Boot-2.0 the default was JDK proxies when interfaces were present; Boot 2.x flipped the default. Another trap: claiming CGLIB proxies intercept private methods — they cannot (they subclass). Candidates who mention that self-invocation and final methods are both 'bypass the proxy' scenarios, and that constructor-based self-init bypasses post-processing, demonstrate deep understanding."
+    }
+  ]
+}

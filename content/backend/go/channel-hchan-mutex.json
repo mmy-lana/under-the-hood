@@ -1,0 +1,52 @@
+{
+  "id": "channel-hchan-mutex",
+  "title": "Go channels: the hchan struct and lock-based design",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["go", "channels", "hchan", "concurrency", "synchronization", "runtime"],
+  "prerequisites": ["Go goroutines and channels basics", "Understanding of mutexes and condition variables"],
+  "progressiveExplaining": {
+    "eli5": "A channel is a post office with one delivery window. People drop letters in the box (send) and pick letters up (receive). The post office has a strict rule: if you come to send and the box is full, you sit in a waiting chair until a spot opens; if you come to pick and the box is empty, you sit until a letter arrives. The postmaster (a lock) makes sure only one person touches the box at a time. Everyone waiting gets called in the order they sat down (FIFO), so no one is ever skipped.",
+    "junior": "ch := make(chan int, 3) creates a buffered channel. Sends and receives block when the buffer is full/empty respectively; unbuffered channels (make(chan int)) block until the other side is ready, making them synchronization points. close(ch) signals 'no more sends'; ranging (for v := range ch) drains until close. The primary use cases: hand-off synchronization between goroutines, work queues (buffered channels + workers), and graceful shutdown signals (close(ch) as a broadcast). select multiplexes over multiple channels: select { case v := <-ch1: ...; case ch2 <- v: ...; default: ... }.",
+    "senior": "Architecturally, channels are the 'communicate by sharing memory; instead, share memory by communicating' primitive. The runtime implements each channel as an hchan struct guarded by a mutex, with FIFO wait queues of blocked senders and receivers. When a send finds a waiting receiver, the value is handed off directly (no buffering hop); otherwise it goes into the ring buffer. Because every operation takes the channel's lock, unbuffered handoffs and hot buffered channels serialize on the lock — throughput-wise they are closer to a mutex + condition variable than to a lock-free queue. The design choice is deliberate: simplicity and correctness over raw speed. select is implemented by locking all involved channels and randomly ordering the cases to avoid starvation.",
+    "underTheHood": "hchan contains: qcount, dataqsiz, buf (ring buffer pointer), elemsize, closed, sendx/recvx (ring indices), sendq/recvq (wait queues of sudog nodes), and a lock (mutex). chansend/chansend1: lock the channel; if a sudog is parked in recvq, dequeue it, copy the value directly into the receiver's stack slot, and wake the goroutine (no buffer involved); else if qcount < dataqsiz, write into the ring buffer; else park the sender by creating a sudog, pushing it into sendq, and gopark (the G parks, the M is released). chanrecv mirrors the logic and handles closed channels by returning the zero value. Buffered channels with a mutex perform contended operations at memory-sync cost; select uses fastpath for single-case and selectgo otherwise, locking channels in order, registering the goroutine on all, and waiting via a common wait mechanism."
+  },
+  "codeComparison": {
+    "title": "Unbuffered handoff vs buffered work queue",
+    "summary": "Unbuffered channels synchronize two goroutines with a rendezvous; buffered channels decouple producers from workers and need explicit close for completion.",
+    "legacyOrBad": {
+      "label": "Unbuffered broadcast (blocking main)",
+      "snippet": "done := make(chan struct{})\ngo func() { work(); done <- struct{}{} }()\n<-done // blocks until the goroutine sends",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc main() {\n\tdone := make(chan struct{})\n\n\tgo func() {\n\t\tdefer func() { done <- struct{}{} }()\n\t\tfmt.Println(\"working…\")\n\t\ttime.Sleep(100 * time.Millisecond)\n\t}()\n\n\t// Rendezvous: main blocks until the goroutine SENDS. If the\n\t// goroutine panicked before the deferred send, main would\n\t// block forever — prefer done semantics with a buffered\n\t// channel or WaitGroup to survive early exits.\n\t<-done\n\tfmt.Println(\"finished\")\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Buffered queue + close broadcast",
+      "snippet": "jobs := make(chan int, 10)\n// N workers; close(jobs) broadcasts completion, workers drain",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc main() {\n\tconst workers = 3\n\tjobs := make(chan int, 10)\n\tvar wg sync.WaitGroup\n\n\tfor range workers {\n\t\twg.Add(1)\n\t\tgo func(id int) {\n\t\t\tdefer wg.Done()\n\t\t\tfor job := range jobs {\n\t\t\t\tfmt.Printf(\"worker %d got %d\\n\", id, job)\n\t\t\t}\n\t\t}(workers - 1)\n\t}\n\n\tfor i := 0; i < 10; i++ {\n\t\tjobs <- i\n\t}\n\tclose(jobs) // broadcast: every worker's range loop ends\n\n\twg.Wait()\n\tfmt.Println(\"all jobs done\")\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is a buffered channel more like a mutex than a lock-free queue under the hood?",
+      "contextIntro": "This distinguishes candidates who assume channels are high-performance lock-free queues from those who know the runtime's actual design and its implications.",
+      "detailedAnswer": "Every hchan operation takes the channel's mutex (hchan.lock) — sends, receives, and close all serialize on it. So a hot buffered channel is contended the way a mutex-protected queue is: throughput is bounded by lock hold time and cache-line bouncing, not by lock-free atomics. The runtime chose this for correctness and simplicity: FIFO order is guaranteed by the wait queues, memory ordering is handled by the lock, and the ring buffer keeps buffer management trivial. The practical implication: for very high-throughput work distribution, a hand-rolled sharded queue or Go 1.22+ iterators/slice-based pools can beat a single channel; channels should be used for clarity and correctness, with the lock cost accepted.",
+      "trapWarning": "The trap answer is 'channels are implemented with atomics, so they are super fast'. The hchan uses a full mutex; only select's randomization and some fast paths avoid locking. Another trap: 'buffered channels are async, so they never block' — they block when the buffer is full (sends) or empty (receives). Candidates who mention hchan's lock field by name and the sudog wait queues demonstrate real runtime knowledge."
+    },
+    {
+      "question": "What happens when you send on a closed channel, and why does ranging behave that way?",
+      "contextIntro": "This is the canonical channel-semantics question — the interviewer wants the close contract and its interaction with range and receive, precisely.",
+      "detailedAnswer": "Sending on a closed channel panics — the runtime checks hchan.closed under the channel's lock before enqueuing. Receiving from a closed channel returns immediately with the zero value (and ok=false with the comma-ok form), so a drain loop must not mistake that for a live value. Range (for v := range ch) keeps receiving until the channel is closed, then exits — that is why close(ch) is the broadcast 'no more values' signal for fan-out workers. Double-closing panics. The rule of thumb: only the sender should close, and close should be deferred or placed where all sends are guaranteed done — closing from a receiver races sends and can panic.",
+      "trapWarning": "The naive answer is 'receiving from a closed channel panics'. It does not — receiving is safe (zero value), sending panics. Another trap: 'closing a channel is like a boolean flag, so anyone can do it' — concurrent closers race and the second close panics. Candidates who state the sender-closes contract and the zero-value drain pitfall precisely show they have actually written concurrent Go."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "use-effect-dom-cycle",
+  "title": "React useEffect vs the DOM paint cycle",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["react", "hooks", "lifecycle", "effects", "concurrent-rendering"],
+  "prerequisites": ["React components and hooks basics", "Understanding of render vs commit phases"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a chef plating a dish: the kitchen first arranges every ingredient on the plate (render), the waiter then physically carries the plate to the table (paint), and only after the plate is on the table does the chef walk over and sprinkle the finishing garnish (effect). The garnish is never added to the plate while it is still in the kitchen — that would mess up the arrangement. useEffect is that final garnish step: it always happens after the plate has been served, never during the arranging.",
+    "junior": "useEffect(callback, deps) runs the callback after the browser has painted the DOM update caused by a render. The dependency array controls when it re-runs: on mount ([]), on every render (no array), or only when listed values change. Cleanup (the returned function) runs before the next effect and on unmount: useEffect(() => { socket.connect(); return () => socket.disconnect(); }, []). Practical pattern: side effects — subscriptions, timers, network fetches, manual DOM reads/writes — belong in effects, never directly in the render body, because the render body must stay pure.",
+    "senior": "The commit phase applies the new tree to the DOM, and only then does React schedule effect callbacks. This ordering exists so effects can safely read the DOM after the update without reading stale layout. Since React 18, effects may run asynchronously after paint (to keep first paint fast), while layout effects (useLayoutEffect) run synchronously before paint for measurements. Passive effects are not guaranteed to run before the user sees the frame — so anything visually critical must use useLayoutEffect or avoid effects entirely. In concurrent rendering, the tree can be rendered, thrown away, and re-rendered; effects only run for the committed result, which is why effects must never assume a render 'happened' until commit.",
+    "underTheHood": "React stores hooks in the fiber node's memoizedState linked list. When a fiber with passive effects is committed, it is pushed onto the root's pendingPassiveEffects list. After paint (via a scheduled MessageChannel/task or microtask depending on the scheduler), React flushes this list: for each effect fiber it runs destroy functions from the previous render, then create functions of the current render, walking the list depth-first in mount order. Effects form a chain where each fiber's cleanup+setup is a discrete step. This is why effects are ordered: child effects run before parent effects on mount, and cleanups run child-first on unmount."
+  },
+  "rosettaStone": {
+    "react": "useEffect(() => {\n  const h = () => console.log('resized');\n  window.addEventListener('resize', h);\n  return () => window.removeEventListener('resize', h);\n}, []);",
+    "angular": "ngOnInit() { this.sub = fromEvent(window, 'resize').subscribe(...) }\nngOnDestroy() { this.sub.unsubscribe(); }",
+    "vue": "onMounted(() => {\n  const h = () => console.log('resized');\n  window.addEventListener('resize', h);\n  onBeforeUnmount(() => window.removeEventListener('resize', h));\n});",
+    "svelte": "$effect(() => {\n  const h = () => console.log('resized');\n  window.addEventListener('resize', h);\n  return () => window.removeEventListener('resize', h);\n});"
+  },
+  "codeComparison": {
+    "title": "Effect ordering: layout measurement before paint vs after",
+    "summary": "The legacy approach measured layout in a passive effect after paint (causing a visible flicker); the corrected approach uses useLayoutEffect so the measurement happens before the browser paints.",
+    "legacyOrBad": {
+      "label": "Passive effect measurement",
+      "snippet": "useEffect(() => {\n  setWidth(elRef.current.offsetWidth);\n}, []);",
+      "fullFile": {
+        "filename": "MeasureBox.jsx",
+        "language": "jsx",
+        "code": "import { useEffect, useRef, useState } from 'react';\n\nexport default function MeasureBox() {\n  const ref = useRef(null);\n  const [width, setWidth] = useState(0);\n\n  // Runs AFTER the browser painted, so the first frame shows the\n  // element at its unmeasured size, then a second render fixes it\n  // — a visible flicker when the measured value changes layout.\n  useEffect(() => {\n    if (ref.current) {\n      setWidth(ref.current.offsetWidth);\n    }\n  }, []);\n\n  return <div ref={ref} style={{ width: width || 'auto' }}>{width}px</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Layout effect measurement",
+      "snippet": "useLayoutEffect(() => {\n  setWidth(elRef.current.offsetWidth);\n}, []);",
+      "fullFile": {
+        "filename": "MeasureBox.jsx",
+        "language": "jsx",
+        "code": "import { useLayoutEffect, useRef, useState } from 'react';\n\nexport default function MeasureBox() {\n  const ref = useRef(null);\n  const [width, setWidth] = useState(0);\n\n  // Runs synchronously after the DOM mutation but BEFORE the browser\n  // paints, so the final layout is measured and re-rendered in one\n  // commit — no flicker, one paint for the settled state.\n  useLayoutEffect(() => {\n    if (ref.current) {\n      setWidth(ref.current.offsetWidth);\n    }\n  }, []);\n\n  return <div ref={ref} style={{ width: width || 'auto' }}>{width}px</div>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is setState inside useEffect considered a problem, and when is it acceptable?",
+      "contextIntro": "This is a favorite probe: the interviewer wants to hear about render loops and the difference between sync state updates and effect-driven state updates.",
+      "detailedAnswer": "Setting state inside an effect schedules another render, and if the state update causes a different value on the next render while the effect depends on that value, you get an infinite loop (render → effect → setState → render…). React only breaks the loop when the effect's dependencies are stable and the new state equals the previous value (bailout). Acceptable cases are one-time initialization derived from the DOM (measurement), synchronizing with an external store when the store's value differs, or data fetching with a guard. The architectural fix is usually deriving state during render (no effect) or lifting the source of truth into a reducer/selector.",
+      "trapWarning": "The trap answer is 'setState in effects is always forbidden'. The real rule is about loops and derived-state correctness: an effect that calls setState with a value that depends on the effect's own deps will ping-pong forever. Also note setState in an effect is technically allowed but React may warn under StrictMode double-invocation — interviewers like hearing you know the double-effect behavior is intentional for surfacing impure effects."
+    },
+    {
+      "question": "What exactly runs between render and useEffect?",
+      "contextIntro": "This checks precise knowledge of the React pipeline: render, commit, paint, and where hooks actually execute.",
+      "detailedAnswer": "After render produces a new fiber tree, React reconciles and commits: it mutates the DOM (insert/update/remove), then layout effects (useLayoutEffect) run synchronously before the browser paint so they can read and write layout atomically. Then React yields to the browser, which paints the committed DOM. After paint, passive effects (useEffect) are flushed in a scheduled task. The practical consequence: reading offsetHeight in useEffect gives post-paint values (with a potential flicker if you then setState), while useLayoutEffect gives pre-paint values. React deliberately defers passive effects so heavy work in them never blocks the first frame.",
+      "trapWarning": "Saying 'useEffect runs after the render' is imprecise enough to be a red flag — it runs after commit AND after paint, and the commit (DOM mutation) is the more meaningful boundary for whether the DOM is up to date. Another trap: assuming effects run after every commit immediately; they are batched and scheduled, and with concurrent features they can be delayed or even skipped for discarded renders."
+    }
+  ]
+}

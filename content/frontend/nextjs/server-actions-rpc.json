@@ -1,0 +1,58 @@
+{
+  "id": "server-actions-rpc",
+  "title": "Next.js Server Actions: RPC over the wire",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+/15 (App Router)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nextjs", "server-actions", "rpc", "forms", "react", "app-router"],
+  "prerequisites": ["Next.js App Router basics", "Understanding of React Server Components"],
+  "progressiveExplaining": {
+    "eli5": "A restaurant where the guest writes a note, folds it into a little paper plane, and it flies back to the kitchen; the kitchen cooks and the finished dish appears on the table. The guest never sees the kitchen, never talks to the chef directly — but the order is placed and the meal arrives. A Server Action is that paper plane: a function that looks local, runs in the kitchen, and returns the finished result to the table.",
+    "junior": "With 'use server' at the top of a file (or inline in a server component), you can define functions that run on the server but are called from the client: async function createPost(formData) { 'use server'; await db.insert(...); revalidatePath('/'); }. Use them in <form action={createPost}> or call them directly from event handlers in Client Components (passing the imported server function as a prop). The framework serializes arguments and return values over the wire. Forms get a progressive enhancement bonus: if JavaScript fails to load, the form still submits via a plain POST.",
+    "senior": "Architecturally, Server Actions are the App Router's sanctioned RPC layer: they let you mutate server-side state (database, files, cache) without writing an API route, and they integrate with the data cache via revalidatePath/revalidateTag. The security boundary is critical: actions are POST endpoints with CSRF protection built into the protocol (the action ID + origin checks), and since they execute server-side with your privileges, every argument must be validated server-side — never trust serialized client input. They invert the old mental model of 'client mutates via API, then refetches'; the mutation and the refresh are one round trip.",
+    "underTheHood": "Each 'use server' function is compiled into a POST endpoint keyed by an action ID. The client reference is a stub that serializes the call (arguments via the React Flight serialization format — including FormData natively) into a POST request to the page's route or a dedicated action route. The server validates the origin (the Action-Submission-Origin header), deserializes arguments with the matching server reference, executes the function, and returns serialized JSX (for re-rendered trees) or a plain value. State updates and revalidatePath calls are applied server-side, and the client merges the returned Flight payload into the React tree — which is why a form action can update both data and UI in one round trip. Nested server actions inside Server Components are extracted and compiled the same way."
+  },
+  "rosettaStone": {
+    "react": "// React 19: <form action={serverFunction}> is the same RSC\n// mechanism — Server Actions are part of React, not Next.js",
+    "angular": "// Angular: traditional HTTP client calls to an API route;\n// no compiler-level RPC layer",
+    "vue": "// Vue/Nuxt: useFetch/useAsyncData + server API routes;\n// mutations via $fetch to endpoints",
+    "svelte": "// SvelteKit: form actions in +page.server.ts — same\n// progressive-enhancement form + server mutation model"
+  },
+  "codeComparison": {
+    "title": "Client-side fetch to an API route vs a Server Action",
+    "summary": "The fetch-to-API approach splits mutation and cache invalidation across two endpoints; a Server Action mutates and revalidates in one compiled RPC call.",
+    "legacyOrBad": {
+      "label": "API route + client fetch",
+      "snippet": "await fetch('/api/posts', { method: 'POST', body: JSON.stringify({ title }) });\nrouter.refresh();",
+      "fullFile": {
+        "filename": "new-post-form.tsx",
+        "language": "tsx",
+        "code": "'use client';\n\nimport { useState } from 'react';\nimport { useRouter } from 'next/navigation';\n\nexport default function NewPostForm() {\n  const [title, setTitle] = useState('');\n  const router = useRouter();\n\n  async function onSubmit(e: React.FormEvent) {\n    e.preventDefault();\n    // Mutation and cache refresh are two separate hops.\n    const res = await fetch('/api/posts', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ title })\n    });\n    if (res.ok) {\n      setTitle('');\n      router.refresh(); // second round trip to revalidate\n    }\n  }\n\n  return (\n    <form onSubmit={onSubmit}>\n      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder=\"Post title\" />\n      <button type=\"submit\">Create</button>\n    </form>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Server Action",
+      "snippet": "async function createPost(formData) {\n  'use server';\n  await db.insert(...);\n  revalidatePath('/');\n}",
+      "fullFile": {
+        "filename": "new-post-form.tsx",
+        "language": "tsx",
+        "code": "'use client';\n\n// The server action is defined in a server file and imported\n// here; the compiler turns it into an RPC stub.\nimport { createPost } from '@/app/actions';\n\nexport default function NewPostForm() {\n  // Plain HTML form semantics: the action runs on the server,\n  // revalidates the cache, and the returned Flight payload\n  // updates the UI — all in one round trip.\n  return (\n    <form action={createPost}>\n      <input name=\"title\" placeholder=\"Post title\" />\n      <button type=\"submit\">Create</button>\n    </form>\n  );\n}\n\n// app/actions.ts (server side):\n//   'use server';\n//   import { db } from '@/lib/db';\n//   import { revalidatePath } from 'next/cache';\n//\n//   export async function createPost(formData: FormData) {\n//     const title = formData.get('title');\n//     if (typeof title !== 'string' || title.trim() === '') return;\n//     await db.insert({ title: title.trim() });\n//     revalidatePath('/');\n//   }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What security concerns are specific to Server Actions, and how does Next.js mitigate them?",
+      "contextIntro": "This is the most important follow-up in production interviews — actions execute server-side with your privileges, so the security model matters more than the syntax.",
+      "detailedAnswer": "Server Actions are effectively POST endpoints, so they inherit endpoint security requirements: authenticate and authorize every action, and validate all inputs server-side (they arrive as serialized data, not as 'trusted' function arguments). Next.js adds CSRF protection by checking the origin (the Action-Submission-Origin / Next-Action headers) and the action ID, and it enforces that actions only run on the same-origin request. Because actions have access to server-only modules (database clients, secrets), an action that blindly accepts user data is the same class of vulnerability as an unvalidated API handler — the RPC sugar must not lull you into trusting client-supplied arguments.",
+      "trapWarning": "The naive answer is 'actions are safe because they are server-side'. Server-side does not mean safe — it means privileged. The sharp answer walks through: CSRF/origin validation is built into the protocol, but authorization, rate limiting, and schema validation are still the developer's job. Another trap: claiming actions are not exposed as public endpoints — they are publicly reachable POST routes, which is why you must never rely on 'nobody will guess the action ID' as a security boundary."
+    },
+    {
+      "question": "How does a form action update the visible page without a client-side fetch?",
+      "contextIntro": "This probes the RSC/flight payload mechanics behind the 'one round trip' claim — the interviewer wants the protocol, not just the DX.",
+      "detailedAnswer": "When the form submits, the client sends a POST with the action ID and serialized FormData. The server runs the action, then builds a React Flight payload: it re-renders the affected server component tree (including any revalidatePath-triggered data refetches) and streams the serialized JSX back. The client parses the Flight stream and reconciles it into the existing React tree — patching only the parts that changed. Because the whole exchange uses React's serialization format, the UI updates and the server data stay consistent in a single request, and the navigation history is not polluted (unlike a redirect-and-refetch cycle).",
+      "trapWarning": "A common wrong claim is 'the page fully reloads'. Form actions do not reload the page; they perform a background RPC and merge the returned Flight payload. Another trap: saying 'revalidatePath re-fetches on the client'. revalidatePath invalidates the Next.js data cache on the server; the refetch happens during the server-side re-render of the returned payload. Candidates who name the Flight payload and cache invalidation layers show they understand the architecture."
+    }
+  ]
+}

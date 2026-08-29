@@ -1,0 +1,52 @@
+{
+  "id": "jvm-stack-vs-heap",
+  "title": "JVM memory: stack vs heap",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "Java 8+ (G1 GC), Java 21 (generational G1)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["java", "jvm", "memory", "stack", "heap", "garbage-collection"],
+  "prerequisites": ["Java method and object basics", "Familiarity with references and primitives"],
+  "progressiveExplaining": {
+    "eli5": "A kitchen has two kinds of storage: the counter directly in front of the chef (stack) and the big walk-in pantry (heap). The chef puts the current task's ingredients on the counter — when the task is done, the counter is wiped clean instantly, no bookkeeping needed. The pantry holds everything long-term, and a stock-taker (the garbage collector) periodically walks the aisles throwing away items no recipe references anymore. The counter is tiny but fast; the pantry is huge but needs someone to tidy it.",
+    "junior": "Each thread has its own stack holding method frames: local variables, primitive values, and object references live here; the objects themselves live on the heap. When a method returns, its frame is popped and its locals are gone. The heap is shared by all threads and holds all objects and arrays; the garbage collector reclaims objects no longer reachable from GC roots (static fields, stack frames, JNI references). new always allocates on the heap (though escape analysis can place small objects on the stack). StackOverflowError comes from unbounded recursion (frames exceed stack size); OutOfMemoryError: Java heap space from exhausting the heap.",
+    "senior": "The split exists for locality and lifecycle: the stack is per-thread, allocation is a pointer bump, and deallocation is a frame pop — O(1), no GC needed. The heap is shared, so allocation needs synchronization (thread-local allocation buffers, or TLABs, make it mostly lock-free), and deallocation requires a tracing collector to find dead objects. Choosing what lives where shapes GC pressure: short-lived objects die in the young generation (copying collector, cheap), long-lived objects promote to old gen (concurrent mark-sweep in G1). Escape analysis + scalar replacement let the JIT place non-escaping objects' fields in registers/stack, avoiding heap allocation entirely. The heap/stack model also drives the stop-the-world pauses during old-gen collection and why allocation rate, not live-set size, often dominates young-gen pause cost.",
+    "underTheHood": "The JVM's memory model in HotSpot: the runtime data area includes per-thread Java stacks (fixed or growing, default 512KB–1MB, guard pages trigger StackOverflowError), the PC registers, and a shared heap. The heap is divided into regions (G1): Eden, Survivor S0/S1, and Old. Allocation uses TLABs — each thread carves a chunk from Eden and bumps a pointer within it, so allocation is ~3 instructions with no lock. GC roots are enumerated from stack frames, static fields, and JNI handles; the collector walks object graphs and copies survivors (young) or marks concurrently (old, G1 with SATB write barriers). Escape analysis in C2 can scalar-replace a non-escaping object's fields into registers and eliminate allocation. The stack stores references (8-byte oops, compressed to 4 bytes with -XX:+UseCompressedOops) and primitives; objects store headers (mark word + klass pointer) plus fields, with alignment padding."
+  },
+  "codeComparison": {
+    "title": "Allocation that escapes vs allocation eliminated by escape analysis",
+    "summary": "Objects that escape to the heap drive GC pressure; the JIT can stack-allocate or scalar-replace non-escaping objects, eliminating the allocation entirely.",
+    "legacyOrBad": {
+      "label": "Escaping object",
+      "snippet": "long sum = 0;\nfor (int i = 0; i < N; i++) {\n  Point p = new Point(i, i);   // escapes? if returned/stored, heap\n  sum += p.distance();\n}",
+      "fullFile": {
+        "filename": "PointApp.java",
+        "language": "java",
+        "code": "public class PointApp {\n  static final int N = 10_000_000;\n\n  static class Point {\n    final int x;\n    final int y;\n\n    Point(int x, int y) {\n      this.x = x;\n      this.y = y;\n    }\n\n    double distance() {\n      return Math.sqrt((double) x * x + (double) y * y);\n    }\n  }\n\n  // Each iteration allocates a Point. If the JIT proves the Point\n  // never escapes this loop (not stored, not passed elsewhere), it\n  // can be scalar-replaced: x and y live in registers, no heap\n  // allocation at all. If the loop handed points to a list instead,\n  // every Point would hit Eden and eventually be GC'd.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      Point p = new Point(i, i);\n      total += p.distance();\n    }\n    System.out.println(total / N);\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Scalar-replaced (JIT-optimized) equivalent",
+      "snippet": "// Same loop after escape analysis: fields promoted to locals.\ndouble total = 0;\nfor (int i = 0; i < N; i++) {\n  int px = i, py = i;          // scalar replacement\n  total += Math.hypot(px, py); // no object exists at all\n}",
+      "fullFile": {
+        "filename": "ScalarApp.java",
+        "language": "java",
+        "code": "public class ScalarApp {\n  static final int N = 10_000_000;\n\n  // This is what the C2 JIT compiles the escaping loop into when\n  // escape analysis + scalar replacement succeed: zero heap\n  // allocations inside the loop, everything in registers.\n  // Run with -XX:+PrintEliminateAllocations to observe the\n  // eliminated allocations.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      int px = i;\n      int py = i;\n      total += Math.sqrt((double) px * px + (double) py * py);\n    }\n    System.out.println(total / N);\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is stack allocation faster than heap allocation, and when can the JVM do it?",
+      "contextIntro": "The interviewer wants to separate memorized claims ('stack is fast') from the actual mechanisms (pointer bump, frame pop, escape analysis).",
+      "detailedAnswer": "Stack allocation is a pointer bump in the current frame and deallocation is a frame pop — no locking, no bookkeeping, no GC interaction, and excellent cache locality because the frame is hot. The JVM does not allocate Java objects on the stack in the classic sense, but escape analysis in C2 lets it eliminate allocations entirely: if an object never escapes the method (not stored in a field, not returned, not passed to a call the JIT can see), its fields are scalar-replaced into registers and stack slots. So the 'stack allocation' win is really allocation elimination plus the frame's natural locality.",
+      "trapWarning": "The trap answer is 'the JVM puts objects on the stack when they are small'. Escape analysis does not look at size — it looks at the object's lifetime relative to the method (escape state: NoEscape/ArgEscape/GlobalEscape). Also, some candidates claim all allocations go through malloc — HotSpot's TLAB bump allocation bypasses the allocator entirely. Mentioning TLABs and scalar replacement is what makes the answer senior-level."
+    },
+    {
+      "question": "What are GC roots, and why does the stack matter to the garbage collector?",
+      "contextIntro": "This checks whether the candidate understands reachability — the definition of liveness — rather than just describing 'the GC deletes unused objects'.",
+      "detailedAnswer": "GC roots are the starting points for reachability tracing: live thread stacks (each frame's local variables and operand stack slots that hold references), static fields, JNI global/局部 references, and active monitor locks. The collector walks from these roots across the object graph; anything unreachable is garbage. The stack is therefore load-bearing for GC — a local variable that still holds a reference keeps an object alive even if logically dead. This is why setting large references to null in long loops matters, and why the JVM must enumerate roots precisely (exact GC) rather than conservatively scanning registers.",
+      "trapWarning": "The naive answer is 'GC roots are the main method'. Roots are the union of all thread stacks, statics, and JNI handles — the main method's frame is just one stack frame among many. Another trap: 'nulling a local is always useless because the JIT optimizes it' — the JIT can also reorder/eliminate stores, so the reliable pattern is scope-based or explicit null only where needed; the precise model (OopMap at safepoints) is what the interviewer wants to hear about."
+    }
+  ]
+}

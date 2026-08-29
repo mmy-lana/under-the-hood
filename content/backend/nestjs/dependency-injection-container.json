@@ -1,0 +1,52 @@
+{
+  "id": "dependency-injection-container",
+  "title": "NestJS dependency injection container",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+ (on top of TypeScript/Express)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nestjs", "dependency-injection", "container", "typescript", "reflect-metadata", "decorators"],
+  "prerequisites": ["TypeScript decorators basics", "NestJS modules and providers"],
+  "progressiveExplaining": {
+    "eli5": "A hospital has a supply cabinet (the container). Departments don't build their own equipment — a cardiologist just fills in a request form saying 'I need a heart monitor', and the cabinet delivers it, already configured with the right batteries and settings. If a monitor is needed in three departments, the cabinet hands out the same unit (singleton). The request form is the constructor parameter; the cabinet is Nest's injector; the label on the form (the @Injectable() tag) tells the cabinet which machine this is.",
+    "junior": "In NestJS you mark a service with @Injectable(), list it in a module's providers, and inject it via a constructor parameter: constructor(private readonly usersService: UsersService) {}. Nest resolves the graph at bootstrap: it instantiates the provider (and all its transitive dependencies), caches it per the provider scope (DEFAULT = singleton per application, REQUEST = per request, TRANSIENT = per injection), and injects it where requested. Injection happens via the TypeScript design:paramtypes metadata that the compiler emits when decorators are present (reflect-metadata + emitDecoratorMetadata).",
+    "senior": "Architecturally, the container turns the module graph into a dependency graph resolved at startup: providers, controllers, and their imports are instantiated in topological order, so construction failures surface at boot rather than mid-request. Scope choices matter: singleton providers are fine for stateless services, but request-scoped providers (and any provider depending on them) are instantiated per request, which is a real cost — Nest propagates scope up the dependency chain. Testing benefits: constructor injection lets you substitute fakes at the provider level via overrideProvider. The trade-off is the same as all magic DI: the graph is only as explicit as your module lists, and circular dependencies need forwardRef + careful design.",
+    "underTheHood": "The Nest container is built on top of a custom injector: at bootstrap, the NestFactory scans modules, builds a ModuleRef per module, and for each provider compiles an InstanceLoader entry. Dependencies are discovered from the design:paramtypes metadata emitted by TypeScript (types of constructor parameters — but only for classes, which is why token-based injection uses @Inject() with string/abstract tokens). Providers are instantiated via a DependenciesScanner + InstanceLoader: the container resolves each provider's dependencies recursively, handles circular references via forwardRef (creating a placeholder host), then instantiates (or reuses) and registers the instance. Injection tokens are class references (or strings/symbols via @Inject); the container keeps a map token → instance. Request-scoped providers are produced per-request via a RequestContext (honoring the request object), while singletons live in the module's instance cache."
+  },
+  "codeComparison": {
+    "title": "Manual service wiring vs Nest DI container",
+    "summary": "Hand-constructed services tangle creation order and make swaps invasive; the container resolves the graph, applies scope, and enables clean test substitution.",
+    "legacyOrBad": {
+      "label": "Manual wiring",
+      "snippet": "const repo = new UserRepository(db);\nconst svc = new UserService(repo);\nconst ctrl = new UserController(svc);",
+      "fullFile": {
+        "filename": "manual.main.ts",
+        "language": "typescript",
+        "code": "// Without a container, the developer becomes the wiring code.\n// Every new dependency changes call sites, creation order is\n// implicit, and swapping implementations for tests means editing\n// production code.\nimport { Database } from './database';\nimport { UserRepository } from './user.repository';\nimport { UserService } from './user.service';\nimport { UserController } from './user.controller';\n\nexport function buildApp() {\n  const db = new Database({ url: process.env.DB_URL ?? 'postgres://localhost:5432/app' });\n  const repo = new UserRepository(db);\n  const svc = new UserService(repo);\n  const ctrl = new UserController(svc);\n\n  // The order above is a manual topological sort. If UserService\n  // also needs a CacheService, this file changes again.\n  return { ctrl, svc };\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Nest DI",
+      "snippet": "@Injectable()\nexport class UserService {\n  constructor(private readonly repo: UserRepository) {}\n}",
+      "fullFile": {
+        "filename": "users.module.ts",
+        "language": "typescript",
+        "code": "import { Module } from '@nestjs/common';\nimport { DatabaseModule } from '../database/database.module';\nimport { UserRepository } from './user.repository';\nimport { UserService } from './user.service';\nimport { UserController } from './user.controller';\n\n@Module({\n  imports: [DatabaseModule],\n  controllers: [UserController],\n  providers: [UserRepository, UserService]\n})\nexport class UsersModule {}\n\n// user.service.ts\nimport { Injectable } from '@nestjs/common';\nimport { UserRepository } from './user.repository';\n\n@Injectable()\nexport class UserService {\n  constructor(private readonly repo: UserRepository) {}\n\n  async findById(id: string) {\n    return this.repo.findOne({ where: { id } });\n  }\n}\n\n// The container instantiates DatabaseModule's exports, then\n// UserRepository, then UserService, then UserController — in\n// dependency order — and caches the singletons for the app."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does Nest know what to inject into a constructor, given that JavaScript has no type information at runtime?",
+      "contextIntro": "This is the core 'explain the magic' question — the interviewer wants the reflect-metadata + design:paramtypes mechanism, not just 'decorators'.",
+      "detailedAnswer": "TypeScript emits metadata when decorators and emitDecoratorMetadata are enabled: for a class with a decorator, the compiler writes the constructor parameter types into a design:paramtypes metadata key on the class. Nest's runtime reads that metadata with reflect-metadata (Reflect.getMetadata) to discover the injected tokens. Because the metadata contains the type references only for class-based types, string/abstract/symbol tokens need @Inject(Token) to be discoverable — there is no design-time type for them. The @Injectable() decorator itself is the marker that makes Nest scan this class and read its metadata.",
+      "trapWarning": "The naive answer is 'TypeScript types are available at runtime'. They are not — the metadata is only emitted for decorated classes and only for parameter types that are actual runtime references (classes). Candidates who say 'Nest uses the types from the constructor signature' miss that emitDecoratorMetadata is what makes it possible and that interface-based injection fails without @Inject. Mentioning the exact metadata key (design:paramtypes) is the differentiator."
+    },
+    {
+      "question": "What is the difference between provider scopes, and when does request scope cost you performance?",
+      "contextIntro": "This checks practical Nest experience — the interviewer wants to know how scope propagates and why request-scoped providers are expensive.",
+      "detailedAnswer": "DEFAULT providers are singletons per application: instantiated once, cached in the module's instance map. REQUEST providers are instantiated per request and garbage-collected after; TRANSIENT providers get a new instance per injection site. Scope propagates: if a singleton depends on a request-scoped provider, Nest must make the singleton effectively request-scoped too (it cannot be cached across requests), which the framework does by elevating the whole dependency chain. That means one request-scoped provider can turn an entire controller chain into per-request instantiation — measurable cost in allocation and constructor work for high-traffic services. The guideline is to keep request scope only where request context is genuinely needed (tenant isolation, per-request state) and avoid it in hot paths.",
+      "trapWarning": "The trap answer is 'request scope is free in Express because Nest is just middleware'. Request-scoped providers bypass the singleton cache and are created per request, and their dependencies must be recreated too. Another trap: 'transient is like request' — transient is per injection site, not per request. Candidates who describe scope propagation up the dependency chain and the per-request allocation cost show real production awareness."
+    }
+  ]
+}

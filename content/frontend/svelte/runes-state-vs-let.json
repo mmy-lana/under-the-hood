@@ -1,0 +1,58 @@
+{
+  "id": "runes-state-vs-let",
+  "title": "Svelte 5 runes vs legacy let-based reactivity",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (runes mode)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["svelte", "runes", "reactivity", "signals", "svelte5", "compiler"],
+  "prerequisites": ["Svelte 4 component basics", "Understanding of the Svelte compiler"],
+  "progressiveExplaining": {
+    "eli5": "In the old Svelte, a variable was reactive only if you put it on a special shelf in the kitchen — the shelf was the top of the <script> block. If you moved the ingredient to a different shelf (another module or a plain .js file), the kitchen stopped noticing changes. The new system stamps every ingredient with a sensor chip: no matter which shelf or room it lives in, the kitchen hears the moment it changes. The sensor chip is the rune — a little marker you write next to the variable.",
+    "junior": "In Svelte 4, reactivity was implicit and compiler-driven: let count = 0; created a reactive variable, and count += 1 updated the DOM. But that magic only worked inside .svelte component top-level scope. Svelte 5 introduces runes — explicit markers: let count = $state(0); creates reactive state anywhere (even in .js/.ts modules); $derived(expr) replaces the $: label; $effect(() => ...) replaces the reactive statement for side effects; and $props() replaces export let. Code written with runes works in plain modules, so state logic is extractable and testable outside components.",
+    "senior": "Architecturally, Svelte 4's compiler performed static analysis of assignments to decide what to invalidate: every `count = x` in the component triggered a marker so the component could re-run and diff. That analysis broke with indirect mutation (obj.a.b += 1 in some patterns, destructured objects, shared modules). Runes make the state explicit and shallow: $state wraps values in a signal-like primitive tracked by the runtime rather than by static analysis of the whole module, so indirect mutation (nested property writes) is tracked correctly and state can live in modules. The compiler now lowers runes into the same internal signal graph, keeping the 'no virtual DOM' property — updates still compile to direct DOM instructions.",
+    "underTheHood": "Under runes, the Svelte compiler rewrites $state(...) into calls on an internal signal library: each $state value becomes a Source, each $derived becomes a Derived, and $effect creates an Effect root that subscribes to the sources it reads during execution. Reads inside an effect register the effect as a consumer; writes bump the source's version and schedule the effect (the scheduler batches via a microtask queue). The template is compiled to direct DOM update instructions tied to those sources, so there is no diff pass — only the DOM statements whose source changed run. This is the same underlying primitive set used by other frameworks' signals but exposed as language-level runes the compiler rewrites, which is why runes work in .svelte.ts/.svelte.js modules too."
+  },
+  "rosettaStone": {
+    "react": "const [count, setCount] = useState(0); // setCount triggers re-render",
+    "angular": "const count = signal(0); // Angular signals, same runes-like primitive",
+    "vue": "const count = ref(0); // ref.value is the tracked box",
+    "svelte": "let count = $state(0); // rune: compiler rewrites into a signal source"
+  },
+  "codeComparison": {
+    "title": "Reactive state in a shared module: Svelte 4 vs runes",
+    "summary": "Svelte 4 reactivity only worked inside components; runes make state a first-class primitive usable in plain modules, extractable and testable.",
+    "legacyOrBad": {
+      "label": "Svelte 4 component-only state",
+      "snippet": "<script>\n  let count = 0; // implicit reactivity: compiler-scoped\n  function inc() { count += 1; }\n</script>",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // Svelte 4: reactivity comes from the compiler scanning this\n  // component's assignments. `let count` is reactive ONLY here.\n  let count = 0;\n\n  function increment() {\n    count += 1;\n  }\n</script>\n\n<button on:click={increment}>\n  clicked {count} times\n</button>\n\n<!-- If you tried to move `count` into a shared .js module and\n     import it, assignments there were NOT reactive: the compiler\n     could not analyze across module boundaries. -->"
+      }
+    },
+    "modernOrGood": {
+      "label": "Runes module state",
+      "snippet": "export let count = $state(0);\nexport function increment() { count += 1; }",
+      "fullFile": {
+        "filename": "counter.svelte.ts",
+        "language": "typescript",
+        "code": "// counter.svelte.ts — runes work in plain modules.\n// The compiler rewrites $state into the internal signal source,\n// so this state is usable from any component (or even from\n// another .svelte.ts module).\nexport let count = $state(0);\n\nexport function increment(): void {\n  count += 1;\n}\n\nexport function reset(): void {\n  count = 0;\n}\n\n// Counter.svelte uses it like any imported value:\n//   <script lang=\"ts\">\n//     import { count, increment } from './counter.svelte';\n//   </script>\n//   <button onclick={increment}>clicked {count} times</button>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why did Svelte move from compiler-scoped reactivity to runes, and what limitation was it solving?",
+      "contextIntro": "Interviewers want to see the 'why' behind the API change: the failure modes of static analysis, not just the new syntax.",
+      "detailedAnswer": "Svelte 4's reactivity was a compile-time heuristic: the compiler tracked assignments inside the component to mark invalidations, which broke when state was mutated indirectly — through destructuring, through nested object/array writes in some helper patterns, or when shared across modules. State also could not be extracted to .js modules, forcing components to stay fat. Runes make reactivity explicit and value-based: the runtime tracks reads/writes of the wrapped value, so indirect mutation and cross-module sharing work correctly. The explicit marker also lets the compiler optimize without guessing what a bare variable means.",
+      "trapWarning": "The naive answer is 'runes are faster'. The speed story is nuanced — both versions compile to direct DOM updates. The real motivation is correctness and expressiveness: cross-module state, indirect mutation, and predictable semantics. Candidates who answer purely with 'it's the modern way' miss that Svelte 4's model silently failed in real codebases, which is the actual driving force."
+    },
+    {
+      "question": "What is the difference between $state, $derived, and $effect, and when should you not use $effect?",
+      "contextIntro": "This probes signal-graph literacy — the interviewer wants to know if the candidate understands derived values as lazily recomputed state rather than effects.",
+      "detailedAnswer": "$state declares mutable reactive state. $derived declares a lazy computed value that recomputes only when its dependencies change and only when something reads it — it is the right tool for values derived from state. $effect runs a function whenever the reactive values it reads change; it is meant for side effects: DOM interop, timers, subscriptions, logging. Using $effect to compute a value is an anti-pattern because effects are eager, imperative, and re-run on every dependency change, producing redundant work and making the data flow harder to trace. The compiler enforces that you cannot assign to a $derived, mirroring the immutability contract of computed values.",
+      "trapWarning": "The trap answer is '$derived is a memoized effect'. It is not an effect at all — it is a lazy derived source in the signal graph, evaluated on demand, whereas effects are eager and triggered by the scheduler. Another trap: using $effect to synchronize state (effect reads a, writes b) — the runes model intentionally discourages 'state derived from state' in effects because it causes cascade re-runs; derive it instead. Mentioning the microtask-batched scheduler of effects is a strong differentiator."
+    }
+  ]
+}

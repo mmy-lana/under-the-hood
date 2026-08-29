@@ -1,0 +1,52 @@
+{
+  "id": "smart-pointers-box-rc-arc",
+  "title": "Rust smart pointers: Box, Rc, Arc",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.75+ (edition 2021)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["rust", "smart-pointers", "box", "rc", "arc", "ownership"],
+  "prerequisites": ["Rust ownership and borrowing", "Understanding of trait objects and interior mutability"],
+  "progressiveExplaining": {
+    "eli5": "Three kinds of boxes for transporting a single precious item. Box is a plain cardboard box: the item lives inside it, and when the box is thrown away the item goes with it — one owner, one trip. Rc is a club briefcase with a counter: several club members can look at the same item, and the counter counts the members; when the last member leaves, the case is locked and the item stored away. Arc is the same briefcase but built for use across different rooms (threads) — the counter is bulletproof glass so anyone can read it safely from any room.",
+    "junior": "Box<T> gives a value a heap allocation with single ownership: let b = Box::new(5); (*b) dereferences it. It is the tool for recursive types (enum List { Cons(i32, Box<List>) }), trait objects (Box<dyn Draw>), and large data you want off the stack. Rc<T> is reference-counted shared ownership within one thread: let a = Rc::new(value); let b = Rc::clone(&a); — the value is dropped when the last Rc drops. Arc<T> is the thread-safe version (atomic refcount): Arc::clone is cheap and lets multiple threads share a value; use it with Mutex/RwLock for shared mutable state across threads. Box is 'one owner, heap', Rc is 'many owners, one thread', Arc is 'many owners, many threads'.",
+    "senior": "Architecturally, the choice is about ownership semantics, not just allocation. Box gives exclusive ownership with a deterministic drop — the simplest, most cache-friendly layout, and the compiler can even use it for recursive types because indirection fixes the infinite-size problem. Rc uses a non-atomic reference count, which is faster but unsound across threads (the count would race), so Rc is not Send. Arc uses atomic ops (fetch_add/fetch_sub), making clones shareable across threads at the cost of cache-line contention on hot clone/drop paths. The classic production patterns: Arc<RwLock<T>> for shared config, Arc<Mutex<T>> for a shared worker state, Rc<RefCell<T>> for intra-thread interior mutability, and Box<dyn Trait> for type-erased pluggable behavior. The trap in all of them: cycles leak (Rc/Arc keep each other alive), which is why Weak exists.",
+    "underTheHood": "Box<T> compiles to an allocation (malloc) storing T and a Drop impl that frees it — essentially a nullable-owned pointer with move semantics. Rc<T> is a struct { ptr: NonNull<RcBox<T>> } where RcBox holds { strong: Cell<usize>, weak: Cell<usize>, value: T }; clone increments strong via a non-atomic Cell (same thread only), drop decrements and frees the box when strong hits zero. Arc<T> is the same shape but with AtomicUsize fields using SeqCst (historically) / Relaxed-with-ACQUIRE-RELEASE ordering, so concurrent clones/drops are safe; the memory ordering ensures the value's destructor runs only after the last strong reference, and the last weak drop frees the allocation. Deref is implemented via the Deref trait returning &T; deref coercions let &Box<T> become &T automatically. Drop glue ordering is the reason Rc/Arc cycles leak: the drop of one node decrements its count, but the cycle keeps every count ≥ 1, so the cyclic garbage is never freed (the collector-less design has no cycle detection)."
+  },
+  "codeComparison": {
+    "title": "Thread-shared state: Rc across threads (compile error) vs Arc",
+    "summary": "Rc's non-atomic refcount is not Send, so sharing state across threads fails to compile; Arc's atomic count makes the same design legal.",
+    "legacyOrBad": {
+      "label": "Rc across threads (invalid)",
+      "snippet": "let shared = Rc::new(5);\nthread::spawn(move || println!(\"{shared}\"));\n// E0277: Rc<int> cannot be sent between threads safely",
+      "fullFile": {
+        "filename": "src/main.rs",
+        "language": "rust",
+        "code": "use std::rc::Rc;\nuse std::thread;\n\nfn main() {\n    let shared = Rc::new(5);\n\n    // Compile error E0277: `Rc<i32>` cannot be sent between\n    // threads safely. The reason is mechanical: Rc's reference\n    // count is a plain Cell<usize>, and two threads incrementing\n    // it concurrently is a data race. The type system rejects\n    // this BEFORE it can ever crash at runtime.\n    //\n    // let handle = thread::spawn(move || {\n    //     println!(\"shared: {shared}\");\n    // });\n    // handle.join().unwrap();\n\n    println!(\"Rc stays on its own thread: {shared}\");\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Arc for cross-thread sharing",
+      "snippet": "let shared = Arc::new(Mutex::new(5));\nlet handle = thread::spawn({\n  let shared = Arc::clone(&shared);\n  move || { *shared.lock().unwrap() += 1; }\n});",
+      "fullFile": {
+        "filename": "src/main.rs",
+        "language": "rust",
+        "code": "use std::sync::{Arc, Mutex};\nuse std::thread;\n\nfn main() {\n    // Arc's reference count is atomic, so the handle can be\n    // cloned into another thread safely. Mutex gives the shared\n    // interior mutability.\n    let shared = Arc::new(Mutex::new(5));\n\n    let mut handles = Vec::new();\n    for _ in 0..8 {\n        let shared = Arc::clone(&shared); // atomic increment\n        handles.push(thread::spawn(move || {\n            let mut guard = shared.lock().unwrap();\n            *guard += 1;\n            // guard drops here, releasing the mutex\n        }));\n    }\n\n    for handle in handles {\n        handle.join().unwrap();\n    }\n\n    println!(\"final value: {}\", *shared.lock().unwrap()); // 13\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Rc not Send, and what exactly would break if you moved it across threads?",
+      "contextIntro": "The interviewer wants the mechanical reason — the refcount's memory ordering — not just 'Rc is not thread-safe'.",
+      "detailedAnswer": "Rc stores its reference count in a Cell<usize> (or the older AtomicUsize-with-Relaxed variants are NOT used). Cell operations are plain loads/stores with no atomicity or ordering guarantees. If two threads cloned the same Rc concurrently, both would read the count, both would compute +1, and both would write back — losing an increment and eventually freeing the value while a clone still references it (use-after-free). The Send trait is the compile-time guard that forbids this: Rc<T> is !Send (and !Sync), so the compiler rejects the move. Arc fixes it by using atomic fetch_add/fetch_sub with proper memory ordering (Acquire/Release), making concurrent count mutations well-defined.",
+      "trapWarning": "The naive answer is 'Rc is not atomic so it's slower' — the non-atomicity is a correctness property for single-threaded performance, not just a speed choice. Another trap: 'Arc is always better, so use it everywhere' — Arc's atomics add contention and memory-ordering fences; for single-threaded ownership Rc is strictly cheaper. Candidates who name Cell vs AtomicUsize and the lost-update failure mode show real understanding."
+    },
+    {
+      "question": "Why do Rc/Arc cycles leak memory, and what is the standard escape hatch?",
+      "contextIntro": "This is the classic 'shared ownership has a cost' question — the interviewer wants the refcount-never-reaches-zero mechanism and the Weak solution.",
+      "detailedAnswer": "A reference cycle (a node holding Rc to its parent while the parent holds Rc to the child) keeps every participant's strong count ≥ 1 forever: dropping one side decrements a count that the other side's reference keeps above zero, so no drop glue ever runs and the allocation is never freed. Rust has no cycle-collecting GC by default, so this is a genuine leak. Weak<T> is the escape hatch: it holds a non-owning reference (weak count only) that does not keep the value alive; upgrade() returns Option<Rc<T>>, None if the value was already dropped. Trees/graphs use Rc for parent→child ownership and Weak for child→parent back-references, breaking the cycle so both directions can eventually drop.",
+      "trapWarning": "The trap answer is 'just use Arc and the leak goes away' — Arc has the same cycle problem; atomics only fix cross-thread counting, not cycle counting. Another trap: 'Rc frees memory when the count is zero, so cycles are fine if you break them manually' — manual breaking is fragile; Weak is the sanctioned pattern. Candidates who mention upgrade() returning Option and the weak-count mechanics demonstrate production-grade Rust memory fluency."
+    }
+  ]
+}

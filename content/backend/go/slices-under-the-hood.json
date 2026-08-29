@@ -1,0 +1,52 @@
+{
+  "id": "slices-under-the-hood",
+  "title": "Go slices: the three-word header",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["go", "slices", "memory", "arrays", "aliasing", "append"],
+  "prerequisites": ["Go basics: arrays, slices, functions", "Understanding of value semantics vs reference semantics"],
+  "progressiveExplaining": {
+    "eli5": "A slice is like a bookmark in a book. The bookmark remembers three things: which book (the array), which page it is on (pointer), how many pages you have read (length), and how thick the book still is (capacity). If you hand your friend a copy of the bookmark, it is the SAME bookmark — if you both turn pages from where it points, you are reading the same book. But if the book runs out of pages and someone photocopies it into a thicker book, the two bookmarks suddenly point to different books. That is why slices 'share' until an append forces a copy.",
+    "junior": "A slice is a struct of three words: a pointer to the underlying array, len (length: how many elements are valid), and cap (capacity: how many fit before reallocation). s := make([]int, 3, 5) has len 3, cap 5. append(s, v) writes at s[len] if len < cap; when len == cap, it allocates a new array (usually doubling capacity), copies, and returns a NEW slice header — which is why you must assign the result: s = append(s, v). Slices are passed by value (the header is copied) but share the underlying array, so mutating elements inside a function is visible to the caller.",
+    "senior": "Architecturally, the header semantics explain most slice bugs: aliasing. a := s[:2] and s share the array, so appending into a (when capacity allows) writes into s's array — 'surprising' mutations. Taking a sub-slice of a large slice and keeping it pins the whole backing array in memory (retention), which is why you copy small parts: append([]T(nil), big[:2]...). Capacity growth policy (doubling, then 1.25x for large slices in older Go; runtime growth rules in newer versions) matters for memory: preallocating with make([]T, 0, expected) avoids repeated copying. The three-word header also means a slice is comparable to nil (nil == zero header) and can be used as a cheap iterator handle.",
+    "underTheHood": "The runtime represents a slice as reflect.SliceHeader: { Data uintptr, Len int, Cap int }. append is compiled into runtime.growslice when capacity is insufficient: growslice computes the new size with a growth factor (roundupsize aligns to the size class), allocates via mallocgc, memmoves the old elements, and returns a new header. Slicing expressions s[low:high:max] set the cap explicitly (full slice expression) to control future append aliasing. The garbage collector scans the backing array through the header's Data pointer (the array is reachable while any slice references it), which is why retention happens — the GC cannot see that only two elements are 'used'. zero-copy conversions between string and []byte share the backing memory but make the string's bytes mutable through the slice — an unsafe aliasing trap the compiler guards for string literals."
+  },
+  "codeComparison": {
+    "title": "Aliasing append into a sub-slice vs explicit capacity control",
+    "summary": "A shared backing array turns a local append into a caller-visible mutation; the full slice expression or a fresh copy restores isolation.",
+    "legacyOrBad": {
+      "label": "Shared backing array",
+      "snippet": "a := make([]int, 2, 4) // len 2, cap 4\nb := a[:2]\nb = append(b, 9)     // writes INTO a's array",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\t// One backing array, two headers sharing it.\n\ta := make([]int, 2, 4)\n\ta[0], a[1] = 1, 2\n\tb := a[:2]\n\n\t// b has cap 2 (a[:2] keeps the array, cap = 4 - 0 = 4? no:\n\t// b := a[:2] gives cap 2). appending to b does not fit and\n\t// reallocates — but the danger case is a[:0] style headers\n\t// that DO have spare capacity, so appending mutates a.\n\tdanger := a[:0] // len 0, cap 4 — shares the whole array\n\tdanger = append(danger, 100)\n\n\tfmt.Println(a) // [100, 2]: a changed! The append wrote into\n\t// the shared backing array because danger had spare capacity.\n\n\t// The bug: a local helper that does append(s[:0], ...) on a\n\t// caller's slice silently corrupts the caller's data.\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Isolated copy",
+      "snippet": "b := append([]T(nil), a[:n]...) // fresh backing array",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\ta := make([]int, 2, 4)\n\ta[0], a[1] = 1, 2\n\n\t// Take a FULL copy so the helper cannot write into a's array.\n\tcopyOfA := append([]int(nil), a[:2]...)\n\tcopyOfA = append(copyOfA, 100)\n\n\tfmt.Println(a, copyOfA) // [1 2] [1 2 100]\n\n\t// For retaining a small slice of a huge one, copying prevents\n\t// pinning the entire backing array in memory:\n\tbig := make([]int, 1_000_000)\n\t// DO: keep := append([]int(nil), big[:3]...)  → 24 bytes\n\t// DON'T: keep := big[:3]  → pins 8MB backing array\n\t_ = big\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does append sometimes modify the original slice and sometimes not?",
+      "contextIntro": "This is the classic Go aliasing question — the interviewer wants the len/cap condition that decides between in-place write and reallocation.",
+      "detailedAnswer": "append writes the new element at s[len] and increments the header's len — no copy — whenever len < cap. Because the header shares the backing array, any other slice pointing into that array observes the write. When len == cap, append calls growslice: it allocates a new, larger array, copies all elements, and returns a new header pointing to the new array — the original header (and any others sharing the old array) are untouched. So whether 'the original' changes depends on whether the append stayed within the shared capacity. The full slice expression s[low:high:max] caps future appends by setting an explicit max capacity.",
+      "trapWarning": "The naive answer is 'append copies the array'. It only copies on capacity exhaustion; most appends are in-place writes into shared memory. Another trap: 'slices are passed by reference' — the header is passed by value; only the backing array is shared. Candidates who demonstrate the len<cap branch versus the grow branch, and name the full slice expression as the isolation tool, nail this question."
+    },
+    {
+      "question": "How does sub-slicing cause memory retention, and what is the fix?",
+      "contextIntro": "This is a production-memory question — the interviewer wants the GC reachability mechanism, not just the idiom.",
+      "detailedAnswer": "The backing array is reachable (and therefore not collectable) as long as any slice header references it — the GC follows each header's Data pointer to the whole array, with no knowledge that only two elements are 'in use'. So keep := big[:3] pins an 8MB array for the life of keep. The fix is to copy the needed elements into a fresh, small allocation: keep := append([]T(nil), big[:3]...). The same mechanism explains why ranging and retaining one element (e.g., reading one record from a huge parse buffer) requires an explicit copy if the buffer must be freed.",
+      "trapWarning": "The trap answer is 'GC frees unused parts of arrays' — the GC operates on whole objects, and the backing array is one object. Another trap: 'sub-slicing copies the data' — slicing only copies the 24-byte header; the data pointer keeps referencing the original array. Mentioning that the compiler/runtime has no partial-array liveness for slices (unlike the new slices.Collect idioms that copy deliberately) demonstrates precise knowledge."
+    }
+  ]
+}

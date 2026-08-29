@@ -1,0 +1,52 @@
+{
+  "id": "borrow-checker-lifetimes",
+  "title": "Rust borrow checker and lifetimes",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.75+ (edition 2021)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["rust", "borrow-checker", "lifetimes", "ownership", "memory-safety", "miri"],
+  "prerequisites": ["Rust ownership basics", "Understanding of references and generics"],
+  "progressiveExplaining": {
+    "eli5": "A library has one copy of the crown jewels. Three rules keep it safe: (1) there is exactly one keyholder who may take the jewels home (ownership); (2) anyone else may borrow them for a visit, and while they are reading, others may also read — but only one person may write in the visitors' book at a time (borrowing rules); (3) the borrowing card always says when the visit ends (lifetimes), so the librarian never hands the jewels to someone who has left the building. The computer is the librarian — it refuses to hand over the jewels if the rules are broken, before anyone even walks in.",
+    "junior": "Every value in Rust has an owner; when the owner goes out of scope, the value is dropped. References let code use a value without taking ownership: &T (shared borrow, many readers) and &mut T (exclusive borrow, one writer). The borrow checker enforces: you cannot have a &mut T while any &T is live, and references must not outlive their referent. Lifetimes (usually elided: fn first<'a>(x: &'a str, y: &'a str) -> &'a str) tell the compiler how long a reference is valid — 'a is the intersection of the inputs' lifetimes. The compiler proves these rules at compile time, so most memory bugs become compile errors.",
+    "senior": "Architecturally, the borrow checker is a data-flow analysis over the AST that tracks the regions in which references are live: it computes whether any reference to a place is used after a conflicting mutation (aliasing) and whether a reference's region extends beyond its referent's drop. The rules give Rust the alias-free mutation model that makes its thread-safety story (Send/Sync) a consequence of the type system rather than a runtime check. The practical cost is ergonomics: self-referential structures (trees with parent pointers), graph structures, and caches need indirection (Rc/RefCell, indices, arenas) because the checker forbids the straightforward patterns. The payoff: no data races, no use-after-free, no iterator invalidation — in every build, not just under a sanitizer.",
+    "underTheHood": "The compiler lowers lifetimes into regions in the MIR (Mid-level Intermediate Representation): each reference carries a region, and NLL (non-lexical lifetimes, RFC 2094) computes, via a constraint graph and a borrow set analysis, the set of locations where a borrow is live. The borrow checker (polonius is the next-generation engine) then verifies: a mutable borrow's region cannot overlap with any other live borrow of the same place, and no borrow can outlive the region of the referent. Two-phase borrows and closure capture are handled with special borrow kinds. At runtime, references are plain pointers — the checker adds zero cost; the checks happen at compile time. Drop elaboration inserts calls to drop glue; dropping while borrowed is prevented by the region constraints, which is why the classic use-after-free becomes a compile error before a single instruction runs."
+  },
+  "codeComparison": {
+    "title": "Invalidating a borrow vs the borrow-checked version",
+    "summary": "The unsafe/mutable-alias pattern corrupts memory; Rust rejects it at compile time, forcing the shared-ownership design that is safe.",
+    "legacyOrBad": {
+      "label": "Aliasing mutation (invalid in Rust)",
+      "snippet": "let mut v = vec![1, 2, 3];\nlet first = &v[0];       // shared borrow\nv.push(4);               // ERROR: cannot borrow v as mutable\nprintln!(\"{first}\");      //   while `first` is still live",
+      "fullFile": {
+        "filename": "aliasing.rs",
+        "language": "rust",
+        "code": "// This file does NOT compile — and that is the point. In C or\n// C++ the equivalent pattern silently reads freed or reallocated\n// memory; Rust rejects it before running.\n//\n// fn main() {\n//     let mut v = vec![1, 2, 3];\n//     let first = &v[0]; // shared borrow of the buffer\n//     v.push(4);         // E0502: cannot borrow `v` as mutable\n//                        // because it is also borrowed as immutable\n//     println!(\"{first}\");\n// }\n//\n// If this compiled, push() could reallocate the backing buffer,\n// invalidating `first` — a use-after-free. The borrow checker\n// rejects the program at compile time, which is exactly why the\n// safe version below is the idiomatic design."
+      }
+    },
+    "modernOrGood": {
+      "label": "Index-based / scoped design",
+      "snippet": "let len = v.len();\nlet first = v[0];  // copy the value out, no borrow held\nv.push(4);         // fine: no outstanding borrow\nprintln!(\"{first}\");",
+      "fullFile": {
+        "filename": "aliasing.rs",
+        "language": "rust",
+        "code": "fn main() {\n    let mut v = vec![1, 2, 3];\n\n    // Option A: copy the value out (i32 is Copy) so no borrow\n    // of the buffer is held across the mutation.\n    let first = v[0];\n    v.push(4);\n    println!(\"{first} and len {}\", v.len());\n\n    // Option B: scope the borrow so it ends before the mutation.\n    let second = {\n        let r = &v[1];\n        *r\n    };\n    v.push(5);\n    println!(\"second: {second}\");\n\n    // Option C (the production pattern): use indices instead of\n    // references when a collection may grow while you hold a view.\n    let idx = 0;\n    v.push(6);\n    println!(\"v[{idx}] = {}\", v[idx]);\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly does non-lexical lifetimes (NLL) change versus the old lexical model, and what does it still not allow?",
+      "contextIntro": "This checks precise knowledge of the borrow checker's evolution — the interviewer wants region-based analysis, not just 'NLL made the compiler smarter'.",
+      "detailedAnswer": "Under lexical lifetimes (pre-2018), a borrow lasted until the end of the enclosing block, so a temporary reference 'poisoned' the whole scope even if its last use was earlier. NLL computes the actual live range: the set of program points where the borrow is used (computed on MIR), so the borrow ends at its last use, not at the block's end. This made patterns like `let x = &v[0]; v.push(1);` legal when x is never read after the push. What NLL still rejects: any use of the reference after the conflicting mutation, and any borrow outliving its referent's region — the fundamental aliasing rules remain. Two-phase borrows (allowing the first phase of a method call to be a shared borrow) are a separate refinement.",
+      "trapWarning": "The trap answer is 'NLL lets you mutate while borrowing'. NLL only shortens borrows to their last use; if the reference is actually read after the mutation, the error remains. Another trap: 'NLL is a runtime feature' — it is purely a compile-time region analysis on MIR. Candidates who name RFC 2094, last-use analysis, and the persisting restrictions show they know the checker rather than a release note."
+    },
+    {
+      "question": "Why can't you build a self-referential structure directly, and what patterns replace it?",
+      "contextIntro": "This tests whether the candidate understands that the ownership model forbids cyclic references and what the standard escape hatches are.",
+      "detailedAnswer": "A self-referential struct (e.g., a node holding a &'a Node to its parent) requires the reference to point into the same allocation that owns it — but moving the struct invalidates the pointer (Rust moves are byte copies, no pointer fixup), and the borrow checker cannot verify the invariant because the region of the referent is the struct's own memory. The standard patterns: indices into a shared arena (Vec of nodes, each storing parent: Option<usize>), Rc/Weak for shared ownership with non-owning back-references (Weak breaks cycles so refcounts can drop), or RefCell<Option<Rc<Node>>> for interior mutability. Each trades a runtime cost (refcount, borrow check) for the compile-time safety the direct pattern cannot provide.",
+      "trapWarning": "The naive answer is 'use Box'. Box gives heap allocation but still strict ownership — a Box<Node> with a self-pointer has the same move-invalidation problem. The sharp answer names the actual constraints: moves don't fix up pointers (unlike GC languages), and the borrow checker requires the referent's region to outlive the reference, which a self-cycle violates. Mentioning Weak to break cycles (the 'parents in a tree' interview favorite) demonstrates practical Rust fluency."
+    }
+  ]
+}

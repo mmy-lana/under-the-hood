@@ -1,0 +1,58 @@
+{
+  "id": "signals-vs-rxjs",
+  "title": "Angular Signals vs RxJS Observables",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 16+ (signals), RxJS 7+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["angular", "signals", "rxjs", "reactivity", "change-detection", "zonejs"],
+  "prerequisites": ["Angular change detection basics", "RxJS Observables and operators"],
+  "progressiveExplaining": {
+    "eli5": "Think of two kinds of message systems. RxJS is a walkie-talkie: anyone can broadcast to many listeners at any time, and messages can be shaped or combined along the way. Signals are a direct phone line from one value to everyone reading it: when the value changes, the readers are told immediately, and only the readers who are actually listening get the update. A walkie-talkie can reach people who are not even paying attention; a phone line only bothers the people on the line. For a single value that just needs to stay in sync, the phone line is simpler and cheaper.",
+    "junior": "A signal holds a value and notifies its consumers when it changes: const count = signal(0); count.set(1); count.update((v) => v + 1); const doubled = computed(() => count() * 2);. In templates you write {{ count() }} — the () makes it lazy and automatically tracked. An Observable is a stream: const clicks$ = fromEvent(button, 'click'); clicks$.pipe(map(...), filter(...)).subscribe(...). Practical difference: signals are eager-by-value and synchronous; observables are lazy, async, and push values through a pipeline over time. Signals are the right tool for state owned by a component; observables remain right for streams of events, WebSocket messages, and debounced input where time-based operators are needed.",
+    "senior": "Signals solve an architectural problem Zone.js created: with zone-based change detection, any async task (setTimeout, fetch, event) triggered a full tree traversal of the component tree to check every binding. Signal-based change detection is pull-based and granular — a component only re-checks bindings that actually read a signal, and only the components whose signals changed are marked dirty. This moves Angular from 'check everything, always' to 'check what changed, where it changed'. RxJS still has a role for cross-cutting streams (shared services, global events), but state propagation inside the component graph increasingly flows through signals, with computed() giving lazy memoized derivations that avoid recomputation when no one reads them.",
+    "underTheHood": "A signal is a primitive built on a pull-based consumer/producer graph: each signal node (SIGNAL) keeps a list of consumers (computed/effects/template bindings) registered in its Version. When set() runs, it bumps the signal's Version and marks consumers dirty. computed() values are lazily re-evaluated when read and only if an upstream version changed — the dirty check is an integer comparison, not a deep equality. Template bindings in OnPush components subscribe to the signals they read, so the framework knows exactly which views to refresh. RxJS, by contrast, is a push model built on the Observer pattern: a Subject owns an array of subscribers, operators create intermediate Subjects, and values flow through with error/completion channels. The two are integrated via toSignal/toObservable bridging functions that translate between the push and pull paradigms."
+  },
+  "rosettaStone": {
+    "react": "const [count, setCount] = useState(0); // setCount triggers re-render\nconst doubled = count * 2;",
+    "angular": "const count = signal(0);\nconst doubled = computed(() => count() * 2);",
+    "vue": "const count = ref(0);\nconst doubled = computed(() => count.value * 2);",
+    "svelte": "let count = $state(0);\nlet doubled = $derived(count * 2);"
+  },
+  "codeComparison": {
+    "title": "Shared value via Subject + async pipe vs signal with computed",
+    "summary": "Both approaches keep a UI in sync, but the signal version is synchronous, tree-local, and granular; the RxJS version is async and needs subscription lifecycle management.",
+    "legacyOrBad": {
+      "label": "RxJS Subject + async pipe",
+      "snippet": "count$ = new BehaviorSubject(0);\nincrement() { this.count$.next(this.count$.value + 1); }",
+      "fullFile": {
+        "filename": "counter.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\nimport { BehaviorSubject } from 'rxjs';\nimport { AsyncPipe, CommonModule } from '@angular/common';\n\n@Component({\n  selector: 'app-counter',\n  standalone: true,\n  imports: [CommonModule],\n  template: `\n    <p>Count: {{ count$ | async }}</p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count$ = new BehaviorSubject<number>(0);\n\n  increment(): void {\n    // Subject state lives outside change detection; the async pipe\n    // subscribes and marks the component dirty on each emission.\n    this.count$.next(this.count$.value + 1);\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Signal + computed",
+      "snippet": "count = signal(0);\nincrement() { this.count.update((v) => v + 1); }",
+      "fullFile": {
+        "filename": "counter.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal, computed } from '@angular/core';\n\n@Component({\n  selector: 'app-counter',\n  template: `\n    <p>Count: {{ count() }}</p>\n    <p>Twice: {{ doubled() }}</p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count = signal(0);\n  doubled = computed(() => this.count() * 2);\n\n  increment(): void {\n    this.count.update((v) => v + 1);\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "When should you still reach for RxJS instead of signals?",
+      "contextIntro": "Interviewers want to see that you do not treat signals as a universal replacement; they probe your judgment about async boundaries.",
+      "detailedAnswer": "Signals are synchronous pull-based state — perfect for values that exist at a point in time. RxJS earns its place when values arrive over time or need time-based operators: debouncing user input, websocket streams, retry/backoff on HTTP, combining multiple async sources with combineLatest/zip, or cancellation semantics. The classic hybrid is: keep the external stream in RxJS (toSignal to enter the signal world), then derive everything downstream with computed(). Trying to model a hot event stream purely with signals means hand-rolling debounce/timing logic that operators already implement and test.",
+      "trapWarning": "The naive answer is 'signals replace observables everywhere' or 'subscribe in a component'. Real-world Angular code still uses RxJS for inter-service messaging and async pipelines, and the Angular team explicitly positions signals as state, not streams. Saying 'signals are synchronous and observables are asynchronous' without connecting it to when each property matters (state vs event streams) reads as memorized, not understood."
+    },
+    {
+      "question": "Why does calling count() in a template actually work, and why did Angular need Zone.js before signals?",
+      "contextIntro": "This separates developers who understand the reactivity graph from those who think signals are just syntax sugar for subjects.",
+      "detailedAnswer": "Reading count() inside a template registers the current template effect as a consumer of that signal node. When the signal's version bumps, that consumer is marked dirty and only its owning view re-checks its bindings. Before signals, Angular had to assume any async activity anywhere might have changed anything, so Zone.js monkey-patched every async API (setTimeout, addEventListener, Promise) to notify Angular to run change detection over the whole tree, with OnPush as an optimization. Signals replace that blanket assumption with an explicit dependency graph, which is why zoneless Angular 18+ can run change detection only where needed.",
+      "trapWarning": "A tempting but wrong claim is 'signals make change detection obsolete'. Change detection still runs — it just becomes granular and event-driven. Another trap: assuming computed() re-evaluates on every read; it memoizes and only re-evaluates when an upstream dependency changes, which is exactly the lazy pull behavior interviewers look for."
+    }
+  ]
+}

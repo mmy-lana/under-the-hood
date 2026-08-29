@@ -1,0 +1,58 @@
+{
+  "id": "compiler-auto-memoization",
+  "title": "React Compiler: automatic memoization",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React Compiler (React 19)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["react", "compiler", "memoization", "performance", "babel", "react-compiler"],
+  "prerequisites": ["React rendering model", "useMemo/useCallback and memo() basics"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a barista who writes down every coffee order on a sticky note before making it. The old way: every customer, even one ordering the exact same flat white as the last person, gets the whole recipe read out loud and re-made from scratch. The new way: the barista notices 'oh, same flat white again' and hands over the cup he already made. The React Compiler is a very attentive barista who puts sticky notes on every order automatically — you never have to remember to stick them yourself.",
+    "junior": "Until now you manually wrapped values in useMemo and functions in useCallback, and wrapped components in memo() to skip re-renders. The React Compiler (installed as a Babel/SWC plugin, e.g. babel-plugin-react-compiler) analyzes your components and automatically applies memoization wherever it is safe: it memoizes computed values, callback functions, and JSX subtrees, so hand-written useMemo/useCallback/memo become mostly unnecessary. You keep coding normally — no new syntax — and the compiler inserts the caching. Rules of React still apply: no mutating props/state during render, hooks called unconditionally.",
+    "senior": "The architectural significance: manual memoization is brittle — people forget memo() on a component, or skip a dependency, and the optimization silently stops working (or worse, causes stale closures). The compiler makes the common case correct by construction and lets teams remove the memoization scaffolding. It works at the function level, analyzing data flow to decide which values are reactive (depend on props/state/hooks) and caching derived values keyed by their reactive inputs. It does not change React's model — re-rendering still happens — it just prunes the subtrees that provably receive identical inputs. In React 19 it is production-ready; for codebases with heavy imperative patterns (mutable refs mutated during render) it can bail out.",
+    "underTheHood": "The compiler lowers each component into a memoized form: it builds a dependency graph of every expression, computes a static 'reactive value' analysis, and generates code that compares input references (Object.is) before recomputing. Concretely, it transforms a component body into a function that on first call builds a cache of derived values (stored in a per-component cache — for example a WeakMap keyed by the fiber or a runtime cache slot), and on subsequent calls checks whether any reactive input changed and reuses cached results otherwise. It also splits JSX into subcomponents where useful so unchanged children skip their render pass. The runtime caches use the same React internals as useMemo's cache slot (fiber.memoizedState hooks), so no new runtime is shipped — it is purely a compile-time optimization on top of existing memo semantics."
+  },
+  "rosettaStone": {
+    "react": "// Compiler handles this:\nconst doubled = compute(items); // memoized automatically\nconst onSave = () => save(draft); // memoized automatically",
+    "angular": "// Angular defaults to OnPush with signals: derived values\n// memoize automatically via computed().",
+    "vue": "// Vue's reactivity is granular by default: computed() memoizes\n// and the render effect only re-runs for used deps.",
+    "svelte": "// Svelte compiles components; $derived memoizes derived state\n// and the compiler decides the update graph at build time."
+  },
+  "codeComparison": {
+    "title": "Manual useMemo/memo scaffolding vs compiler-auto memoization",
+    "summary": "Hand-written memoization is error-prone and verbose; the compiler derives the same caching automatically and stays correct as the component evolves.",
+    "legacyOrBad": {
+      "label": "Manual memoization",
+      "snippet": "const list = useMemo(() => items.filter(byQuery), [items, query]);\nconst onPick = useCallback((id) => pick(id), []);\nconst Row = memo(TableRow);",
+      "fullFile": {
+        "filename": "FilteredTable.jsx",
+        "language": "jsx",
+        "code": "import { memo, useCallback, useMemo, useState } from 'react';\n\nconst TableRow = memo(function TableRow({ row, onPick }) {\n  return (\n    <tr>\n      <td>{row.name}</td>\n      <td>\n        <button onClick={() => onPick(row.id)}>Pick</button>\n      </td>\n    </tr>\n  );\n});\n\nexport default function FilteredTable({ items, query }) {\n  const [selected, setSelected] = useState(null);\n\n  // Manual memoization: every value must be wrapped, and any\n  // future edit that adds a dependency silently breaks the cache.\n  const filtered = useMemo(() => items.filter((i) => i.name.includes(query)), [items, query]);\n  const onPick = useCallback((id) => setSelected(id), []);\n\n  return (\n    <table>\n      <tbody>\n        {filtered.map((row) => (\n          <TableRow key={row.id} row={row} onPick={onPick} />\n        ))}\n      </tbody>\n    </table>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Compiler memoization",
+      "snippet": "const list = items.filter(byQuery);\nconst onPick = (id) => setSelected(id);",
+      "fullFile": {
+        "filename": "FilteredTable.jsx",
+        "language": "jsx",
+        "code": "import { useState } from 'react';\n\nfunction TableRow({ row, onPick }) {\n  return (\n    <tr>\n      <td>{row.name}</td>\n      <td>\n        <button onClick={() => onPick(row.id)}>Pick</button>\n      </td>\n    </tr>\n  );\n}\n\nexport default function FilteredTable({ items, query }) {\n  const [selected, setSelected] = useState(null);\n\n  // No memoization scaffolding: the React Compiler derives the\n  // dependency graph statically and caches these values and the\n  // TableRow JSX subtree between renders automatically.\n  const filtered = items.filter((i) => i.name.includes(query));\n  const onPick = (id) => setSelected(id);\n\n  return (\n    <table>\n      <tbody>\n        {filtered.map((row) => (\n          <TableRow key={row.id} row={row} onPick={onPick} />\n        ))}\n      </tbody>\n    </table>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How is the React Compiler's memoization different from just wrapping everything in useMemo?",
+      "contextIntro": "The interviewer wants to distinguish a mechanical understanding ('it does what I do by hand') from understanding the analysis the compiler performs.",
+      "detailedAnswer": "The compiler does not blindly cache — it performs a reactive-value analysis: for each expression it determines which inputs are reactive (derived from props/state/hooks) and caches only when the computation is pure with respect to those inputs and the inputs can be compared with Object.is. It can also split JSX into memoized subcomponents and reorder computations. Hand-written useMemo caches based on the dependency array you guessed; the compiler's cache is derived from actual data flow, so it stays correct when the component changes — manual memoization goes stale the moment someone edits a dep array incorrectly, while the compiler's output is regenerated from source every build.",
+      "trapWarning": "The trap is claiming the compiler removes the need for understanding rendering, or that it makes components 'not re-render'. Re-renders still happen for the parent; the compiler prunes the child work when inputs are unchanged. Another trap: 'it replaces React's reconciliation' — it does not; it optimizes at the component-function level on top of the existing commit pipeline."
+    },
+    {
+      "question": "What kinds of code make the React Compiler bail out or behave unsafely?",
+      "contextIntro": "This probes whether you know the compiler's constraints — interviewers want to see that you understand it is not magic and has a rules contract.",
+      "detailedAnswer": "The compiler assumes the Rules of React: hooks are called unconditionally at the top level, and render must be pure. It bails out (skips memoization for that component) when it cannot prove purity — for example, components that mutate refs during render, rely on unstable globals, or use patterns it cannot analyze like dynamically-invoked hooks. Reading mutable values (like ref.current) during render is a red flag because the compiler cannot track when those change, which can produce stale caches. In practice you see 'compiler cannot optimize' warnings in the build and the affected component falls back to normal (still correct) behavior.",
+      "trapWarning": "Saying 'it bails out and breaks' is wrong — bailing out means the component renders normally without auto-memoization, never incorrect output. The real risk is with code that already violates the Rules of React: such code was already buggy (stale reads, double renders under StrictMode), and the compiler just surfaces it. Mentioning React Compiler's runtime invariant checks (dev-only) that flag violations is a strong differentiator."
+    }
+  ]
+}

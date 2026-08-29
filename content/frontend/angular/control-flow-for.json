@@ -1,0 +1,58 @@
+{
+  "id": "control-flow-for",
+  "title": "Angular @for vs *ngFor",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["angular", "control-flow", "templates", "change-detection", "diffing", "track-by"],
+  "prerequisites": ["Angular component basics", "Understanding of *ngIf / *ngFor structural directives"],
+  "progressiveExplaining": {
+    "eli5": "Imagine you have a tray of labeled jars, and you are told to keep it updated as the shop adds and removes jars. The old way was to hire a clerk who starts from the first shelf and rewrites the entire tray label by label every time something changes — slow when the tray is big. The new way is a clerk who only looks at the one jar that changed, because each jar has a name tag (a key). He never touches the jars that stayed the same, so a full tray still updates in a blink.",
+    "junior": "In Angular 16 and earlier, repeating elements used the structural directive *ngFor=\"let item of items; trackBy: trackFn\". Angular 17 introduced the new control-flow block syntax: @for (item of items; track item.id) { <p>{{ item.name }}</p> } @empty { <p>No items.</p> }. The big practical change is that track is now mandatory — if you omit it, the compiler errors out. The @empty block is new syntax that renders a fallback when the list is empty, replacing an *ngIf=\"items.length\" wrapper. Items are scoped to the loop body with an implicit $index, $first, $last, $even, $odd, $count variables that are still available.",
+    "senior": "The structural directive version had several architectural costs. Each *ngFor was a wrapper component (template context), which added a layer in the component tree and made change detection walk through an extra boundary. The new control flow is compiled directly into the view as Angular's internal TView instructions, so it removes the wrapper component entirely, resulting in fewer embedded views and a smaller change-detection graph. Because track is required, it forces developers to give the diffing algorithm a stable identity from day one, which prevents the classic bug where a missing trackBy caused the entire list to be re-created and lost input state on every mutation. For large lists the change is measurable: the DOM patch is reduced from O(n) to O(changed) when keys are stable.",
+    "underTheHood": "At compile time the Angular template compiler turns @for into the createBlock/repeaterCreate instructions in the Ivy generated code. Behind the scenes Angular's RepeaterContext keeps a Map of LContainer → active views keyed by the track expression's result. On every change-detection pass, the runtime diffing algorithm (LContainer-based) walks old and new track values, computes a minimal move/add/remove operation set, and applies it with insertion/removal/moveBlock operations on the underlying DOM. Because moves reuse the existing DOM nodes and their component instances, state inside items is preserved. The old *ngFor path used a TemplateRef + EmbeddedViewFactory, which instantiated a full EmbeddedView and ran its own change detection scope; the new path operates directly on TView slots with the parent's change detection, eliminating a per-row scope boundary."
+  },
+  "rosettaStone": {
+    "react": "items.map((item) => <li key={item.id}>{item.name}</li>)",
+    "angular": "@for (item of items; track item.id) { <li>{{ item.name }}</li> } @empty { <li>Empty</li> }",
+    "vue": "<li v-for=\"item in items\" :key=\"item.id\">{{ item.name }}</li>",
+    "svelte": "{#each items as item (item.id)} <li>{item.name}</li> {/each}"
+  },
+  "codeComparison": {
+    "title": "Legacy *ngFor with optional trackBy vs modern @for with mandatory track",
+    "summary": "The legacy structural directive forgot keys unless you remembered trackBy; the new control flow demands a track expression at compile time.",
+    "legacyOrBad": {
+      "label": "Legacy *ngFor",
+      "snippet": "<ul>\n  <li *ngFor=\"let task of tasks\">\n    {{ task.title }}\n  </li>\n</ul>",
+      "fullFile": {
+        "filename": "task-list.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\n\ninterface Task {\n  id: number;\n  title: string;\n  done: boolean;\n}\n\n@Component({\n  selector: 'app-task-list',\n  template: `\n    <ul>\n      <li *ngFor=\"let task of tasks\">\n        <input type=\"checkbox\" [checked]=\"task.done\" />\n        {{ task.title }}\n      </li>\n    </ul>\n  `\n})\nexport class TaskListComponent {\n  tasks: Task[] = [\n    { id: 1, title: 'Write plan', done: true },\n    { id: 2, title: 'Ship feature', done: false }\n  ];\n\n  addTask(title: string): void {\n    // No trackBy: Angular diffs by object identity, so any\n    // array replacement re-creates every DOM row and loses\n    // the checkbox state of untouched items.\n    this.tasks = [\n      ...this.tasks,\n      { id: this.tasks.length + 1, title, done: false }\n    ];\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Modern @for",
+      "snippet": "<ul>\n  @for (task of tasks; track task.id) {\n    <li>{{ task.title }}</li>\n  } @empty {\n    <li>No tasks yet.</li>\n  }\n</ul>",
+      "fullFile": {
+        "filename": "task-list.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\n\ninterface Task {\n  id: number;\n  title: string;\n  done: boolean;\n}\n\n@Component({\n  selector: 'app-task-list',\n  template: `\n    <ul>\n      @for (task of tasks; track task.id) {\n        <li>\n          <input type=\"checkbox\" [checked]=\"task.done\" />\n          {{ task.title }}\n        </li>\n      } @empty {\n        <li>No tasks yet.</li>\n      }\n    </ul>\n  `\n})\nexport class TaskListComponent {\n  tasks: Task[] = [\n    { id: 1, title: 'Write plan', done: true },\n    { id: 2, title: 'Ship feature', done: false }\n  ];\n\n  addTask(title: string): void {\n    // Stable track by id: Angular reuses DOM rows whose keys\n    // still exist and only inserts one new row.\n    this.tasks = [\n      ...this.tasks,\n      { id: this.tasks.length + 1, title, done: false }\n    ];\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is track mandatory in @for when trackBy was optional in *ngFor?",
+      "contextIntro": "Interviewers use this to separate developers who merely read the Angular 17 release notes from those who understand why the team made it a hard error.",
+      "detailedAnswer": "Optional keys meant the happy path silently degraded to object-identity diffing. On every mutation that produced a new array — even an immutable update that only touched one element — Angular would tear down and re-create every row, losing checkbox state, scroll position inside rows, and causing full re-renders of expensive subtrees. The team decided the failure mode was too expensive to leave discoverable, so the compiler now rejects a loop without an explicit track expression. It is a static-analysis-level enforcement of the best practice that previously required code-review discipline.",
+      "trapWarning": "Candidates often say \"track is required so Angular knows how to update the DOM\", which is true but shallow. The sharper point is that the DOM nodes are reused and component instances preserved, and a wrong key — like using the array index — makes the DOM correct but defeats state preservation, which is the entire purpose of the feature."
+    },
+    {
+      "question": "What is actually different under the hood between a structural directive and the @for block?",
+      "contextIntro": "A classic 'do you understand the framework' question. The interviewer wants to hear about view containers and change-detection scope, not syntax.",
+      "detailedAnswer": "*ngFor compiled to a wrapper directive that instantiated an EmbeddedView for every row via a TemplateRef. Each EmbeddedView had its own change-detection scope and the directive held an internal view-container bookkeeping object. @for is compiled directly into the component's generated view definition: the compiler emits repeaterCreate and related instructions operating on the LContainer of the parent view, so rows share the parent's change-detection scope and there is no directive wrapper class per loop. The runtime diff is a minimal edit script over track values applied with move/insert/remove operations on existing DOM nodes.",
+      "trapWarning": "A common trap answer is that @for is \"faster because it uses track by default\". The diff algorithm existed for *ngFor too; the real structural change is the removal of the per-row embedded view scope and wrapper directive, which shrinks the change-detection graph and the generated code size. Mentioning the LContainer/TView mechanics is what makes the answer stand out."
+    }
+  ]
+}

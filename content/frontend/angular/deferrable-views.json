@@ -1,0 +1,58 @@
+{
+  "id": "deferrable-views",
+  "title": "Angular @defer Deferrable Views",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["angular", "deferrable-views", "performance", "lazy-loading", "bundle-size"],
+  "prerequisites": ["Angular component and standalone imports", "Basic awareness of route-level lazy loading"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a cookbook where every recipe is already clipped to the kitchen board the moment you open the book. If you only ever make pancakes, you still carried every page. @defer is like keeping the board almost empty and pulling out one recipe card only when you reach for it — the pancake card arrives just before you start cooking, and the soufflé card only when you actually flip to that page. The kitchen stays light, and the meal you wanted is ready right on time.",
+    "junior": "@defer lets you lazy-load any block of template plus its dependencies: @defer (on viewport) { <app-chart /> } @placeholder { <div>Loading chart…</div> } @loading (minimum 500ms) { <p>Fetching…</p> } @error { <p>Failed to load.</p> }. The triggers are on viewport, on idle, on interaction, on hover, on timer(5s), on immediate, or a custom when(condition). Each state block can also be combined. The key practical win: the component inside @defer, and everything it imports, is split into a separate chunk fetched only when the trigger fires — so the initial bundle and first-paint cost shrink without restructuring your module graph.",
+    "senior": "Architecturally, @defer gives component-level code-splitting without manual dynamic import plumbing. Route-level lazy loading splits the app per route; deferrable views split within a route, shrinking the critical rendering path even further. It interacts with hydration and SSR: with SSR, deferred blocks are not rendered (or rendered as placeholders) in the initial HTML, then hydrate when their trigger fires. Choosing triggers is an architectural decision: on viewport is best for below-the-fold content, on interaction for hover-opened popovers, on idle for non-critical widgets. Overusing @defer on everything creates jank (visible placeholders) and defeats its purpose; it is a surgical tool for heavy, non-critical subtrees.",
+    "underTheHood": "At compile time, each @defer block is emitted as a separate render function with its own dependencies closure, and the compiler splits the deferred view into its own lazy chunk (the Angular compiler generates the import() for you). The runtime maintains a DeferBlockState machine: placeholder → loading → complete/error. Trigger evaluation is wired to framework services — on viewport uses IntersectionObserver, on idle uses requestIdleCallback (with a graceful fallback to setTimeout), on hover/interaction attaches listeners, on timer uses setTimeout. When a trigger fires, the runtime schedules the dynamic import of the deferred chunk and, once loaded, creates the embedded view inside the host LContainer. The @placeholder is rendered synchronously in the initial view so layout is stable."
+  },
+  "rosettaStone": {
+    "react": "const Chart = lazy(() => import('./Chart'));\n<Suspense fallback={<div>Loading…</div>}><Chart /></Suspense>",
+    "angular": "@defer (on viewport) {\n  <app-chart />\n} @placeholder { <div>Loading…</div> }",
+    "vue": "const Chart = defineAsyncComponent(() => import('./Chart.vue'));\n<Chart /> <!-- emits fallback slot while loading -->",
+    "svelte": "import Chart from './Chart.svelte';\n{#await import('./Chart.svelte') then { default: Chart }}<Chart />{/await}"
+  },
+  "codeComparison": {
+    "title": "Always-eager widget vs @defer (on viewport) widget",
+    "summary": "The eager version ships the heavy chart library in the initial bundle; the deferred version splits it into a chunk loaded only when the chart scrolls into view.",
+    "legacyOrBad": {
+      "label": "Eager widget",
+      "snippet": "<section>\n  <app-heavy-chart [data]=\"series\" />\n</section>",
+      "fullFile": {
+        "filename": "dashboard.component.ts",
+        "language": "typescript",
+        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <!-- Renders eagerly: the charting library is part of the\n           initial bundle even though the chart may sit below\n           the fold on mobile. -->\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      <app-heavy-chart [data]=\"series\" />\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "@defer (on viewport)",
+      "snippet": "<section>\n  @defer (on viewport) {\n    <app-heavy-chart [data]=\"series\" />\n  } @placeholder {\n    <div>Chart will appear here…</div>\n  }\n</section>",
+      "fullFile": {
+        "filename": "dashboard.component.ts",
+        "language": "typescript",
+        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      @defer (on viewport) {\n        <app-heavy-chart [data]=\"series\" />\n      } @placeholder {\n        <div class=\"h-64 animate-pulse rounded bg-surface\">\n          Chart will appear here…\n        </div>\n      } @loading (minimum 300ms) {\n        <p>Loading chart…</p>\n      } @error {\n        <p>Chart failed to load.</p>\n      }\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does @defer actually split the bundle at build time?",
+      "contextIntro": "Interviewers ask this to check whether you understand that deferrable views are a compiler feature, not just a template attribute.",
+      "detailedAnswer": "The Angular compiler analyzes the @defer block, collects the standalone components and dependencies used inside it, and emits them into a separate render function wrapped in a dynamic import(). The block's template is compiled into a separate deferred view definition, and the runtime only instantiates it after the import resolves. Because it is compiler-driven, dependency hoisting is automatic — you get fine-grained chunking without manually orchestrating loaders, and unused imports stay out of the main chunk.",
+      "trapWarning": "The common trap is claiming @defer only postpones rendering (runtime) and does nothing for bundle size. In fact the primary benefit is compile-time code-splitting; if you use @defer on a component that is also imported eagerly elsewhere, the component stays in the main bundle and the split never materializes. Interviewers love that catch."
+    },
+    {
+      "question": "What happens during SSR with @defer blocks, and why does that matter?",
+      "contextIntro": "This question probes whether you think about deferred content as a client-only feature or understand the full SSR/hydration lifecycle.",
+      "detailedAnswer": "During SSR/prerender, deferred blocks are rendered as their @placeholder (or skipped entirely when no placeholder is provided), because the trigger conditions — viewport, idle, hover — only make sense in a browser. The deferred component's HTML is not in the initial page source, so it does not contribute to first paint, but also cannot be displayed before JavaScript runs. After hydration, the triggers are armed and the block loads. This matters for SEO and perceived performance: critical content must never be deferred, and deferred content must always have a meaningful placeholder to prevent layout shift.",
+      "trapWarning": "A naive candidate says 'SSR renders the deferred component too'. It does not — the trigger cannot fire on the server, and rendering it would defeat the purpose. The related trap is using on idle for above-the-fold content and then wondering why the hero image flashes in late; deferral is for non-critical subtrees only."
+    }
+  ]
+}

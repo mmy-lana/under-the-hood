@@ -1,0 +1,58 @@
+{
+  "id": "app-router-caching",
+  "title": "Next.js App Router: the caching layers",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+/15 App Router",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nextjs", "caching", "app-router", "cache", "revalidation", "ssg"],
+  "prerequisites": ["Next.js App Router basics", "Familiarity with fetch and cache-control semantics"],
+  "progressiveExplaining": {
+    "eli5": "A school office answers the same three questions every day. Instead of calling the district every time, it keeps three different notebooks: a daily folder of answers it can reuse until the district says 'update' (data cache), a map of the whole school it redraws when anything changes (router cache), and a sheet of paper it carries between offices when someone asks a fresh question (the request). Understanding the notebooks — which is kept, which is redrawn, and when — is the whole secret to knowing why a page sometimes shows old numbers.",
+    "junior": "The App Router has several caches with distinct lifetimes: the full route cache (prerendered HTML stored on the server/CDN, revalidated by revalidatePath/time-based revalidate); the data cache (persisted fetch() results keyed by URL + options, controlled by next: { revalidate } or fetch's cache); the router cache (client-side cache of visited segments and prefetched payloads, invalidated on navigation to stale-while-revalidate pages); and React's request memoization (dedupes identical fetches within one render pass, always fresh within the request). The practical rule: add noStore()/no-store to anything user-specific, use revalidateTag('x') after mutations, and remember the router cache is per-session on the client.",
+    "senior": "Architecturally the caches form a pipeline from server origin to browser. The key mental model: the data cache and full route cache are server/CDN layers keyed by fetch options and page config; the router cache is a client-side segment cache with a 30-second (or navigation-based) TTL. Stale-while-revalidate semantics mean a navigation shows cached UI while background revalidation refreshes the payload. Getting cache behavior right is the difference between a fast-but-stale app and a correct-but-slow one: dynamic pages must opt out (dynamic = 'force-dynamic', cookies()/headers() reads, noStore), while marketing pages benefit from full static caching. Misunderstanding the layers is the #1 source of 'my data is stale' production bugs.",
+    "underTheHood": "During prerender, the server stores the rendered HTML in the full route cache and fetch results in the data cache (both on disk/CDN). On a request, Next checks the full route cache first; if present and fresh, it streams the cached HTML without re-rendering. For dynamic segments, the server re-renders; during render, fetch() calls are checked against the data cache (if cache: 'force-cache' or default with revalidate), and identical in-flight fetches are deduped by a per-request cache (React's cache() + the fetch dedupe map). revalidatePath/tag invalidate matching entries by deleting them from the incremental cache store (memory/fs or ISR-like handlers on the host). On the client, the router cache stores the Flight payload of each visited segment; navigating to a cached segment shows it instantly while a background revalidation updates it (soft navigation). The interaction between the client router cache and server revalidation is why hard-refreshes often show different data than soft navigations."
+  },
+  "rosettaStone": {
+    "react": "// React 19: <Cache> component, cache() for memoization;\n// framework (Next) owns fetch caching and hydration",
+    "angular": "// Angular SSR: HTTP cache-control headers + service worker\n// (ngsw) for client caching; no per-route cache pipeline",
+    "vue": "// Nuxt: useFetch keyed caching, swr: true for\n// stale-while-revalidate, routeRules for prerender/caching",
+    "svelte": "// SvelteKit: adapter-static prerenders everything; full\n// static caching by default, no client router cache"
+  },
+  "codeComparison": {
+    "title": "Stale user data vs correctly revalidated data",
+    "summary": "A default fetch caches aggressively and can leak cross-user data; opting the route out and tagging mutations keeps data both fast and correct.",
+    "legacyOrBad": {
+      "label": "Uncontrolled default caching",
+      "snippet": "const res = await fetch('https://api.example.com/me');\nconst me = await res.json();",
+      "fullFile": {
+        "filename": "dashboard/page.tsx",
+        "language": "tsx",
+        "code": "export const dynamic = 'force-static';\n\nexport default async function Dashboard() {\n  // A personal endpoint fetched WITHOUT cache control. Under the\n  // App Router's default data cache this result can be cached and\n  // served to the wrong user or shown long after a profile edit.\n  const res = await fetch('https://api.example.com/me');\n  const me = await res.json();\n\n  return (\n    <main>\n      <h1>Welcome, {me.name}</h1>\n      <p>Plan: {me.plan}</p>\n    </main>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Explicit cache strategy",
+      "snippet": "const res = await fetch('https://api.example.com/me', { next: { revalidate: 60 } });",
+      "fullFile": {
+        "filename": "dashboard/page.tsx",
+        "language": "tsx",
+        "code": "import { cookies } from 'next/headers';\nimport { cache } from 'react';\n\n// A personalized page must be dynamic: read cookies to prove it.\nconst getSession = cache(async () => cookies().get('session')?.value);\n\nconst getMe = cache(async (token: string) => {\n  const res = await fetch('https://api.example.com/me', {\n    headers: { authorization: `Bearer ${token}` },\n    next: { revalidate: 60 } // data cache: max 60s, tag-able\n  });\n  return res.json();\n});\n\nexport default async function Dashboard() {\n  const token = await getSession();\n  if (!token) return <p>Sign in</p>;\n\n  const me = await getMe(token);\n  return (\n    <main>\n      <h1>Welcome, {me.name}</h1>\n      <p>Plan: {me.plan}</p>\n    </main>\n  );\n}\n\n// After a profile edit, call revalidateTag('me') server-side so\n// the cache entry is dropped and the next request refetches."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can a static fetch leak data between users, and how do you prevent it?",
+      "contextIntro": "This is the canonical App Router correctness question — the interviewer wants the caching layers AND the authorization pitfall in one answer.",
+      "detailedAnswer": "A page with no dynamic signals (no cookies/headers reads, no dynamic config) can be prerendered and its output stored in the full route cache, which may be served to any user. If the data was fetched with the default cache policy, the data cache can also persist a response keyed only by URL+options — not by the auth token — so user B can receive user A's cached payload. The fix is to make the page dynamic (read cookies()/headers(), or set dynamic = 'force-dynamic', or noStore()) and to include the auth token in the fetch key (headers make the cache key distinct) or bypass caching entirely for personal data. Cache tags then scope revalidation to that user's entries.",
+      "trapWarning": "The trap answer is 'just add no-store to every fetch'. That sacrifices the pipeline's value and does not fix the full route cache (the HTML can still be cached and served to others). The sharp answer names both layers: per-user pages need dynamic rendering AND per-user cache keys or explicit no-store. Candidates who mention that cache tags + dynamic signals work together ('personalized data is dynamic, public data is cached and tag-revalidated') demonstrate production-grade understanding."
+    },
+    {
+      "question": "Explain the difference between the data cache, the full route cache, and the client router cache.",
+      "contextIntro": "This tests whether the candidate can keep the layers straight — the classic 'explain the caching system' question where memorized answers collapse.",
+      "detailedAnswer": "The data cache stores fetch() results server-side (keyed by URL and options, with revalidate/time-based and tag-based invalidation). The full route cache stores the rendered HTML of a page on the server/CDN after prerendering, so a request can be served without re-rendering. The router cache lives on the client and stores the Flight payload (segment data + RSC tree) of visited and prefetched routes, enabling instant soft navigation; it is invalidated by navigation and refreshes in the background. The pipeline: router cache (client) → full route cache (CDN/server HTML) → data cache (server fetch results) → origin. Revalidation at any server layer propagates only when the next request actually reaches that layer.",
+      "trapWarning": "A common confusion is treating the router cache as part of the CDN cache, or claiming revalidatePath clears the user's browser cache — it cannot; it invalidates server-side entries. Another trap: 'the data cache applies to all fetches' — fetch('...', { cache: 'no-store' }) opts out, and the default is no caching for dynamic APIs in some setups, so blanket statements break down. Naming which layer each invalidation tool touches (revalidateTag → data cache; revalidatePath → full route cache) is what separates a memorized from an understood answer."
+    }
+  ]
+}

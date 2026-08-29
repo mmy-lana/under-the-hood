@@ -1,0 +1,58 @@
+{
+  "id": "no-virtual-dom",
+  "title": "Svelte: no virtual DOM — what actually updates",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (runes mode)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["svelte", "virtual-dom", "compiler", "dom-updates", "performance", "reactivity"],
+  "prerequisites": ["Basic Svelte syntax", "Understanding of what a virtual DOM is and why React/Vue use it"],
+  "progressiveExplaining": {
+    "eli5": "Two painters are told to repaint a wall of tiles when a single tile changes color. The first painter takes a photo of the whole wall, walks to the back room, compares the photo with the old photo pixel by pixel, and then walks back to repaint the one tile. The second painter was told at the start exactly which wire each tile is on — when a tile changes, the wire lights up and he walks straight to that tile and repaints it. Svelte is the second painter: it never takes the photo because the compiler already wired each tile directly.",
+    "junior": "React and Vue build a JavaScript description of the UI (the virtual DOM) on every state change, diff it against the previous description, and then apply the minimal set of real DOM changes. Svelte skips that middle layer: the compiler analyzes each component and generates imperative code that updates the exact DOM nodes affected by a state change. So instead of 'create vnode tree → diff → patch', you get 'assign value → set this text node's data'. You write the same declarative templates, but the update path is compiled, direct, and granular.",
+    "senior": "The architectural trade-off: the virtual DOM buys framework-agnostic runtime flexibility — the diff algorithm is data-driven and works regardless of how the vnodes were produced, which is what enables React's concurrent scheduling and error boundaries as runtime features. Svelte trades that runtime generality for compile-time knowledge: the compiler knows exactly which bindings depend on which variables, so it can emit specialized update functions per component. The cost is that the compiler must understand more of your code (no arbitrary runtime components in the same way), and some patterns that are trivial with a diff — like dynamically swapping a component type at runtime — are compiled statically. In practice Svelte's updates do less work per change, but the largest wins come from the compiler eliminating the per-render vnode allocation and reconciliation traversal entirely.",
+    "underTheHood": "The Svelte compiler lowers a template into two artifacts per component: a create block (DOM creation instructions with bound update closures) and update blocks (per-reactive-fragment functions). Each dynamic binding becomes an instruction like set_text(node, value) or set_attribute(node, 'class', value). State mutations (compiled from $state sources) mark the owning component dirty and invoke the fragment's update function, which executes only the instructions whose dependencies changed — there is no tree walk over siblings, no equality diff of vnode trees. The diffing logic that React runs at runtime is, in Svelte, replaced by the compiler's static dependency analysis performed once at build time. The runtime cost is roughly 'number of changed bindings', not 'size of the tree'."
+  },
+  "rosettaStone": {
+    "react": "setState → render() builds vnode tree →\nreconcile() diffs → commits DOM patches",
+    "angular": "change detection walks the component tree and\nchecks each binding against its previous value",
+    "vue": "render effect builds vnode tree → patch algorithm\ndiffs with the old tree → applies DOM updates",
+    "svelte": "compiler emits set_text(node, value) per binding;\n$state writes call the compiled update directly"
+  },
+  "codeComparison": {
+    "title": "The same counter: vnode diff vs compiled direct updates",
+    "summary": "The virtual DOM re-creates and diffs a tree on every update; Svelte's compiler emits direct DOM instructions for exactly the bindings that changed.",
+    "legacyOrBad": {
+      "label": "Virtual DOM (React-style)",
+      "snippet": "// render() returns a vnode tree; update path:\n// render → createElement → reconcile → commit",
+      "fullFile": {
+        "filename": "Counter.jsx",
+        "language": "jsx",
+        "code": "import { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n\n  // Every setCount: React runs this function, builds a full\n  // vnode tree (createElement calls), reconciles it against the\n  // previous tree, and computes the DOM patch.\n  return (\n    <div className=\"counter\">\n      <p>Count: {count}</p>\n      <button onClick={() => setCount((c) => c + 1)}>+1</button>\n    </div>\n  );\n}\n\n// On each click the runtime: (1) calls Counter() again,\n// (2) allocates new vnode objects, (3) diffs old vs new tree,\n// (4) patches the one text node that changed."
+      }
+    },
+    "modernOrGood": {
+      "label": "Svelte compiled updates",
+      "snippet": "let count = $state(0);\n<button onclick={() => count++}>+1</button>",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script lang=\"ts\">\n  let count = $state(0);\n</script>\n\n<div class=\"counter\">\n  <p>Count: {count}</p>\n  <button onclick={() => count++}>+1</button>\n</div>\n\n<!-- Compiled output (conceptually) per component:\n  create block:\n    p = element('p');\n    text = text();\n    append(p, text);\n    button with click handler;\n  update block for the {count} binding:\n    if (changed(count)) set_text(text, count);\n\n  On click, the runtime runs ONLY that update block —\n  no vnode tree is created, nothing is diffed. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does Svelte actually do at runtime if there is no virtual DOM to diff?",
+      "contextIntro": "The interviewer wants the precise runtime story: what artifacts the compiler produces and how a state change reaches the DOM.",
+      "detailedAnswer": "Svelte compiles each component into two runtime artifacts: a create block that builds the DOM and attaches event listeners, and per-reactive-fragment update blocks. Each dynamic binding is lowered to a direct instruction such as set_text or set_attribute against a cached node reference. When a $state source changes, the runtime marks the component dirty and, on flush, executes the update blocks whose dependencies changed — the DOM statements reference nodes captured at creation, so the update is a direct property assignment, not a tree traversal. There is no representation of the UI as data between renders; the compiler's static dependency analysis replaces the runtime diff algorithm.",
+      "trapWarning": "The trap answer is 'Svelte has no runtime at all' — it ships a runtime, just a much smaller one (signals, scheduling, transitions). Another trap: 'Svelte is always faster than React' — the vdom's diff is only one cost; component re-renders, memoization failures, and reconciliation overhead dominate, and Svelte's advantage shrinks when a tree is genuinely large and mostly static in the same way. The accurate framing is 'less work per update by construction, with compile-time knowledge replacing runtime diffing'."
+    },
+    {
+      "question": "What trade-offs come from not having a virtual DOM?",
+      "contextIntro": "A balance question: interviewers want to confirm you understand why other frameworks chose the vdom rather than treating Svelte as objectively superior.",
+      "detailedAnswer": "The virtual DOM is a runtime abstraction: any render function produces a tree, and the reconciler can diff arbitrary trees, which is what gives React its runtime flexibility — concurrent rendering, error boundaries, and the ability to render to non-DOM targets (React Native) by swapping the renderer. Svelte's compiled model bakes DOM-specific instructions at build time, so: rendering to other targets needs a different compile output (Svelte's server-side renderer and native experiments exist, but the DOM compiler is the primary target); dynamic component swapping and some metaprogramming patterns must be handled by special components (svelte:component); and the framework cannot introspect the tree at runtime the way React can. The compiler also must be re-run for each template change, so the dev experience depends on fast incremental compilation.",
+      "trapWarning": "Saying 'Svelte is better because no vdom means no memory allocation' is only partially true and invites a counter-question about the scheduler and transition overhead. The sharp answer names the real costs: static compilation limits runtime dynamism and portability, and the compiler knowledge model means certain patterns (like arbitrary runtime-generated components) need explicit escape hatches. Interviewers reward acknowledging both sides rather than declaring a winner."
+    }
+  ]
+}

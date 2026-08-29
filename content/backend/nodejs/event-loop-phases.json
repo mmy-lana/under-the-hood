@@ -1,0 +1,52 @@
+{
+  "id": "event-loop-phases",
+  "title": "Node.js event loop: phases and the microtask queue",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 18+ (libuv 1.x)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nodejs", "event-loop", "libuv", "microtasks", "async", "javascript"],
+  "prerequisites": ["JavaScript async basics", "Understanding of callbacks and promises"],
+  "progressiveExplaining": {
+    "eli5": "A single chef runs a kitchen with a strict routine. He has a stack of order tickets (callbacks) sorted by type. His day has fixed rounds: first he reads the new orders (timers), then he checks the oven (pending I/O), then he handles the special urgent requests (poll), then he sweeps (check/setImmediate), then he closes the day (close). But there is one rule: after EVERY ticket he processes, he must immediately finish any tiny notes pinned to his board (microtasks: resolved promises, queueMicrotask) before touching the next ticket. The tiny notes always jump the queue.",
+    "junior": "Node runs a single thread executing the event loop: at each iteration it processes phases in order — timers (setTimeout/setInterval callbacks ready), pending callbacks (deferred I/O), idle/prepare (internal), poll (I/O events, where it blocks waiting), check (setImmediate), close (close handlers). Between every phase — and after every callback — the microtask queue drains first: process.nextTick callbacks run before Promise.then callbacks. That means setTimeout(fn, 0) does not run before a resolved Promise: microtasks win. setImmediate vs setTimeout(0): setImmediate fires in the check phase of the current iteration; setTimeout(0) in the timers phase of the next — so inside an I/O callback, setImmediate reliably runs first.",
+    "senior": "Architecturally, the event loop is the reason one thread can serve thousands of concurrent connections: blocking I/O is handed to libuv's thread pool (fs, DNS, some crypto) or the kernel's evented interfaces (sockets via epoll/kqueue), and the JS thread only reacts to completions. Keeping the loop responsive is a system property: any synchronous work in a callback (CPU, JSON.parse of huge payloads, heavy regex) stalls the entire process — one request blocks all others. The microtask semantics matter for correctness: process.nextTick (the oldest, de facto microtask) can starve the loop if re-queued recursively (it is drained completely before the phase proceeds), while promise microtasks also drain fully before moving on. Understanding which phase your code runs in explains most 'why is this ordering wrong' bugs.",
+    "underTheHood": "The loop is implemented in C (libuv's uv_run) with four main iterations around a poll phase. The timers phase uses a binary min-heap keyed by deadline; expiring timers are invoked after microtask drains. The poll phase calls the OS event demultiplexer (epoll_wait/kevent) with a timeout computed from the earliest pending timer and checks the pending queue; when no timers and no handles exist, uv_run exits (process ends). After each uv_run step returns control to JS (or after each callback in some paths), Node's C++ layer drains the nextTickQueue and microtaskQueue (V8's Isolate::PerformMicrotaskCheckpoint). setImmediate queues into the check phase's linked list, so ordering versus timers depends on where you are in the loop. The thread pool (default 4 threads, UV_THREADPOOL_SIZE) processes fs/DNS ops and returns results via the pending queue."
+  },
+  "codeComparison": {
+    "title": "setTimeout(0) vs setImmediate vs microtasks ordering",
+    "summary": "Relying on timer ordering produces race-prone output; knowing the phases and microtask drain explains and fixes the ordering deterministically.",
+    "legacyOrBad": {
+      "label": "Timer soup",
+      "snippet": "setTimeout(() => console.log('timeout'), 0);\nsetImmediate(() => console.log('immediate'));\nPromise.resolve().then(() => console.log('promise'));",
+      "fullFile": {
+        "filename": "ordering.js",
+        "language": "javascript",
+        "code": "// What order does this print? The answer depends on where the\n// script starts, and in a fresh module the timer vs immediate\n// order is NOT guaranteed — a classic interview trap.\nsetTimeout(() => console.log('timeout'), 0);\nsetImmediate(() => console.log('immediate'));\nprocess.nextTick(() => console.log('nextTick'));\nPromise.resolve().then(() => console.log('promise'));\n\n// Deterministic parts:\n//   nextTick, promise print BEFORE any timer — microtasks drain\n//   after the current operation, before the next phase runs.\n// Non-deterministic part:\n//   timeout vs immediate flips depending on whether the module\n//   started inside an I/O callback (then immediate wins).\n\n// Correct mental model: don't order work with 0ms timers.\n// Use queueMicrotask for same-loop work and setImmediate for\n// 'after I/O' work inside I/O callbacks."
+      }
+    },
+    "modernOrGood": {
+      "label": "Phase-aware ordering",
+      "snippet": "queueMicrotask(() => console.log('microtask'));\nsetImmediate(() => console.log('immediate'));\nsetTimeout(() => console.log('timer'), 1);",
+      "fullFile": {
+        "filename": "ordering.js",
+        "language": "javascript",
+        "code": "const fs = require('node:fs');\n\n// Inside an I/O callback the order is deterministic:\n//   1. microtasks (after each callback)\n//   2. setImmediate (check phase of the same iteration)\n//   3. setTimeout(1) (timers phase of the NEXT iteration)\nfs.readFile(__filename, () => {\n  queueMicrotask(() => console.log('1. microtask'));\n  setImmediate(() => console.log('2. immediate (check)'));\n  setTimeout(() => console.log('3. timer (next timers phase)'), 1);\n});\n\n// Key rules to remember:\n// - process.nextTick and Promise microtasks drain before the\n//   event loop proceeds to the next phase.\n// - setImmediate schedules into the check phase of the CURRENT\n//   iteration when called from a poll-phase callback.\n// - setTimeout(0) is clamped to ~1ms and fires in a LATER\n//   timers phase, so it loses to setImmediate inside I/O."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can a recursive process.nextTick starve the event loop while a recursive Promise.resolve() also starves it?",
+      "contextIntro": "This question distinguishes candidates who memorized 'nextTick is bad for recursion' from those who understand the drain semantics of the microtask queue.",
+      "detailedAnswer": "Both nextTick and promise microtasks are drained completely — until empty — before the loop proceeds to the next phase (nextTick runs before the promise microtask checkpoint, but both drain fully). If each callback re-queues itself, the queue never empties, so the timers/I/O phases never run: the process spins on microtasks forever and I/O events never get processed (CPU pegged, but no timers fire). process.nextTick is slightly worse because its queue is drained before promise microtasks in the same turn. The safe pattern is to bound the recursion, or convert to setImmediate when the loop must yield to I/O between steps.",
+      "trapWarning": "The trap answer is 'recursive promises are fine because they yield'. Promise.then callbacks are still microtasks drained to completion; they do not yield to the event loop's I/O phases. Another trap: 'process.nextTick is just a faster setTimeout' — it is a microtask queue in the C++ layer, not a timer at all. Naming the drain-to-empty semantics for BOTH queues is the differentiator."
+    },
+    {
+      "question": "What does the poll phase actually do, and why does the loop exit when nothing is pending?",
+      "contextIntro": "This checks real understanding of how Node stays alive and processes I/O — the interviewer wants libuv mechanics, not phase names.",
+      "detailedAnswer": "In the poll phase, libuv calls the OS event demultiplexer (epoll_wait/kqueue/select) with a computed timeout: the time until the earliest timer (so timers are not late) or infinity if no timers/handles are scheduled. The poll returns ready I/O events; their callbacks run (draining microtasks after each). The loop exits when there are no more active handles (timers, sockets, etc.) and no pending work — that is why a server with an open socket stays alive while a plain script ends after its last tick. The poll timeout calculation is the mechanism that reconciles 'block for I/O' with 'never be late for timers'.",
+      "trapWarning": "The naive answer is 'the poll phase blocks forever until I/O arrives'. It blocks only with a timeout computed from the timer heap; if a 0ms timer is pending, poll returns immediately. Another trap: 'Node exits when the main function returns' — it exits when the event loop has no active handles, which is why a leaked timer or socket keeps the process alive (the 'why won't my script exit' production bug). Mentioning handle counting and the poll timeout formula is the senior answer."
+    }
+  ]
+}

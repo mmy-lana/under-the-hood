@@ -1,0 +1,58 @@
+{
+  "id": "server-components-boundary",
+  "title": "React Server Components: the client/server boundary",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 19 (RSC stable in Next.js App Router)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["react", "server-components", "nextjs", "serialization", "rsc", "architecture"],
+  "prerequisites": ["React component model", "Next.js App Router basics"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a restaurant menu. The chef writes the menu in the kitchen (server), and the guest only sees the finished dishes on a printed card. A few dishes need a final touch at the table — a drizzle of sauce — and those are marked on the card as 'finish at table'. The kitchen can do heavy prep, use the big walk-in fridge, and never lets the guest see the prep station. React Server Components are exactly that: work done in the kitchen that never crosses to the table, while 'use client' marks the dishes that need finishing in front of the guest.",
+    "junior": "In Next.js App Router, components are Server Components by default: export default async function Page() { const data = await fetch(...); return <List items={data} />; } runs entirely on the server — the async/await, the fetch, the file system access — and ships only rendered output. Files with 'use client' at the top become Client Components: their JS bundle ships to the browser and they can use useState, useEffect, and event handlers. The boundary rule: a Client Component can be rendered inside a Server Component, but props crossing the boundary must be serializable (no functions, no class instances, no Date unless wrapped in a serializable form).",
+    "senior": "RSC splits rendering into two cooperating runtimes: the server renders the component tree top-down, and when it reaches a client component boundary it stops — the client component is compiled into the client bundle and referenced by an id in the RSC payload. The server sends a serialized React Flight stream describing the tree (JSON-like with references), and the client reconciles it, hydrating only the client subtrees. The architectural payoff: data-fetching logic, secrets, and large dependencies (markdown parsers, date libraries, DB drivers) never ship to the browser — bundle size reflects only the client boundary. The cost is a discipline requirement: every piece of stateful interactivity must live behind 'use client', and the data flow across the boundary is strictly one-way at serialization time.",
+    "underTheHood": "The RSC payload is produced by the React Flight protocol: the server walker serializes each element as a tagged binary format (string ids for modules, JSON for props, special markers for references, lazy chunks, and pending promises). References to Client Components are module ids in a virtual module graph (the react-server-dom-webpack/vite plugins rewrite imports). During navigation, the client fetches the Flight stream, parses it, and constructs a new root fiber tree by reusing the existing tree where possible (React 19's progressive reconciliation merges client and server trees). Interleaving happens because the server emits the shell and any awaited data as chunks — 'use client' boundaries become the only hydration points, which is why the memo of the whole design is 'serializable props, minimal client leaves'."
+  },
+  "rosettaStone": {
+    "react": "// page.jsx (Server Component, no 'use client')\nexport default async function Page() {\n  const posts = await db.query('SELECT * FROM posts');\n  return <PostList posts={posts} />;\n}",
+    "angular": "// Angular renders on the server via Angular Universal/SSR;\n// @defer marks lazy client hydration blocks instead.",
+    "vue": "// Nuxt: composables auto-imported; useAsyncData runs on server\n// during SSR and hydrates the client from the payload.",
+    "svelte": "// SvelteKit: +page.server.ts load runs on the server;\n// the page component hydrates with the returned data."
+  },
+  "codeComparison": {
+    "title": "Fetching data in the client component vs in a server component",
+    "summary": "Client-side fetching ships the fetch logic, the endpoint URL, and double-loads state; a server component fetches once, server-side, and passes serializable props down.",
+    "legacyOrBad": {
+      "label": "Client component fetch",
+      "snippet": "'use client';\nconst [posts, setPosts] = useState([]);\nuseEffect(() => { fetch('/api/posts').then(r => r.json()).then(setPosts); }, []);",
+      "fullFile": {
+        "filename": "posts.jsx",
+        "language": "jsx",
+        "code": "'use client';\n\nimport { useEffect, useState } from 'react';\n\nexport default function Posts() {\n  const [posts, setPosts] = useState([]);\n  const [loading, setLoading] = useState(true);\n\n  // Runs in the browser: double round-trip, no caching at the\n  // framework layer, and the fetch logic ships to every client.\n  useEffect(() => {\n    let cancelled = false;\n    fetch('/api/posts')\n      .then((r) => r.json())\n      .then((data) => {\n        if (!cancelled) {\n          setPosts(data);\n          setLoading(false);\n        }\n      });\n    return () => {\n      cancelled = true;\n    };\n  }, []);\n\n  if (loading) return <p>Loading posts…</p>;\n  return (\n    <ul>\n      {posts.map((p) => (\n        <li key={p.id}>{p.title}</li>\n      ))}\n    </ul>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Server component fetch",
+      "snippet": "export default async function Posts() {\n  const posts = await db.query('SELECT * FROM posts');\n  return posts.map((p) => <li key={p.id}>{p.title}</li>);\n}",
+      "fullFile": {
+        "filename": "posts.jsx",
+        "language": "jsx",
+        "code": "import { db } from '@/lib/db';\n\nexport default async function Posts() {\n  // Runs once, on the server, during SSR/prerender. The query\n  // result is serialized into the RSC payload; the fetch logic\n  // and DB driver never reach the client bundle.\n  const posts = await db.query('SELECT id, title FROM posts');\n\n  return (\n    <ul>\n      {posts.map((p) => (\n        <li key={p.id}>{p.title}</li>\n      ))}\n    </ul>\n  );\n}\n\n// A tiny client island is only needed when the list must be\n// interactive; the rest of the tree stays server-rendered."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can't you pass a function as a prop from a Server Component to a Client Component?",
+      "contextIntro": "This question exposes whether you truly understand serialization rather than having memorized the 'use client' rule.",
+      "detailedAnswer": "The RSC payload crosses the network as a serialized React Flight stream. Functions are not serializable — they close over server-side scope (the request, the database handle, secrets) and there is no standard wire format that could preserve their semantics safely. If React silently shipped functions, it would either leak server scope or break the boundary entirely. The only functions that exist on the client are those defined in client modules (event handlers inside 'use client' files), which the bundler places in the client chunk. Passing a function from a server module to a client component would require the server module to be in the client bundle, which is exactly what the boundary prevents.",
+      "trapWarning": "The naive answer is 'functions can't be JSON serialized' — technically true but incomplete. The deeper point is that a server function's closure references the server runtime; even if you could stringify it, executing it client-side would fail or leak. Interviewers also appreciate when you mention server actions as the sanctioned way to pass a callable across the boundary — they are RPC stubs, not closures."
+    },
+    {
+      "question": "How does the client know what to render when a Server Component renders a Client Component?",
+      "contextIntro": "A classic 'explain RSC to a senior engineer' question that separates knowledge of the protocol from knowledge of the mental model.",
+      "detailedAnswer": "During the server render, when React reaches a client component, it does not evaluate it — the client component is a module reference. The server writes the element into the Flight stream with the client module's id (a virtual module path resolved by the bundler plugin) plus its serializable props. On the client, React's Flight parser resolves that module reference against the client module registry, imports the actual component, and creates the fiber with the received props. The two sides are bound by a shared module id space that the webpack/turbopack RSC plugin maintains. This is also why client components must be in 'use client' files: the bundler needs a static boundary to know which module graph is server-only.",
+      "trapWarning": "A common wrong claim is 'the client re-renders the whole tree'. The client only hydrates client subtrees and reconstructs server-rendered elements from the stream. Another trap: thinking the server renders the client component 'to HTML' during the RSC phase — the Flight stream is not HTML; it is a serialized tree, and the HTML for the initial page is generated separately by the SSR pass."
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "id": "buffer-vs-streams",
+  "title": "Node.js Buffer vs streams",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 18+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nodejs", "buffer", "streams", "memory", "binary-data", "backpressure"],
+  "prerequisites": ["Node.js fs and http basics", "Understanding of memory allocation in JS"],
+  "progressiveExplaining": {
+    "eli5": "Two ways to drink a huge milkshake. Drinking it through a straw means the liquid flows through your mouth continuously — you never hold the whole glass at once, and if you slow down, the straw just delivers less (backpressure). The other way is to pour the entire milkshake into a giant bowl, carry it to the table, and then drink — the bowl is the Buffer, and a giant milkshake needs a giant bowl, which might not fit in your kitchen. Streams are the straw; Buffers are the bowl.",
+    "junior": "A Buffer is a fixed-size chunk of memory outside the V8 heap: Buffer.alloc(1024) reserves 1KB of raw memory, and Buffer.from(str) copies a string into binary. Reading a whole file with fs.readFileSync returns one Buffer for the entire content; for a 4GB file that is 4GB in memory. Streams process data incrementally: fs.createReadStream(path) emits 'data' chunks; pipe() connects readable → writable (fs.createWriteStream, res (response)). The practical rule: buffers for small, known-size binary work; streams for anything that can be processed as it arrives — files, network responses, logs, CSV parsing.",
+    "senior": "Architecturally, streams are about memory-bounded processing and backpressure. A readable stream holds data in an internal buffer (highWaterMark, default 16KB) and pauses the source when the consumer is slower — that is backpressure, and it is what keeps a file-to-http pipeline at bounded memory regardless of file size. Buffering everything means O(file) memory and a hard latency cliff at the first byte. The failure mode to respect: concatenating stream chunks into one Buffer ('data' listeners that push into an array) re-creates the all-at-once problem, and doing it for streaming JSON can double memory (string + parse). Piping with pipe() handles backpressure automatically, while manual 'data' listeners do not — that is why await pipeline(...) from stream/promises is the recommended pattern.",
+    "underTheHood": "A Buffer is a Uint8Array whose underlying ArrayBuffer is allocated from the C++ side (Buffer.allocUnsafe reuses pooled slabs; large allocations use a dedicated ArrayBuffer and are not pooled). Streams are implemented on top of libuv handles and internal state machines: Readable states track flowing vs paused mode. In paused mode, data accumulates in the internal buffer up to highWaterMark; when the buffer exceeds it, the 'readable' consumer is expected to read. In flowing mode (pipe attaches a destination), the source's read() is called and data is written to the destination; if dest.write() returns false (its internal buffer over highWaterMark), pipe pauses the source ('drain' resumes it). The fs stream uses libuv's file reading with position tracking; the http response stream wraps a socket handle. The pipeline() helper ties these together with error propagation and cleanup — manual pipe() chains leak errors without it."
+  },
+  "codeComparison": {
+    "title": "Whole-file Buffer read vs streamed processing",
+    "summary": "readFileSync loads the entire payload into memory before any processing; a read stream bounds memory and starts processing on the first chunk.",
+    "legacyOrBad": {
+      "label": "Whole-file read",
+      "snippet": "const data = fs.readFileSync('big.log', 'utf8');\nprocessLines(data);",
+      "fullFile": {
+        "filename": "log-processor.js",
+        "language": "javascript",
+        "code": "const fs = require('node:fs');\n\n// Loads the ENTIRE file into one string (after decoding the\n// whole Buffer). For a 2GB log this is 2GB+ of heap — and the\n// process cannot emit a single result until every byte is read.\nconst data = fs.readFileSync('access.log', 'utf8');\n\nconst counts = {};\nfor (const line of data.split('\\n')) {\n  const status = line.match(/\"\\s(\\d{3})\\s/)?.[1];\n  if (status) counts[status] = (counts[status] ?? 0) + 1;\n}\n\nconsole.log(counts);\n\n// Problems: memory scales with file size, first output waits\n// for the whole read, and split() duplicates the string."
+      }
+    },
+    "modernOrGood": {
+      "label": "Streamed read",
+      "snippet": "fs.createReadStream('big.log')\n  .pipe(createLineSplitter())\n  .on('data', handleLine);",
+      "fullFile": {
+        "filename": "log-processor.js",
+        "language": "javascript",
+        "code": "const fs = require('node:fs');\nconst { Transform } = require('node:stream');\nconst { pipeline } = require('node:stream/promises');\n\n// A Transform that splits raw bytes into lines while keeping\n// memory bounded to the highWaterMark (default 16KB).\nconst splitLines = new Transform({\n  readableObjectMode: true,\n  transform(chunk, encoding, callback) {\n    const text = chunk.toString();\n    this.lines = (this.lines ?? '') + text;\n    const parts = this.lines.split('\\n');\n    this.lines = parts.pop(); // keep the partial tail\n    for (const line of parts) this.push(line);\n    callback();\n  },\n  flush(callback) {\n    if (this.lines) this.push(this.lines);\n    callback();\n  }\n});\n\nasync function main() {\n  const counts = {};\n  await pipeline(\n    fs.createReadStream('access.log'),\n    splitLines,\n    async function* (source) {\n      for await (const line of source) {\n        const status = line.match(/\"\\s(\\d{3})\\s/)?.[1];\n        if (status) counts[status] = (counts[status] ?? 0) + 1;\n      }\n    }\n  );\n  console.log(counts);\n}\n\nmain().catch((err) => {\n  console.error(err);\n  process.exitCode = 1;\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is backpressure and how does pipe() implement it automatically?",
+      "contextIntro": "This is the single most important streams question — the interviewer wants the mechanism (highWaterMark, write() return value, drain event, pause/resume).",
+      "detailedAnswer": "Backpressure is the flow-control mechanism that prevents a fast producer from flooding a slow consumer. In Node, the readable side pauses (stops reading from the source) when the writable side reports that its internal buffer is full. pipe() wires this automatically: it listens to 'data' on the source (flowing mode), calls dest.write(chunk), and if write() returns false (buffer above highWaterMark), pipe pauses the source until the dest emits 'drain', then resumes. Without pipe, a manual 'data' handler that ignores write()'s return value causes unbounded buffering and memory growth. pipeline() additionally forwards errors and closes streams correctly — pipe() alone does not.",
+      "trapWarning": "The trap answer is 'backpressure means the consumer slows down the producer by throttling' — it is a pull-based pause, not a rate limit. Another trap: 'writing to a stream is synchronous' — writes are buffered and flushed asynchronously; the return value of write() is the backpressure signal. Candidates who name 'drain' and highWaterMark concretely, and who know pipeline() for error handling, demonstrate production experience."
+    },
+    {
+      "question": "Why is a Buffer not a normal JavaScript array, and what does Buffer.allocUnsafe actually do?",
+      "contextIntro": "The interviewer wants to verify understanding of off-heap memory and the pooling/lifetime implications of Buffers.",
+      "detailedAnswer": "A Buffer is a Uint8Array backed by an ArrayBuffer allocated in native (C++) memory rather than V8's managed heap objects — the bytes live outside the JS heap, so large binary data does not count against V8's heap limits and avoids GC pressure from copying. Buffer.allocUnsafe(size) returns a Buffer whose memory is not zero-filled (faster), drawn from a pool of pre-allocated 8KB slabs for small sizes; this is why it must be written to before being read — uninitialized memory can contain stale data from earlier allocations. Buffer.alloc(size) zero-fills. The danger: holding Buffers for a long time pins native memory that the allocator may not return promptly, so stream consumers should let chunks be GC'd rather than accumulating them.",
+      "trapWarning": "The naive answer is 'Buffer is an array of bytes' — it is a Uint8Array backed by an external ArrayBuffer, with different memory behavior and methods (write, toString, copy). Another trap: 'allocUnsafe is always dangerous' — it is a documented performance choice whose only risk is reading unwritten bytes, so the guidance is 'write before read', not 'never use'. Mentioning the 8KB slab pool shows you know the pooling mechanism, not just the API."
+    }
+  ]
+}

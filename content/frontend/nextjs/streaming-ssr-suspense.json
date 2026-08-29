@@ -1,0 +1,58 @@
+{
+  "id": "streaming-ssr-suspense",
+  "title": "Next.js streaming SSR with Suspense",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 13+/15 App Router",
+  "lastUpdated": "2026-08-29",
+  "tags": ["nextjs", "streaming", "ssr", "suspense", "rendering", "performance"],
+  "prerequisites": ["Next.js App Router basics", "React Suspense and async rendering concepts"],
+  "progressiveExplaining": {
+    "eli5": "A tour guide walks a group through a museum. Instead of waiting for every room to be ready before starting the tour, she leads the group through the rooms that are ready and tells them 'we will visit the east wing when the lights come on'. The visitors see the main gallery immediately, the east wing lights up a moment later and they walk in. Streaming SSR is the guide: the page starts arriving the moment the first part is ready, and each section appears as its own lights come on — nobody waits for the whole museum.",
+    "junior": "Wrap slow sections in <Suspense fallback={<Skeleton />}>: export default function Page() { return (<main><Header /><Suspense fallback={<PostSkeleton />}><Posts /></Suspense></main>); }. When the server renders the page, everything outside the boundary streams immediately (including the HTML shell and above-the-fold content), while the suspended part renders when its async data resolves — the fallback shows meanwhile. On the client, hydration is also progressive: the shell hydrates first, and each suspense boundary hydrates when its content arrives. loading.js files are the route-level equivalent that wraps the page in Suspense automatically.",
+    "senior": "Architecturally, streaming decouples time-to-first-byte from the slowest data dependency: the shell ships after the fastest path resolves, so users perceive load as incremental rather than all-or-nothing. The trade-offs are real: metadata and analytics that must be globally consistent should not live inside streamed regions; SEO crawlers generally execute JS and see final content, but streaming can interact badly with assumptions about full-HTML-in-response; and each Suspense boundary adds a network + hydration coordination point. Design guidance: keep the critical path (headers, nav, hero) outside boundaries, use one boundary per meaningful slow region, and prefer skeletal fallbacks with fixed dimensions to avoid layout shift.",
+    "underTheHood": "During SSR, React renders the shell and emits it into the response stream, flushing each completed segment as a chunk (the server closes the response with each boundary resolution via the React Flight-to-HTML streaming mechanism, in sync and async mode). For suspended subtrees, React writes the fallback into the HTML and defers the subtree render until the promise resolves, then streams the resolved HTML into the same response (inserting it after the fallback placeholder with a script tag that tells the client to replace the placeholder). On the client, hydration walks the streamed HTML progressively — the shell hydrates immediately, and each boundary hydrates as its markers arrive. In the App Router, this is combined with the data cache and prefetching, so navigated-to segments can stream from the server cache with instant client fallbacks."
+  },
+  "rosettaStone": {
+    "react": "// React 18+ <Suspense> in any SSR setup (Remix, RSC,\n// custom renderToPipeableStream)",
+    "angular": "// Angular: no built-in streamed suspense; SSR completes\n// per route and uses @defer for client-side lazy views",
+    "vue": "// Nuxt: suspense built into page components (useAsyncData\n// + <template #fallback>), streamed via the nitro server",
+    "svelte": "// SvelteKit: {#await} blocks with <suspense>-like fallbacks;\n// SSR streams the shell and awaits blocks resolve per chunk"
+  },
+  "codeComparison": {
+    "title": "Blocking SSR vs streamed Suspense boundaries",
+    "summary": "A slow fetch delays the entire HTML response in blocking SSR; streaming serves the shell immediately and each slow section when ready.",
+    "legacyOrBad": {
+      "label": "Blocking SSR",
+      "snippet": "export default async function Page() {\n  const [posts, comments] = await Promise.all([getPosts(), getComments()]);\n  return <Feed posts={posts} comments={comments} />;\n}",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "export default async function Page() {\n  // Both fetches must finish BEFORE any HTML is written to the\n  // response. If getComments takes 2s, the shell (header, nav,\n  // above-the-fold content) waits 2s too: TTFB == slowest dep.\n  const [posts, comments] = await Promise.all([getPosts(), getComments()]);\n\n  return (\n    <main>\n      <Header />\n      <Feed posts={posts} comments={comments} />\n    </main>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Streamed suspense",
+      "snippet": "<Suspense fallback={<FeedSkeleton />}>\n  <Feed />\n</Suspense>",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "import { Suspense } from 'react';\n\nasync function Feed() {\n  // Suspended inside the boundary: the shell streams instantly,\n  // and this section's HTML is flushed into the response when\n  // its promises resolve.\n  const [posts, comments] = await Promise.all([getPosts(), getComments()]);\n  return <FeedView posts={posts} comments={comments} />;\n}\n\nexport default function Page() {\n  return (\n    <main>\n      <Header />\n      <Suspense fallback={<FeedSkeleton />}>\n        <Feed />\n      </Suspense>\n    </main>\n  );\n}\n\n// The shell (Header + main markup) reaches the browser first;\n// the Feed section streams in after, replacing the skeleton."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What are the real downsides of streaming SSR that teams hit in production?",
+      "contextIntro": "Interviewers rarely ask 'what is streaming' — they ask what breaks when you adopt it, to check for production scars.",
+      "detailedAnswer": "Teams hit several classes of issues: metadata that must be uniform (OG tags, canonical URLs, analytics) can arrive in a later streamed chunk, confusing crawlers and preview scrapers; layout shift unless fallbacks reserve space (fixed-height skeletons are mandatory); and caching layers (CDN, ISR) may buffer the stream, destroying the benefit — the CDN must stream chunks through rather than buffering to completion. Also, streaming interacts with Suspense boundaries in nested layouts: too many boundaries fragment the HTML and inflate the coordination overhead. Finally, some testing setups (node-fetch style response assertions) fail because the response is not a single complete document.",
+      "trapWarning": "The naive answer is 'streaming is always faster' — it improves perceived performance and TTFB, but total load work is the same or slightly higher. Another trap: claiming SEO is unaffected. Streaming can be fine for SEO when crawlers execute JS (Google does), but social-scraper OG tags from streamed metadata are a real production bug. Naming the CDN-buffering problem and the metadata-in-chunks problem is what separates a senior answer."
+    },
+    {
+      "question": "How does hydration work when HTML is streamed in chunks?",
+      "contextIntro": "This probes the mechanism beneath the feature: the interviewer wants the client-server coordination, not just 'it hydrates progressively'.",
+      "detailedAnswer": "The server embeds a placeholder marker (a template/comment node and a small inline script) where a suspended boundary will land. When the boundary's promises resolve during the same response, the server streams the resolved HTML plus a script that tells the client to replace the placeholder node with the incoming markup. React's client runtime, which hydrates the shell as soon as its portion of HTML is parsed, is able to bind event handlers for the streamed section as that section's script marker executes — hydration happens per chunk rather than after the full document. The client and server coordinate through the same Suspense model: each boundary is a hydration point whose fallback can be interactive if it has its own client components.",
+      "trapWarning": "The trap answer is 'the page hydrates once after the full stream completes'. That is exactly the blocking behavior streaming removes. Another trap: claiming event handlers on the shell wait for the slow section — the shell hydrates independently. Mentioning that client components inside the shell are interactive before the slow boundary resolves demonstrates the correct mental model."
+    }
+  ]
+}

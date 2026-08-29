@@ -1,0 +1,52 @@
+{
+  "id": "pydantic-validation-pipeline",
+  "title": "FastAPI: the Pydantic validation pipeline",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ / Pydantic v2",
+  "lastUpdated": "2026-08-29",
+  "tags": ["fastapi", "pydantic", "validation", "pydantic-core", "rust", "serialization"],
+  "prerequisites": ["FastAPI basics", "Familiarity with Python type annotations"],
+  "progressiveExplaining": {
+    "eli5": "A hotel check-in desk has a strict form: name, room number, and number of guests. The clerk doesn't just write down what you say — he verifies the room number is on the floor plan, checks the guests count is a number and not text, and produces a clean registration card. If something is off, he returns a precise note: 'room 999 does not exist'. FastAPI's desk (Pydantic) does the same for every request: it checks, converts, and errors out with a clear message — before your code ever sees the data.",
+    "junior": "FastAPI uses Pydantic models for request bodies, query params, and response schemas: class Item(BaseModel): name: str; price: float. On each request, FastAPI parses the JSON body, validates it against the model, coerces types (e.g., '123' → 123 for int fields, ISO strings → datetime), and injects a validated instance into your handler: async def create(item: Item). Invalid data produces a 422 response with field-level errors automatically. The same models generate OpenAPI schemas for interactive docs. Declare the return type in the handler signature (-> Item) and FastAPI serializes/validates the response too.",
+    "senior": "Architecturally, the pipeline is: Starlette parses the request → FastAPI extracts the request body per the declared model → Pydantic validates and coerces → your handler runs → the response is validated and serialized back through the model. Validating at the boundary means your business logic never sees malformed data — a correctness property that eliminates a whole class of defensive checks. Pydantic v2 moved the core to Rust (pydantic-core), making validation roughly 5-50x faster than v1's pure-Python implementation while keeping the declarative model API. The trade-offs: validation cost is proportional to the nesting and the number of constraints, so deep models on hot endpoints should be flattened or cached (model_json_schema, validate_assignment off by default).",
+    "underTheHood": "Pydantic v2 compiles each model into a CoreSchema (a JSON-schema-like AST) and a compiled Validator: a Rust function built by pydantic-core that performs type checks, coercion, and constraint evaluation in a single pass. FastAPI builds these validators lazily at first use and caches them (the app's dependency-injection model validation is memoized per schema). The request flow: Starlette's routing calls FastAPI's request body handler, which uses the endpoint's declared body type to run the validator on the parsed JSON; on failure the errors are formatted into ValidationError detail (path, msg, type) and FastAPI converts them into a 422 JSONResponse. Serialization uses the same core schema via the serializer path, so response validation is the same machinery applied to the return value. Field metadata (Field(gt=0), Annotated[...]) is converted into schema constraints in the CoreSchema before compilation."
+  },
+  "codeComparison": {
+    "title": "Manual dict validation vs typed Pydantic boundary",
+    "summary": "Hand-rolled dict checks are scattered and incomplete; a Pydantic model centralizes coercion, validation, and OpenAPI generation at the boundary.",
+    "legacyOrBad": {
+      "label": "Manual validation",
+      "snippet": "data = request.json()\nif \"name\" not in data or not isinstance(data[\"name\"], str):\n    return 400 \"bad name\"\nprice = float(data.get(\"price\", 0))",
+      "fullFile": {
+        "filename": "legacy_app.py",
+        "language": "python",
+        "code": "from typing import Any\n\n# A hand-rolled validation layer: ad-hoc checks scattered in\n# every handler, easy to forget, and no OpenAPI schema output.\nclass LegacyOrderService:\n    def create_order(self, payload: dict[str, Any]) -> dict[str, Any]:\n        user_id = payload.get(\"user_id\")\n        if user_id is None or not isinstance(user_id, int):\n            return {\"error\": \"user_id must be an int\", \"status\": 400}\n        items = payload.get(\"items\")\n        if not isinstance(items, list) or not items:\n            return {\"error\": \"items must be a non-empty list\", \"status\": 400}\n        total = 0.0\n        for item in items:\n            price = item.get(\"price\")\n            if not isinstance(price, (int, float)):\n                return {\"error\": f\"bad price in {item}\", \"status\": 400}\n            total += price * int(item.get(\"qty\", 1))\n        return {\"order_id\": 1, \"total\": total, \"status\": 201}\n\n\nservice = LegacyOrderService()\nresult = service.create_order({\"user_id\": 7, \"items\": [{\"price\": \"9.99\", \"qty\": 2}]})\nprint(result)  # error: \"bad price\" because price arrived as a string"
+      }
+    },
+    "modernOrGood": {
+      "label": "Pydantic-typed boundary",
+      "snippet": "class Order(BaseModel):\n    user_id: int\n    items: list[OrderItem]\n\n@app.post(\"/orders\", response_model=OrderResult)\ndef create_order(order: Order): ...",
+      "fullFile": {
+        "filename": "app.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nfrom pydantic import BaseModel, Field\n\napp = FastAPI()\n\n\nclass OrderItem(BaseModel):\n    name: str = Field(min_length=1)\n    price: float = Field(gt=0)\n    qty: int = Field(default=1, ge=1)\n\n\nclass Order(BaseModel):\n    user_id: int\n    items: list[OrderItem]\n\n\nclass OrderResult(BaseModel):\n    order_id: int\n    total: float\n\n\n@app.post(\"/orders\", response_model=OrderResult)\ndef create_order(order: Order) -> OrderResult:\n    # Pydantic already validated/coerced everything: '9.99' became\n    # 9.99, qty defaults to 1, empty lists are rejected with a 422\n    # listing the exact path. The handler sees clean typed data.\n    total = sum(item.price * item.qty for item in order.items)\n    return OrderResult(order_id=1, total=total)"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What actually runs between the request arriving and your handler being called in FastAPI?",
+      "contextIntro": "The interviewer wants the pipeline order — routing, dependency resolution, body parsing, validation — and the failure points (422 vs 500).",
+      "detailedAnswer": "Starlette matches the route and invokes FastAPI's endpoint wrapper. FastAPI resolves the endpoint's dependency graph (including dependencies with their own request-body parameters), then parses the request body according to the declared body type. The body is validated through the compiled Pydantic validator; failures are normalized to ValidationError and returned as a 422 with structured detail. Only after validation passes does your handler run. The response path mirrors it: the return value is validated against the response_model and serialized (with exclude_none/filters applied). Errors inside the handler propagate to the exception handler (usually 500), distinct from the boundary 422.",
+      "trapWarning": "The naive answer is 'FastAPI just calls your function'. The order of body parsing → validation → handler → response validation matters, and knowing that dependencies run first (with their own validations) explains ordering bugs. Another trap: '422 only comes from JSON bodies' — query/header/path params declared with types also produce 422s through the same pipeline. Mentioning response_model validation as a separate boundary (not just request) is a strong differentiator."
+    },
+    {
+      "question": "How does Pydantic v2 achieve its speed, and what does that change about how you write models?",
+      "contextIntro": "This checks current knowledge — v2's Rust core changed performance characteristics and some model behaviors; the interviewer wants the mechanics.",
+      "detailedAnswer": "Pydantic v2 moved validation and serialization into pydantic-core, a Rust library compiled to a native extension. Each model compiles its schema (CoreSchema) into a validator that runs in Rust — type checks, coercion, constraint checks, and error collection happen in one native pass instead of per-field Python calls. Model definitions remain Python classes; the schema is compiled lazily on first use and cached. Behavioral changes vs v1: strict modes (str types no longer coerced from ints by default in strict), union handling differences, and the new model_validate/model_dump APIs. The performance impact: validation is typically an order of magnitude faster, so validating large request/response payloads on hot paths is no longer a bottleneck, but deep nested models still cost proportional to size.",
+      "trapWarning": "The trap answer is 'FastAPI is fast because it uses Rust'. FastAPI itself is Python/Starlette; Pydantic v2's validator core is the Rust component. Another trap: 'v2 is a drop-in for v1' — some coercions and config options changed (smart union mode, error message formats), which surprises migrating teams. Candidates who mention CoreSchema compilation and the model_validate API prove they have actually used v2 rather than read a blog post."
+    }
+  ]
+}

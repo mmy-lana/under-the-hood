@@ -1,0 +1,52 @@
+{
+  "id": "goroutine-scheduler-gmp",
+  "title": "Go scheduler: GMP model",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (preemption improvements in 1.14+)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["go", "goroutine", "scheduler", "gmp", "concurrency", "runtime"],
+  "prerequisites": ["Go goroutines and channels basics", "Understanding of OS threads vs user-space scheduling"],
+  "progressiveExplaining": {
+    "eli5": "A stadium has a handful of lanes (M, the OS threads) and thousands of runners (goroutines) with bib numbers (G). The coach (the scheduler) decides which runners get on which lanes. Runners never wait for a lane to free up — when one finishes a lap and needs a break (blocks on I/O), the coach instantly swaps another runner in, and the lane keeps moving. There is also a P, the lane assignment card: each lane can only carry runners who hold the matching card. The coach keeps the lanes busy and the cards balanced, so even with 8 lanes and 100,000 runners, everyone makes progress.",
+    "junior": "go func() { ... }() starts a goroutine. Goroutines are lightweight user-space threads: they start with a tiny stack (2KB, grows) and are multiplexed by the Go runtime onto a small set of OS threads. The runtime scheduler uses the GMP model: G is a goroutine, M is an OS thread (machine), P is a processor (logical CPU, default GOMAXPROCS = number of cores). A goroutine blocks on a channel/syscall; the runtime parks its M or the G and schedules another G. You do not manage threads; the runtime balances work across Ps.",
+    "senior": "Architecturally, GMP is a work-stealing scheduler: each P has a local run queue (a FIFO of runnable Gs) plus a shared global queue. When a P's local queue empties, it steals work from another P's queue tail (or the global queue), which keeps all cores busy even when goroutines spawn unevenly. The runtime also performs async preemption since Go 1.14: the SIGURG signal interrupts long-running Gs so a tight loop cannot starve other goroutines. Blocking syscalls detach the M (the P is handed to another M or the G is parked), and the syscall goroutine resumes on a fresh M. This design gives M:N scheduling — many user goroutines over few OS threads — with cache locality (local queues) and load balancing (stealing).",
+    "underTheHood": "Internally, G is a struct holding the goroutine's stack, status, and preemption flag; M wraps an OS thread plus the goroutine currently executing; P holds the local run queue, the mcache (per-P memory cache), and timer buckets. The scheduler loop (schedule() → execute() → gogo) runs on each P: it pops from the local queue, tries the global queue, then steals. Stack growth is handled by a contiguous-stack implementation with a stack guard (split stacks were abandoned in Go 1.3): on stack exhaustion, the runtime copies the goroutine's stack to a larger one (StackCopy/stackmov). Syscall handling: entersyscall marks the G as in syscall and, if the syscall blocks, the P is released so another M can pick it up. The netpoller (network poller) parks goroutines doing net I/O on an epoll/kqueue loop and wakes them on readiness — network I/O rarely blocks an M."
+  },
+  "codeComparison": {
+    "title": "Blocking the main thread vs goroutine-parallel work",
+    "summary": "Serialized sequential work leaves cores idle; distributing across goroutines uses GOMAXPROCS workers through the GMP scheduler.",
+    "legacyOrBad": {
+      "label": "Sequential work",
+      "snippet": "var total int64\nfor _, n := range nums {\n  total += heavy(n) // one core does everything\n}",
+      "fullFile": {
+        "filename": "sum/main.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"runtime\"\n\t\"time\"\n)\n\nfunc heavy(n int) int {\n\t// Simulate a CPU-bound computation.\n\tacc := 0\n\tfor i := 0; i < n; i++ {\n\t\tacc += i * i\n\t}\n\treturn acc\n}\n\nfunc main() {\n\truntime.GOMAXPROCS(runtime.NumCPU())\n\n\tnums := make([]int, 1000)\n\tfor i := range nums {\n\t\tnums[i] = 100_000\n\t}\n\n\tstart := time.Now()\n\tvar total int64\n\tfor _, n := range nums {\n\t\ttotal += int64(heavy(n))\n\t}\n\tfmt.Println(total, time.Since(start))\n\n\t// All work runs on the single goroutine; even with many cores,\n\t// the scheduler has nothing to spread. Wall time ≈ sum of all\n\t// heavy() calls.\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Worker-pool parallelism",
+      "snippet": "jobs := make(chan int); results := make(chan int64)\n// N workers consume jobs; the GMP scheduler keeps all Ps busy",
+      "fullFile": {
+        "filename": "sum/main.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"runtime\"\n\t\"sync\"\n\t\"time\"\n)\n\nfunc heavy(n int) int {\n\tacc := 0\n\tfor i := 0; i < n; i++ {\n\t\tacc += i * i\n\t}\n\treturn acc\n}\n\nfunc main() {\n\truntime.GOMAXPROCS(runtime.NumCPU())\n\n\tconst numJobs = 1000\n\tjobs := make(chan int, numJobs)\n\tresults := make(chan int64, numJobs)\n\n\t// Fixed worker pool sized to the CPUs. The scheduler keeps each\n\t// P busy; idle workers park on the channel without wasting a\n\t// thread (the G parks, the M is reused).\n\tvar wg sync.WaitGroup\n\tworkers := runtime.NumCPU()\n\tfor range workers {\n\t\twg.Add(1)\n\t\tgo func() {\n\t\t\tdefer wg.Done()\n\t\t\tfor n := range jobs {\n\t\t\t\tresults <- int64(heavy(n))\n\t\t\t}\n\t\t}()\n\t}\n\n\tgo func() {\n\t\tfor i := 0; i < numJobs; i++ {\n\t\t\tjobs <- 100_000\n\t\t}\n\t\tclose(jobs)\n\t}()\n\n\tgo func() {\n\t\twg.Wait()\n\t\tclose(results)\n\t}()\n\n\tstart := time.Now()\n\tvar total int64\n\tfor r := range results {\n\t\ttotal += r\n\t}\n\tfmt.Println(total, time.Since(start))\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can a goroutine not keep running forever without preemption, and how was that fixed?",
+      "contextIntro": "This checks whether the candidate understands cooperative vs preemptive scheduling in Go — a frequent senior-level probing point.",
+      "detailedAnswer": "Before Go 1.14, the scheduler was mostly cooperative: a G yielded only at safe points — function calls, channel operations, allocation, etc. A tight CPU loop with no function calls (like for {}) never hit a safe point, so it could starve other goroutines indefinitely on its P. Go 1.14 added asynchronous preemption: the runtime sends a SIGURG signal to the thread running the misbehaving G, which interrupts the loop at a safe point inserted by the compiler and allows the scheduler to run another G. Stack-scan safe points and the preemption flag in the G struct coordinate the interrupt. Preemption is still not fully arbitrary — some C code and certain runtime internals are non-preemptible.",
+      "trapWarning": "The trap answer is 'goroutines are preempted by the OS like threads'. Goroutines are user-space; OS-level preemption does not apply. Another trap: 'tight loops never yield, so they hang forever' — that is true pre-1.14 and demonstrably wrong now, but the nuance (async preemption via signals, safe points, non-preemptible regions) is what the interviewer wants. Mentioning runtime.Gosched() as the cooperative alternative shows you know both mechanisms."
+    },
+    {
+      "question": "What happens to the M and P when a goroutine performs a blocking syscall?",
+      "contextIntro": "This probes the GMP mechanics under blocking I/O — the interviewer wants the detach/reacquire dance, not just 'it blocks'.",
+      "detailedAnswer": "When a G makes a blocking syscall, the runtime calls entersyscall: the G is marked as in syscall, and the P is released from the M. If other work is pending, another M can be woken to pick up the released P and its run queue, so the CPU stays busy. When the syscall returns, exitsyscall tries to reacquire the original P; if it is taken, the G is placed into the global run queue and the M either finds another P or idles/parks. Network I/O is special: the netpoller parks the G (not the M) on the network poller, so sockets never trigger the M detach path. This is why blocking syscalls cost an M (thread), but channel/socket waits cost only a G.",
+      "trapWarning": "The naive answer is 'the goroutine blocks and everything stops'. Only the M detaches; the P and other Gs continue. Another trap: 'network I/O detaches the M like syscalls' — socket waits use the netpoller and park the G instead, which is why HTTP-heavy servers stay cheap. Candidates who distinguish syscall-blocking (M detach) from netpoller-blocking (G park) demonstrate real runtime understanding."
+    }
+  ]
+}

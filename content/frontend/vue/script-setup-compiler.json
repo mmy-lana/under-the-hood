@@ -1,0 +1,58 @@
+{
+  "id": "script-setup-compiler",
+  "title": "Vue <script setup>: what the compiler actually does",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.2+ (script setup stable)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["vue", "script-setup", "compiler", "sfc", "ast", "macros"],
+  "prerequisites": ["Vue SFC basics", "Familiarity with the Options API vs Composition API"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a chef writing a recipe in shorthand: 'P' means 'preheat the oven', 'W' means 'whisk until fluffy'. When the cookbook is printed, someone expands every shorthand into the full sentence so the cook never has to remember what 'P' stood for. <script setup> is that shorthand: you write concise, top-level JavaScript, and the Vue compiler expands it into the full component definition — registration, props handling, expose list — before the browser ever sees it.",
+    "junior": "<script setup> lets you write Composition API code with top-level bindings automatically exposed to the template: defineProps, defineEmits, defineExpose, and useSlots/useAttrs are compiler macros (no import needed). Variables, imports, and functions declared at top level are directly usable in <template>. Compared to the Options API, there is no this — props and state are just variables. The compiler also enables defineModel (v-model sugar), and with it the component's public interface is declared via macros rather than an options object.",
+    "senior": "Architecturally, <script setup> moved Vue components toward compiled, scope-isolated modules. Each SFC's <script setup> block is compiled into a setup() function whose return object is built from the top-level bindings — the compiler statically analyzes the block, collects exported bindings (variables, functions, imports, macros), and generates the setup return statement. This eliminates the Options API's this-based lookup (a runtime string-keyed context) and lets TypeScript infer props directly from the defineProps argument, enabling fully type-checked templates. The macro-generated props/emits also feed the runtime's props normalization at the boundary, giving the compiler full knowledge of the component's contract before runtime.",
+    "underTheHood": "The SFC compiler (vue/compiler-sfc) parses the block with the Vue template parser's script parser, then runs compileScript(): it uses a Babel-based AST walk (via @babel/parser) to find macro calls (defineProps/defineEmits/defineExpose/withDefaults), verifies they are top-level (not nested in control flow), rewrites them into generated bindings (e.g. __props), and appends a synthesized setup() function that returns the exposed bindings. The template compiler then references those bindings by name in the render function's setup context. The final output is a normal component object — the macros are entirely compile-time; nothing ships to the runtime. defineExpose is compiled into a setExpose call so the parent's template ref access is constrained to the listed keys."
+  },
+  "rosettaStone": {
+    "react": "// React: props arrive as a function argument\nfunction Card({ title, count }) {\n  return <p>{title} · {count}</p>;\n}",
+    "angular": "// Angular: @Input() title: string; @Output() tick = new EventEmitter();",
+    "vue": "<script setup lang=\"ts\">\nconst props = defineProps<{ title: string; count: number }>();\nconst emit = defineEmits<{ tick: [] }>();\n</script>",
+    "svelte": "// Svelte 5: export props via $props()\nlet { title, count }: { title: string; count: number } = $props();"
+  },
+  "codeComparison": {
+    "title": "Options API boilerplate vs compiled <script setup>",
+    "summary": "The Options API wires everything through string keys and this; <script setup> compiles top-level bindings directly into a setup function, removing the ceremony.",
+    "legacyOrBad": {
+      "label": "Options API",
+      "snippet": "export default {\n  props: ['title', 'count'],\n  emits: ['tick'],\n  data() { return { open: false }; },\n  methods: { toggle() { this.open = !this.open; this.$emit('tick'); } }\n}",
+      "fullFile": {
+        "filename": "Counter.vue",
+        "language": "vue",
+        "code": "<template>\n  <button @click=\"toggle\">{{ title }} ({{ count }})</button>\n</template>\n\n<script>\nexport default {\n  name: 'Counter',\n  props: {\n    title: { type: String, required: true },\n    count: { type: Number, default: 0 }\n  },\n  emits: ['tick'],\n  data() {\n    return { open: false };\n  },\n  methods: {\n    toggle() {\n      this.open = !this.open;\n      this.$emit('tick', this.open);\n    }\n  }\n};\n</script>"
+      }
+    },
+    "modernOrGood": {
+      "label": "script setup",
+      "snippet": "<script setup lang=\"ts\">\nconst props = defineProps<{ title: string; count: number }>();\nconst emit = defineEmits<{ tick: [open: boolean] }>();\nconst open = ref(false);\n</script>",
+      "fullFile": {
+        "filename": "Counter.vue",
+        "language": "vue",
+        "code": "<script setup lang=\"ts\">\nimport { ref } from 'vue';\n\n// Compiler macros: no import, resolved at compile time into\n// the generated setup() function's props/emits bindings.\nconst props = defineProps<{\n  title: string;\n  count: number;\n}>();\n\nconst emit = defineEmits<{\n  tick: [open: boolean];\n}>();\n\nconst open = ref(false);\n\nfunction toggle() {\n  open.value = !open.value;\n  emit('tick', open.value);\n}\n</script>\n\n<template>\n  <button @click=\"toggle\">{{ props.title }} ({{ props.count }})</button>\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why do defineProps and defineEmits not need an import, and what are the constraints on using them?",
+      "contextIntro": "This question separates candidates who know the macros are compiler magic from those who assume they are normal imports from 'vue'.",
+      "detailedAnswer": "They are compiler macros: the SFC compiler detects the calls during compileScript, verifies they are used at the top level of <script setup> (not inside functions or conditionals), and removes them from the output while generating the corresponding runtime props/emits bindings. That is why there is no import — importing would break the static analysis. The top-level constraint exists because the compiler needs a static, unconditional declaration to generate the setup context; a conditional defineProps would make the component contract unknowable at compile time. TypeScript's macro type-checking is provided by the vue language tools injecting ambient declarations.",
+      "trapWarning": "The naive answer is 'they are imported from vue'. They are not, and importing defineProps explicitly actually triggers a lint/compiler warning in some setups. The deeper trap: claiming you can call defineProps inside a function to 'conditionally declare props' — the compiler rejects it, because the SFC contract must be static. Interviewers also like when you mention withDefaults as the typed-defaults companion that compiles down to the runtime default assignment."
+    },
+    {
+      "question": "What does the compiler emit for <script setup> — how does the component object come to exist?",
+      "contextIntro": "This probes whether the candidate understands the SFC pipeline (template + script compiled into a render function + component options) rather than just the DX surface.",
+      "detailedAnswer": "compileScript parses the block with @babel/parser, walks the AST for macros and top-level bindings, then synthesizes a setup() function whose body is your script with the macro calls rewritten (defineProps → __props normalization, defineExpose → setExpose, defineModel → modelRef) and whose return statement exposes the bound names (refs get unref-wrapped, plain values pass through, imports pass through). The template is compiled separately into a render function that closes over the setup scope. The SFC plugin then stitches both into a component object. Nothing about the macros reaches the runtime — the shipped component is ordinary Vue options under the hood, which is why <script setup> components are fully interoperable with Options API components.",
+      "trapWarning": "A tempting wrong claim: '<script setup> compiles to the Options API'. The runtime shape is similar (the setup function result feeds the component), but it is the Composition API setup model, not the options object with methods/data. Another trap: 'the compiler runs at runtime in the browser' — the SFC compiler runs at build time; the browser only ever sees plain JavaScript. Mentioning that the setup() body is where 'this' is intentionally absent (props are closure variables, not this.props) is a strong signal."
+    }
+  ]
+}

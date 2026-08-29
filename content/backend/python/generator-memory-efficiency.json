@@ -1,0 +1,52 @@
+{
+  "id": "generator-memory-efficiency",
+  "title": "Python generators: lazy memory efficiency",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-29",
+  "tags": ["python", "generators", "memory", "lazy-evaluation", "iterators", "yield"],
+  "prerequisites": ["Python functions and iteration basics", "Understanding of lists vs iterators"],
+  "progressiveExplaining": {
+    "eli5": "A library has two ways to lend you a 1000-chapter encyclopedia. The first way hands you all 1000 books at once — you need a truck to carry them home. The second way gives you a bookmark that the librarian turns into 'the next chapter' whenever you ask — you never carry more than one chapter, and you never read chapters you do not need. The bookmark is a generator: it produces values one at a time, only when you ask, and never holds the whole collection.",
+    "junior": "A generator is a function with yield instead of return: def evens(n): for i in range(n): if i % 2 == 0: yield i. Calling it returns a generator object (an iterator), not the values. Each next(gen) resumes execution from the previous yield until the next yield or StopIteration. for x in evens(10) drives it automatically. The memory win: a list of a million numbers holds a million int objects; a generator computes them on demand. Use generators for streaming large data (files, logs, API pagination), infinite sequences, and pipelines (gen1 | gen2 via yield from or chained loops).",
+    "senior": "Architecturally, generators decouple the producer from the consumer's memory budget: the producer's state (locals, the instruction pointer) lives in the generator frame, which is suspended between yields instead of being torn down. This enables streaming pipelines — read a line, transform it, write it — with O(1) live memory regardless of input size. It also enables the generator protocol as a building block: iterators over huge results (db cursors), zip/pairwise combinators over generators (which stay lazy), and itertools chains. The trade-off: a generator cannot be indexed or len()'d, cannot be reused (single-pass), and per-value overhead (frame resume) is higher than a bulk list operation — so generators are for memory-boundedness and streaming, not for micro-speed on small data.",
+    "underTheHood": "A generator function compiles to a generator object holding a frame (PyFrameObject) plus the code object. Each next() call resumes the frame via the eval loop at the saved instruction pointer (f_lasti); yield stores the yielded value, saves the frame state, and returns control — the frame is NOT deallocated, which is the memory trick: the entire function state stays alive between calls. The coroutine machinery (send/throw/close, PEP 342/380) reuses the same frame-resume mechanics, which is also how asyncio implements coroutines (async def is a generator-like object). GeneratorExit is raised into the frame on close() for finally cleanup. The frame's locals and stack are heap objects, so a suspended generator retains everything its scope references — holding a generator that references a huge list keeps that list alive even if only one value was consumed."
+  },
+  "codeComparison": {
+    "title": "Building a list vs streaming with a generator",
+    "summary": "A list materializes every value in memory; a generator computes one value at a time, bounding memory to the working set.",
+    "legacyOrBad": {
+      "label": "Materialized list",
+      "snippet": "lines = [line.strip() for line in open('big.log')]\nunique = {line for line in lines}",
+      "fullFile": {
+        "filename": "log_stats.py",
+        "language": "python",
+        "code": "import os\n\n\ndef build_report(path: str) -> dict[str, int]:\n    # Materializes EVERY line as a string in memory, then builds\n    # a set of unique lines — peak memory is roughly the file\n    # size plus the unique set. For a 4GB log this OOMs.\n    with open(path, \"r\", encoding=\"utf-8\") as fh:\n        lines = [line.strip() for line in fh]\n    unique = set(lines)\n    return {\"total\": len(lines), \"unique\": len(unique)}\n\n\nif __name__ == \"__main__\":\n    path = \"access.log\"\n    if not os.path.exists(path):\n        open(path, \"w\").close()\n    print(build_report(path))\n    print(\"peak RSS while building the list scales with file size\")\n"
+      }
+    },
+    "modernOrGood": {
+      "label": "Streaming generator",
+      "snippet": "unique = set()\ntotal = 0\nfor line in open('big.log'):   # iterating a file IS a generator\n    unique.add(line.strip())\n    total += 1",
+      "fullFile": {
+        "filename": "log_stats.py",
+        "language": "python",
+        "code": "import os\n\n\ndef iter_lines(path: str):\n    # A generator: one line in memory at a time. The file object\n    # itself is an iterator (buffered reads), and wrapping it lets\n    # us add per-line processing lazily.\n    with open(path, \"r\", encoding=\"utf-8\") as fh:\n        for raw in fh:\n            line = raw.strip()\n            if line:  # skip empties as we stream\n                yield line\n\n\ndef build_report(path: str) -> dict[str, int]:\n    unique: set[str] = set()\n    total = 0\n    # Peak memory is bounded by the set of unique strings only;\n    # the stream never materializes the whole file.\n    for line in iter_lines(path):\n        unique.add(line)\n        total += 1\n    return {\"total\": total, \"unique\": len(unique)}\n\n\nif __name__ == \"__main__\":\n    path = \"access.log\"\n    if not os.path.exists(path):\n        with open(path, \"w\", encoding=\"utf-8\") as fh:\n            fh.write(\"GET / 200\\nGET / 200\\nPOST /api 201\\n\")\n    print(build_report(path))\n"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Where does the memory actually live when a generator is suspended, and what can keep it alive longer than you expect?",
+      "contextIntro": "This targets the frame-retention mechanism — the interviewer wants the PyFrameObject and the retention footgun, not just 'generators are lazy'.",
+      "detailedAnswer": "A suspended generator holds its entire execution state in a heap-allocated frame: locals, the operand stack, and the instruction pointer (f_lasti). That frame stays alive as long as the generator object is referenced, which means a generator can pin memory unexpectedly — e.g., a generator that yielded one value but whose frame still references a large list keeps that list reachable. The fix is to scope the generator tightly (del gen, or let it go out of scope) and avoid long-lived references into a generator that captures big state. Also, the generator's try/finally blocks run on close(), so an abandoned generator may never run cleanup until it is collected.",
+      "trapWarning": "The trap answer is 'generators use no memory'. They hold the frame (locals + state) — that is precisely how laziness works, and it can retain large referenced objects. Another trap: 'iterating a generator twice works like a list' — generators are single-pass iterators; the second loop yields nothing. Candidates who mention f_lasti and the frame's referenced-object retention demonstrate the actual mechanism rather than the slogan."
+    },
+    {
+      "question": "Why is a generator sometimes slower than a list, and when does it still win overall?",
+      "contextIntro": "The interviewer wants the performance trade-off analyzed honestly — frame-resume overhead versus memory and streaming wins.",
+      "detailedAnswer": "Each next() call must resume the frame: restore the eval state, run until the next yield, and suspend again — a function-call-like cost per value, plus the iterator protocol dispatch (PEP 380 yield-from adds another layer). A list comprehension runs a tight loop in C (LIST_APPEND) and is often faster per element for small, fully-consumed data. Generators win on the axes that dominate real systems: memory boundedness for large/unbounded data (a 10GB stream fits), early termination (stop after the first match without computing the rest), and pipeline composition where intermediate lists would multiply memory. So the rule is: materialize small data, stream large or potentially-infinite data.",
+      "trapWarning": "The naive answer is 'generators are always more efficient'. For small, always-consumed inputs a list is typically faster and simpler. Another trap: 'generators save memory on everything' — the frame-retention case (holding a generator referencing a big object) can pin MORE memory than the list would have used if the list were consumed and dropped. Mentioning early termination and pipeline memory as the real wins is what makes the answer senior."
+    }
+  ]
+}

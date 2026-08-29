@@ -1,0 +1,52 @@
+{
+  "id": "virtual-threads-loom",
+  "title": "Java Virtual Threads (Project Loom)",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "Java 21 (JEP 444, virtual threads stable)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["java", "virtual-threads", "loom", "concurrency", "threading", "jvm"],
+  "prerequisites": ["Java threading basics", "Understanding of blocking I/O and thread-per-request servers"],
+  "progressiveExplaining": {
+    "eli5": "A busy restaurant has a fixed number of waiters (threads). Old-style serving: each customer is assigned one waiter who stays by their table until the whole meal ends — if a waiter is waiting for the kitchen to cook, he stands idle. With virtual threads, the waiter is a pocket notepad instead of a person: whenever a table is waiting on the kitchen, the pad is placed on a shelf, and the actual waiter walks over to serve another table. When the kitchen finishes, the pad is picked up and that table gets service again. One waiter can juggle hundreds of notepads.",
+    "junior": "Virtual threads let you write blocking-style code that scales like async code: Thread.ofVirtual().start(() -> { var r = client.get(url); process(r); }); or Executors.newVirtualThreadPerTaskExecutor(). Each virtual thread is a Java Thread instance, but it is scheduled onto a small pool of platform (carrier) threads by the JVM. When a virtual thread blocks on I/O, the JVM unmounts it from the carrier, runs other virtual threads on that carrier, and remounts it when the I/O completes. You keep normal try-with-resources, blocking calls, and stack traces — no CompletableFuture or reactive chains needed.",
+    "senior": "Architecturally, virtual threads decouple the application's concurrency model from the OS thread limit: you can create millions of them because each is a heap object (~a few KB of stack initially), not an OS thread (~1MB stack + kernel resources). The enabling work was done in the JDK: synchronized blocks were made pinning-avoidant (no blocking in synchronized unless the monitor is contended — JEP 491 removes most pinning), and the I/O stack was rewritten to be non-blocking underneath while preserving blocking APIs. The scaling ceiling moves from 'threads per server' to memory and the underlying I/O throughput. Caveats: CPU-bound work gains nothing (carriers are limited), and native frames, Object.wait, and some JNI calls can pin a carrier, temporarily reducing parallelism.",
+    "underTheHood": "Virtual threads are implemented by the JVM as continuations (Fiber classes in the JDK internals): each virtual thread's stack is a jdk.internal.vm.Continuation that can be frozen and resumed. A carrier thread runs a loop that mounts a continuation, executes until the thread parks (blocking I/O triggers a park via the virtual thread's scheduler), then unmounts and picks the next runnable virtual thread from its queue (the default scheduler is a ForkJoinPool sized to available processors). The continuation's stack frames are heap-allocated (stack chunks), so mounting is just copying chunk references into the carrier's stack space. I/O is integrated via the JDK's non-blocking socket/selector machinery: a blocking read on a virtual thread parks the continuation and registers with the selector, and completion unmounts/requeues it. This is why one can write synchronous-looking code at the throughput of async frameworks."
+  },
+  "codeComparison": {
+    "title": "Platform thread-per-request vs virtual thread-per-request",
+    "summary": "A platform thread per request is capped by OS resources; virtual threads make the thread count a heap concern, keeping blocking code readable.",
+    "legacyOrBad": {
+      "label": "Fixed platform thread pool",
+      "snippet": "ExecutorService pool = Executors.newFixedThreadPool(200);\npool.submit(() -> handle(request));",
+      "fullFile": {
+        "filename": "HttpServer.java",
+        "language": "java",
+        "code": "import java.io.IOException;\nimport java.net.InetSocketAddress;\nimport java.net.URI;\nimport java.net.http.HttpClient;\nimport java.net.http.HttpRequest;\nimport java.net.http.HttpResponse;\nimport java.util.concurrent.ExecutorService;\nimport java.util.concurrent.Executors;\n\npublic class HttpServer {\n  public static void main(String[] args) throws IOException {\n    var pool = Executors.newFixedThreadPool(200);\n    var server = new com.sun.net.httpserver.HttpServer();\n    // Placeholder: production code would bind a real server.\n    // The point: with a 200-thread pool, 201 concurrent blocking\n    // requests queue up — each request consumes a full OS thread\n    // (~1MB stack + kernel resource) while it blocks on I/O.\n    pool.submit(() -> {\n      var client = HttpClient.newHttpClient();\n      HttpRequest req = HttpRequest.newBuilder(URI.create(\"https://example.com\")).build();\n      try {\n        HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());\n        System.out.println(\"response \" + res.statusCode());\n      } catch (IOException | InterruptedException e) {\n        Thread.currentThread().interrupt();\n      }\n    });\n    pool.shutdown();\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Virtual thread per task",
+      "snippet": "try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {\n  pool.submit(() -> handle(request));\n}",
+      "fullFile": {
+        "filename": "HttpServer.java",
+        "language": "java",
+        "code": "import java.net.URI;\nimport java.net.http.HttpClient;\nimport java.net.http.HttpRequest;\nimport java.net.http.HttpResponse;\nimport java.util.concurrent.Executors;\n\npublic class HttpServer {\n  public static void main(String[] args) throws Exception {\n    // One virtual thread per task: the JVM creates a heap object\n    // thread that blocks on I/O by parking its continuation. A few\n    // dozen carrier threads multiplex hundreds of thousands of\n    // virtual threads, so concurrency is no longer capped by OS\n    // threads.\n    try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {\n      var client = HttpClient.newHttpClient();\n      for (int i = 0; i < 10_000; i++) {\n        pool.submit(() -> {\n          HttpRequest req =\n              HttpRequest.newBuilder(URI.create(\"https://example.com\")).build();\n          try {\n            HttpResponse<String> res =\n                client.send(req, HttpResponse.BodyHandlers.ofString());\n            System.out.println(\"response \" + res.statusCode());\n          } catch (Exception e) {\n            System.out.println(\"request failed: \" + e);\n          }\n        });\n      }\n    }\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What can pin a carrier thread, and how does that degrade virtual thread performance?",
+      "contextIntro": "The interviewer wants to verify that you know virtual threads are not free and understand the pinning failure mode introduced by Loom.",
+      "detailedAnswer": "Pinning happens when a virtual thread, while holding a native or synchronized monitor, performs a blocking operation that the JVM cannot transparently unmount. Cases: synchronized blocks or methods during a blocking call (the monitor is tied to the carrier until released), native methods that block (JNI), and Object.wait in some paths. When pinned, the carrier cannot be reused for other virtual threads, so with many pinned threads you effectively run with as many carriers as pinned threads — the scaling benefit collapses. Java 24+ (JEP 491) removed most pinning for synchronized by making the monitor pin only when contended, but native pinning remains a documented limitation.",
+      "trapWarning": "The naive answer is 'virtual threads never block the OS'. They do block carriers when pinned, and before JEP 491 synchronized was a common accidental cause (locks acquired around blocking I/O). Another trap: claiming pinning is a bug you can ignore — under heavy load it reproduces thread starvation symptoms. Naming the monitor-versus-native distinction and the JEP 491 change shows current knowledge."
+    },
+    {
+      "question": "Why does CPU-bound code not benefit from virtual threads?",
+      "contextIntro": "This tests whether the candidate understands the scheduling model — virtual threads multiplex onto a fixed set of carriers, so CPU work is still bound by cores.",
+      "detailedAnswer": "Virtual threads are scheduled onto a bounded set of carrier threads (by default a ForkJoinPool sized to available processors). A virtual thread running CPU-bound work occupies its carrier for the whole computation — it has nothing to yield on — so the total CPU throughput is the same as with platform threads. The benefit is purely about concurrency with blocking: virtual threads only win when the code spends time parked on I/O, allowing other virtual threads to reuse the carrier. CPU-bound workloads should still use parallelism tuned to cores (e.g., the number of virtual threads ≈ processors, or plain platform threads).",
+      "trapWarning": "The trap answer is 'create more virtual threads for CPU work and it scales'. More virtual threads on CPU work just adds context-switch and continuation-mounting overhead on the same carriers. Another trap: using virtual threads for tasks that do heavy synchronized computation and assuming parallelism — contended monitors serialize them. The sharp answer ties the benefit to I/O-bound workloads and parking, which is exactly where async frameworks also win."
+    }
+  ]
+}

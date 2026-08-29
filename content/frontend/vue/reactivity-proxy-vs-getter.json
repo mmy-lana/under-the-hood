@@ -1,0 +1,58 @@
+{
+  "id": "reactivity-proxy-vs-getter",
+  "title": "Vue 3 reactivity: Proxy vs Vue 2 getter/setter",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x (Proxy-based)",
+  "lastUpdated": "2026-08-29",
+  "tags": ["vue", "reactivity", "proxy", "defineproperty", "vue3", "javascript"],
+  "prerequisites": ["Vue component basics", "JavaScript Proxy and Object.defineProperty"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a hotel front desk with a guest register. In the old hotel, the register was a paper book: every room was pre-listed on its own page, and the clerk could only notice a guest checking in if their page already existed. If a new guest arrived with a room number that had no page, the clerk never recorded them. The new hotel uses a smart digital register that catches every key card swipe — even a brand-new room added later — and the moment anything changes, the right page updates. That is the difference between the old getter/setter system and the new Proxy system.",
+    "junior": "Vue 2 wrapped object properties with Object.defineProperty, converting each existing key into a reactive getter/setter. That is why adding a new property to a reactive object required this.$set(obj, 'key', value) — the new key had no getter/setter, so it was invisible to reactivity. Vue 3 uses JavaScript Proxy: reactive(obj) returns a proxy that intercepts get, set, has, deleteProperty, and more, so brand-new keys are reactive automatically, no $set needed. In practice this means arrays indexed by number, added properties, and destructuring behavior all changed: obj['newKey'] = x just works, and arr[3] = v is tracked.",
+    "senior": "Architecturally, the Proxy rewrite made reactivity a true language-level trap instead of a key-by-key patching pass. Vue 2 had to walk the object at initialization, which cost startup time for large objects and could miss keys added later (hence $set). Proxy interception is lazy and universal: access is tracked on read (get trap registers the effect as a dependency), writes are queued on set (set trap invalidates dependents), and entire operations like has/in work, which is what powers template expressions like 'key' in obj. It also enabled reactive(Map/Set/WeakMap), since those need method-level trapping (get of 'get'), impossible with defineProperty.",
+    "underTheHood": "Vue 3's reactivity is a push-pull graph: each reactive object has a WeakMap of targets → key → Dep (a Set of effects). The get trap calls track(target, key), which records the currently-running effect (read from a global activeEffect stack) into that key's Dep. The set trap calls trigger(target, key), which queues the Dep's effects into a scheduler. Computeds are lazy effects that re-evaluate only when read and when a dependency's version changed. Effects are run inside a job queue (Promise-based) so mutations in one tick batch into one flush. The base handlers (mutableHandlers) also handle arrays specially: the set trap compares length and index changes, and the has/getOwnPropertyDescriptor traps cover in-operator and key iteration. Unlike Vue 2's per-key redefine, Proxy keeps the original object untouched — the proxy wraps it, which is why raw objects passed to child components still need to flow through reactive() or ref()."
+  },
+  "rosettaStone": {
+    "react": "const [obj, setObj] = useState({ count: 0 });\n// updates are immutable: setObj({ ...obj, count: obj.count + 1 })",
+    "angular": "const count = signal(0);\n// signals track reads via a consumer graph",
+    "vue": "const state = reactive({ count: 0 });\n// state.count++ is intercepted by the Proxy set trap",
+    "svelte": "let obj = $state({ count: 0 });\n// deep reactive via compiled proxies; obj.count++ works"
+  },
+  "codeComparison": {
+    "title": "Adding a key to a reactive object: $set vs direct assignment",
+    "summary": "Vue 2 required $set for new keys because defineProperty ran once at init; the Proxy in Vue 3 makes direct assignment reactive for any key, existing or new.",
+    "legacyOrBad": {
+      "label": "Vue 2 defineProperty",
+      "snippet": "this.$set(this.user, 'role', 'admin');\n// plain assignment would not trigger updates:",
+      "fullFile": {
+        "filename": "user-store.js",
+        "language": "javascript",
+        "code": "// Vue 2 (before Vue.observable rewrite)\nexport default {\n  data() {\n    return { user: { name: 'Ada', role: null } };\n  },\n  methods: {\n    promote() {\n      // BUG: this assignment is invisible to reactivity.\n      // 'role' did not exist at data() time, so defineProperty\n      // never installed a setter for it — the template never updates.\n      this.user.role = 'admin';\n      this.notifyRoleChanged(this.user.role);\n    },\n    promoteCorrectly() {\n      // The correct legacy path: $set walks the object, adds\n      // getters/setters for the new key, and triggers re-render.\n      this.$set(this.user, 'role', 'admin');\n      this.notifyRoleChanged(this.user.role);\n    },\n    notifyRoleChanged(role) {\n      console.log('role is now', role);\n    }\n  }\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "Vue 3 Proxy",
+      "snippet": "state.user.role = 'admin'; // tracked by the set trap",
+      "fullFile": {
+        "filename": "user-store.js",
+        "language": "javascript",
+        "code": "import { reactive } from 'vue';\n\nconst state = reactive({\n  user: { name: 'Ada', role: null }\n});\n\nfunction promote() {\n  // The Proxy set trap intercepts this assignment for ANY key,\n  // existing or brand-new, so no $set equivalent is needed.\n  state.user.role = 'admin';\n  notifyRoleChanged(state.user.role);\n}\n\nfunction notifyRoleChanged(role) {\n  console.log('role is now', role);\n}\n\nexport { state, promote };\n\n// Array holes behave the same way:\nconst items = reactive([1, 2, 3]);\nitems[5] = 6; // tracked (array index trap)\nitems.length = 2; // tracked (length trap)"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why did Vue 2's reactivity miss newly added properties, and what mechanisms replaced $set in Vue 3?",
+      "contextIntro": "Interviewers ask this to check whether you understand defineProperty's initialization-time limitation versus Proxy's universal interception, not just that $set 'was annoying'.",
+      "detailedAnswer": "Object.defineProperty must be called for each key at object-creation time to install the getter/setter. Vue 2 walked data() once; keys added later had no traps, so reads/writes bypassed tracking entirely. The ecosystem patched this with $set (which re-walks and redefines the key) and $delete. Vue 3's reactive() returns a Proxy whose set/get traps fire for every property access, so adding, deleting, and iterating are all intercepted natively. That also fixed the class of bugs where replace-with-array-index or length mutation were untracked in Vue 2.",
+      "trapWarning": "A common trap is saying 'Vue 3 removed $set because proxies are faster'. Proxies are generally not faster than plain defineProperty access — the real win is correctness and universality (new keys, Maps/Sets, in-operator). Also, candidates sometimes claim reactive() mutates the original object; it does not — the original stays a raw object, and the proxy wraps it, which is why passing raw objects out of reactive can silently break tracking."
+    },
+    {
+      "question": "What is the difference between ref() and reactive(), and when does one silently break?",
+      "contextIntro": "This probes practical reactivity literacy — the interviewer wants the mechanical reason behind the .value rule.",
+      "detailedAnswer": "reactive() wraps objects/arrays in a Proxy and exposes their properties directly. ref() wraps any value (including primitives, which Proxy cannot wrap) in an object with a value property whose getter/setter run track/trigger. When you destructure a reactive object, the proxy is bypassed — const { count } = state copies the raw number and loses tracking, which is why toRefs exists. For refs, the .value indirection keeps the tracked box alive through destructuring. The deep-reactivity default means reactive(ref(x)) unwraps the ref (a nested ref is unwrapped on access via the ref proxy's get trap), which candidates often forget.",
+      "trapWarning": "The classic trap: 'reactive only works with objects and ref only with primitives' is almost right but misleading — ref works with objects too (wrapping them in .value), and reactive objects containing refs auto-unwrap them. The deeper trap is destructuring: const { count } = reactive(...) looks like it should work and silently doesn't, which is a favorite interview setup for checking whether the candidate understands that the proxy is the tracked object, not its contents."
+    }
+  ]
+}
