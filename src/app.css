@@ -67,6 +67,20 @@
   background-color: var(--diff-modern-tint);
 }
 
+/* Line-number gutter rendered from data-line attributes (Shiki post-process). */
+.shiki .line[data-line]::before {
+  content: attr(data-line);
+  display: inline-block;
+  width: 2.25rem;
+  margin-right: 1rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: rgba(148, 163, 184, 0.45);
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Native form controls need explicit colors in dark mode. */
 select {
   background-color: var(--surface);

@@ -23,3 +23,10 @@ export interface HighlightedCode {
   html: string;
   code: string;
 }
+
+/** One side of the full-file diff modal (legacy or modern). */
+export interface DiffPaneData extends HighlightedCode {
+  label: string;
+  filename: string;
+  language: string;
+}
