@@ -8,7 +8,7 @@
   import SnippetDiffPreview from '$lib/components/molecules/SnippetDiffPreview.svelte';
   import FullDiffModal from '$lib/components/organisms/FullDiffModal.svelte';
   import ProgressiveReader from '$lib/components/organisms/ProgressiveReader.svelte';
-  import { depth, setDepth, initDepthFromUrl, DEPTH_TIERS } from '$lib/stores/depth.svelte';
+  import { getDepth, setDepth, initDepthFromUrl, DEPTH_TIERS } from '$lib/stores/depth.svelte';
   import type { HighlightedCode } from '$lib/types';
   import type { RosettaFramework } from '$lib/content/schema';
   import type { TopicPageData } from './+page.server';
@@ -119,10 +119,10 @@
     <h2 id="reader-heading" class="sr-only">Read at your depth</h2>
     <div class="mb-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap" role="group" aria-label="Reading depth">
       {#each DEPTH_TIERS as tier (tier)}
-        <DepthPill tier={tier} active={depth === tier} onselect={setDepth} />
+        <DepthPill tier={tier} active={getDepth() === tier} onselect={setDepth} />
       {/each}
     </div>
-    <ProgressiveReader depths={topic.progressiveExplaining} active={depth} />
+    <ProgressiveReader depths={topic.progressiveExplaining} active={getDepth()} />
   </section>
 
   <!-- Rosetta stone -->

@@ -5,6 +5,10 @@ import type { DepthTier } from '$lib/types';
  * Depth store (runes). Controls which tier of ProgressiveReader is active.
  * Persists to localStorage (`uth-depth`) and mirrors the value into the URL
  * (`?depth=`) via history.replaceState so the state is deep-linkable.
+ *
+ * Svelte forbids exporting a $state binding that is reassigned, so the state
+ * stays module-internal and is read through getDepth() (a function call that
+ * remains reactive wherever it is evaluated inside a template or $derived).
  */
 
 const STORAGE_KEY = 'uth-depth';
@@ -22,7 +26,11 @@ function readStoredDepth(): DepthTier {
   return 'junior';
 }
 
-export let depth = $state<DepthTier>(readStoredDepth());
+let depth = $state<DepthTier>(readStoredDepth());
+
+export function getDepth(): DepthTier {
+  return depth;
+}
 
 export function setDepth(next: DepthTier): void {
   depth = next;

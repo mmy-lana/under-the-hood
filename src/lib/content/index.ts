@@ -9,8 +9,10 @@ import type { SearchRecord } from '$lib/types';
  * `pnpm build` immediately with the offending file path.
  */
 
-type GlobModules = Record<string, { default: unknown }>;
+type GlobModules = Record<string, unknown>;
 
+// With `import: 'default'` each glob module value IS the parsed JSON
+// object (not `{ default: obj }`), so the module is validated directly.
 const modules: GlobModules = import.meta.glob('/content/**/*.json', {
   eager: true,
   import: 'default'
@@ -19,9 +21,8 @@ const modules: GlobModules = import.meta.glob('/content/**/*.json', {
 const rawTopics: TopicSchema[] = [];
 
 for (const [path, module] of Object.entries(modules)) {
-  const raw = module as { default: unknown };
-  assertValidTopic(raw.default, path);
-  rawTopics.push(raw.default as TopicSchema);
+  assertValidTopic(module, path);
+  rawTopics.push(module as TopicSchema);
 }
 
 function compareTopics(a: TopicSchema, b: TopicSchema): number {

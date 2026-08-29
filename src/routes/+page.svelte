@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { page } from '$app/state';
   import { ArrowRight, CalendarClock, ChevronRight, Layers, Tag } from '@lucide/svelte';
   import Badge from '$lib/components/atoms/Badge.svelte';
   import Button from '$lib/components/atoms/Button.svelte';
-  import type { TopicSchema } from '$lib/content/schema';
   import type { HomeData } from './+page.server';
 
   let { data }: { data: HomeData } = $props();
@@ -24,8 +24,16 @@
     }).format(new Date(year, month - 1, day));
   }
 
-  const urlFilter = $derived(page.url.searchParams.get('filter') ?? '');
-  const urlTag = $derived(page.url.searchParams.get('tag') ?? '');
+  // url.searchParams is forbidden during prerender; read it only in
+  // the browser. The $derived re-runs whenever page.url changes, so
+  // client-side reactivity is preserved.
+  function urlParam(key: string): string {
+    if (!browser) return '';
+    return page.url.searchParams.get(key) ?? '';
+  }
+
+  const urlFilter = $derived(urlParam('filter'));
+  const urlTag = $derived(urlParam('tag'));
 
   const subcategoryNames = $derived(
     Object.keys(data.topicsBySubcategory).sort((a, b) => {

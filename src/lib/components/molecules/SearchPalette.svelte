@@ -236,7 +236,6 @@
                 >
                   <span class="flex items-center justify-between gap-2">
                     <span class="min-w-0 truncate text-sm font-medium text-text" aria-hidden="false">
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
                       {@html markedTitle(hit)}
                     </span>
                     {#if active}
@@ -248,7 +247,7 @@
                       {@html markedPath(hit)}
                     </span>
                     <span class="flex shrink-0 gap-1">
-                      {#each hit.item.tags.slice(0, 2) as tag}
+                      {#each hit.item.tags.slice(0, 2) as tag (tag)}
                         <span class="rounded-full bg-surface px-1.5 py-0.5 text-[10px] text-text-muted border border-border">
                           {tag}
                         </span>

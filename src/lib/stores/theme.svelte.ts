@@ -6,6 +6,10 @@ import type { ThemeName } from '$lib/types';
  * <html data-theme> attribute + <meta name="theme-color"> in sync. The inline
  * head script in app.html handles first paint (no FOUC); this store handles
  * every subsequent toggle. Prerendered HTML always emits the default 'paper'.
+ *
+ * Svelte forbids exporting a $state binding that is reassigned, so the state
+ * stays module-internal and is read through getTheme() (a function call that
+ * remains reactive wherever it is evaluated inside a template or $derived).
  */
 
 const STORAGE_KEY = 'uth-theme';
@@ -31,7 +35,11 @@ function readStoredTheme(): ThemeName {
   return 'paper';
 }
 
-export let theme = $state<ThemeName>(readStoredTheme());
+let theme = $state<ThemeName>(readStoredTheme());
+
+export function getTheme(): ThemeName {
+  return theme;
+}
 
 export function setTheme(next: ThemeName): void {
   theme = next;
