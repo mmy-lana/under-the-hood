@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="paper">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#F7F2E8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+    %sveltekit.head%
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('uth-theme');
+          var bg = { paper: '#F7F2E8', obsidian: '#0F172A', studio: '#FAFAFA' };
+          var cs = { paper: 'light', obsidian: 'dark', studio: 'light' };
+          if (t && bg[t]) {
+            var el = document.documentElement;
+            el.dataset.theme = t;
+            el.style.colorScheme = cs[t];
+            var m = document.querySelector('meta[name="theme-color"]');
+            if (m) m.setAttribute('content', bg[t]);
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <a href="#main" class="skip-link">Skip to content</a>
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>
