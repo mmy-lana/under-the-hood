@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
   import { page } from '$app/state';
   import { ArrowRight, CalendarClock, ChevronRight, Layers, Tag } from '@lucide/svelte';
@@ -63,13 +64,13 @@
   }
 
   function setTag(tag: string): void {
-    const url = new URL(window.location.href);
+    const url = new URL(page.url);
     if (url.searchParams.get('tag') === tag) {
       url.searchParams.delete('tag');
     } else {
       url.searchParams.set('tag', tag);
     }
-    window.history.replaceState({}, '', url);
+    goto(url.href, { keepFocus: true, noScroll: true, replaceState: true });
   }
 </script>
 
