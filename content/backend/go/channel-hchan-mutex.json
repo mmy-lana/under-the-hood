@@ -18,20 +18,20 @@
     "summary": "Unbuffered channels synchronize two goroutines with a rendezvous; buffered channels decouple producers from workers and need explicit close for completion.",
     "legacyOrBad": {
       "label": "Unbuffered broadcast (blocking main)",
-      "snippet": "done := make(chan struct{})\ngo func() { work(); done <- struct{}{} }()\n<-done // blocks until the goroutine sends",
+      "snippet": "done := make(chan struct{}) // ❌ OLD: unbuffered → rendezvous, main blocks on send\ngo func() { work(); done <- struct{}{} }()\n<-done // blocks until the goroutine sends",
       "fullFile": {
         "filename": "main.go",
         "language": "go",
-        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc main() {\n\tdone := make(chan struct{})\n\n\tgo func() {\n\t\tdefer func() { done <- struct{}{} }()\n\t\tfmt.Println(\"working…\")\n\t\ttime.Sleep(100 * time.Millisecond)\n\t}()\n\n\t// Rendezvous: main blocks until the goroutine SENDS. If the\n\t// goroutine panicked before the deferred send, main would\n\t// block forever — prefer done semantics with a buffered\n\t// channel or WaitGroup to survive early exits.\n\t<-done\n\tfmt.Println(\"finished\")\n}"
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"time\"\n)\n\nfunc main() {\n\tdone := make(chan struct{}) // ❌ OLD: unbuffered rendezvous — main blocks until the goroutine sends\n\n\tgo func() {\n\t\tdefer func() { done <- struct{}{} }()\n\t\tfmt.Println(\"working…\")\n\t\ttime.Sleep(100 * time.Millisecond)\n\t}()\n\n\t// Rendezvous: main blocks until the goroutine SENDS. If the\n\t// goroutine panicked before the deferred send, main would\n\t// block forever — prefer done semantics with a buffered\n\t// channel or WaitGroup to survive early exits.\n\t<-done\n\tfmt.Println(\"finished\")\n}"
       }
     },
     "modernOrGood": {
       "label": "Buffered queue + close broadcast",
-      "snippet": "jobs := make(chan int, 10)\n// N workers; close(jobs) broadcasts completion, workers drain",
+      "snippet": "jobs := make(chan int, 10) // ✅ NEW: buffered(10) + close(jobs) broadcasts completion\n// N workers; close(jobs) broadcasts completion, workers drain",
       "fullFile": {
         "filename": "main.go",
         "language": "go",
-        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc main() {\n\tconst workers = 3\n\tjobs := make(chan int, 10)\n\tvar wg sync.WaitGroup\n\n\tfor range workers {\n\t\twg.Add(1)\n\t\tgo func(id int) {\n\t\t\tdefer wg.Done()\n\t\t\tfor job := range jobs {\n\t\t\t\tfmt.Printf(\"worker %d got %d\\n\", id, job)\n\t\t\t}\n\t\t}(workers - 1)\n\t}\n\n\tfor i := 0; i < 10; i++ {\n\t\tjobs <- i\n\t}\n\tclose(jobs) // broadcast: every worker's range loop ends\n\n\twg.Wait()\n\tfmt.Println(\"all jobs done\")\n}"
+        "code": "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc main() {\n\tconst workers = 3\n\tjobs := make(chan int, 10) // ✅ NEW: buffered queue decouples producers from workers\n\tvar wg sync.WaitGroup\n\n\tfor range workers {\n\t\twg.Add(1)\n\t\tgo func(id int) {\n\t\t\tdefer wg.Done()\n\t\t\tfor job := range jobs {\n\t\t\t\tfmt.Printf(\"worker %d got %d\\n\", id, job)\n\t\t\t}\n\t\t}(workers - 1)\n\t}\n\n\tfor i := 0; i < 10; i++ {\n\t\tjobs <- i\n\t}\n\tclose(jobs) // ✅ NEW: close(jobs) broadcasts → every worker's range loop ends\n\n\twg.Wait()\n\tfmt.Println(\"all jobs done\")\n}"
       }
     }
   },

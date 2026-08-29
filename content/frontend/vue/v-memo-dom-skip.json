@@ -24,20 +24,20 @@
     "summary": "Without v-memo every render re-diffs all rows; with v-memo each row costs one shallow compare of its memo deps when nothing changed.",
     "legacyOrBad": {
       "label": "Full re-diff",
-      "snippet": "<div v-for=\"item in items\" :key=\"item.id\">\n  <p>{{ item.title }}</p>\n</div>",
+      "snippet": "<div v-for=\"item in items\" :key=\"item.id\"> <!-- ❌ OLD: no v-memo → every row re-diffs each tick -->\n  <p>{{ item.title }}</p>\n</div>",
       "fullFile": {
         "filename": "Feed.vue",
         "language": "vue",
-        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  // Every tick touches only the first item, but the entire\n  // list is re-diffed: 1000 rows of vnode creation + patch.\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>"
+        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  // Every tick touches only the first item, but the entire\n  // list is re-diffed: 1000 rows of vnode creation + patch.\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li v-for=\"item in items\" :key=\"item.id\">\n      <!-- ❌ OLD: no v-memo → 1000 rows re-diffed per tick -->\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>"
       }
     },
     "modernOrGood": {
       "label": "v-memo per row",
-      "snippet": "<div v-for=\"item in items\" :key=\"item.id\"\n     v-memo=\"[item.id, item.likes]\">\n  <p>{{ item.title }}</p>\n</div>",
+      "snippet": "<div v-for=\"item in items\" :key=\"item.id\"\n     v-memo=\"[item.id, item.likes]\" <!-- ✅ NEW: skip patch when [id, likes] unchanged -->\n  <p>{{ item.title }}</p>\n</div>",
       "fullFile": {
         "filename": "Feed.vue",
         "language": "vue",
-        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li\n      v-for=\"item in items\"\n      :key=\"item.id\"\n      v-memo=\"[item.id, item.likes]\"\n    >\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>\n\n<!-- Only the row whose [id, likes] changed is patched; the\n     other 999 rows skip vnode creation and diff entirely. -->"
+        "code": "<script setup>\nimport { ref } from 'vue';\n\nconst items = ref(\n  Array.from({ length: 1000 }, (_, i) => ({\n    id: i,\n    title: `Post ${i}`,\n    likes: Math.floor(Math.random() * 100)\n  }))\n);\n\nlet poll = 0;\nconst pollTimer = setInterval(() => {\n  items.value[0].likes += 1;\n  poll += 1;\n  if (poll > 10) clearInterval(pollTimer);\n}, 500);\n</script>\n\n<template>\n  <ul>\n    <li\n      v-for=\"item in items\"\n      :key=\"item.id\"\n      v-memo=\"[item.id, item.likes]\" <!-- 👈 KEY CHANGE: v-memo gates the patch; 999 rows skip vnode creation -->\n    >\n      <p>{{ item.title }}</p>\n      <span>{{ item.likes }} likes</span>\n    </li>\n  </ul>\n</template>\n\n<!-- Only the row whose [id, likes] changed is patched; the\n     other 999 rows skip vnode creation and diff entirely. -->"
       }
     }
   },

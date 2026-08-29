@@ -24,20 +24,20 @@
     "summary": "The eager version ships the heavy chart library in the initial bundle; the deferred version splits it into a chunk loaded only when the chart scrolls into view.",
     "legacyOrBad": {
       "label": "Eager widget",
-      "snippet": "<section>\n  <app-heavy-chart [data]=\"series\" />\n</section>",
+      "snippet": "<section>\n  <app-heavy-chart [data]=\"series\" /> <!-- ❌ OLD: eager — chart lib ships in initial bundle -->\n</section>",
       "fullFile": {
         "filename": "dashboard.component.ts",
         "language": "typescript",
-        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <!-- Renders eagerly: the charting library is part of the\n           initial bundle even though the chart may sit below\n           the fold on mobile. -->\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      <app-heavy-chart [data]=\"series\" />\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
+        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <!-- Renders eagerly: the charting library is part of the\n           initial bundle even though the chart may sit below\n           the fold on mobile. -->\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      <app-heavy-chart [data]=\"series\" /> <!-- ❌ OLD: eager render — charting library in initial bundle -->\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
       }
     },
     "modernOrGood": {
       "label": "@defer (on viewport)",
-      "snippet": "<section>\n  @defer (on viewport) {\n    <app-heavy-chart [data]=\"series\" />\n  } @placeholder {\n    <div>Chart will appear here…</div>\n  }\n</section>",
+      "snippet": "<section>\n  @defer (on viewport) { <!-- ✅ NEW: @defer (on viewport) splits chart into a lazy chunk -->\n    <app-heavy-chart [data]=\"series\" />\n  } @placeholder {\n    <div>Chart will appear here…</div>\n  }\n</section>",
       "fullFile": {
         "filename": "dashboard.component.ts",
         "language": "typescript",
-        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      @defer (on viewport) {\n        <app-heavy-chart [data]=\"series\" />\n      } @placeholder {\n        <div class=\"h-64 animate-pulse rounded bg-surface\">\n          Chart will appear here…\n        </div>\n      } @loading (minimum 300ms) {\n        <p>Loading chart…</p>\n      } @error {\n        <p>Chart failed to load.</p>\n      }\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
+        "code": "import { Component, Input } from '@angular/core';\n\n@Component({\n  selector: 'app-heavy-chart',\n  template: `\n    <div class=\"chart-host\">\n      <canvas #canvas></canvas>\n    </div>\n  `\n})\nexport class HeavyChartComponent {\n  @Input() data: number[] = [];\n}\n\n@Component({\n  selector: 'app-dashboard',\n  imports: [HeavyChartComponent],\n  template: `\n    <h1>Dashboard</h1>\n    <section>\n      @defer (on viewport) { <!-- 👈 KEY CHANGE: @defer (on viewport) lazy-loads the chart chunk on scroll-in -->\n        <app-heavy-chart [data]=\"series\" />\n      } @placeholder {\n        <div class=\"h-64 animate-pulse rounded bg-surface\">\n          Chart will appear here…\n        </div>\n      } @loading (minimum 300ms) {\n        <p>Loading chart…</p>\n      } @error {\n        <p>Chart failed to load.</p>\n      }\n    </section>\n  `\n})\nexport class DashboardComponent {\n  series = [1, 2, 3, 4, 5];\n}"
       }
     }
   },

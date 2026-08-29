@@ -24,20 +24,20 @@
     "summary": "Both approaches keep a UI in sync, but the signal version is synchronous, tree-local, and granular; the RxJS version is async and needs subscription lifecycle management.",
     "legacyOrBad": {
       "label": "RxJS Subject + async pipe",
-      "snippet": "count$ = new BehaviorSubject(0);\nincrement() { this.count$.next(this.count$.value + 1); }",
+      "snippet": "count$ = new BehaviorSubject(0); // ❌ OLD: BehaviorSubject + async pipe → async, needs subscription lifecycle\nincrement() { this.count$.next(this.count$.value + 1); }",
       "fullFile": {
         "filename": "counter.component.ts",
         "language": "typescript",
-        "code": "import { Component } from '@angular/core';\nimport { BehaviorSubject } from 'rxjs';\nimport { AsyncPipe, CommonModule } from '@angular/common';\n\n@Component({\n  selector: 'app-counter',\n  standalone: true,\n  imports: [CommonModule],\n  template: `\n    <p>Count: {{ count$ | async }}</p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count$ = new BehaviorSubject<number>(0);\n\n  increment(): void {\n    // Subject state lives outside change detection; the async pipe\n    // subscribes and marks the component dirty on each emission.\n    this.count$.next(this.count$.value + 1);\n  }\n}"
+        "code": "import { Component } from '@angular/core';\nimport { BehaviorSubject } from 'rxjs';\nimport { AsyncPipe, CommonModule } from '@angular/common';\n\n@Component({\n  selector: 'app-counter',\n  standalone: true,\n  imports: [CommonModule],\n  template: `\n    <p>Count: {{ count$ | async }} <!-- ❌ OLD: async pipe subscribes + marks dirty per emission --></p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count$ = new BehaviorSubject<number>(0); // ❌ OLD: Subject state lives outside change detection\n\n  increment(): void {\n    // Subject state lives outside change detection; the async pipe\n    // subscribes and marks the component dirty on each emission.\n    this.count$.next(this.count$.value + 1);\n  }\n}"
       }
     },
     "modernOrGood": {
       "label": "Signal + computed",
-      "snippet": "count = signal(0);\nincrement() { this.count.update((v) => v + 1); }",
+      "snippet": "count = signal(0); // ✅ NEW: signal() + computed() → synchronous, granular CD\nincrement() { this.count.update((v) => v + 1); }",
       "fullFile": {
         "filename": "counter.component.ts",
         "language": "typescript",
-        "code": "import { Component, signal, computed } from '@angular/core';\n\n@Component({\n  selector: 'app-counter',\n  template: `\n    <p>Count: {{ count() }}</p>\n    <p>Twice: {{ doubled() }}</p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count = signal(0);\n  doubled = computed(() => this.count() * 2);\n\n  increment(): void {\n    this.count.update((v) => v + 1);\n  }\n}"
+        "code": "import { Component, signal, computed } from '@angular/core';\n\n@Component({\n  selector: 'app-counter',\n  template: `\n    <p>Count: {{ count() }} <!-- ✅ NEW: count() registers the template as a consumer --></p>\n    <p>Twice: {{ doubled() }}</p>\n    <button (click)=\"increment()\">+1</button>\n  `\n})\nexport class CounterComponent {\n  count = signal(0); // ✅ NEW: signal() — pull-based, granular\n  doubled = computed(() => this.count() * 2); // ✅ NEW: computed() memoizes lazily\n\n  increment(): void {\n    this.count.update((v) => v + 1);\n  }\n}"
       }
     }
   },

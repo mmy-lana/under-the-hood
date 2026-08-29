@@ -73,7 +73,7 @@
         aria-labelledby={`rosetta-tab-${fw}`}
         hidden={active !== fw}
         tabindex="0"
-        class="p-2 sm:p-3"
+        class="min-w-0 max-w-full overflow-hidden p-2 sm:p-3"
       >
         {#if entry}
           <div class="mb-2 flex items-center justify-between gap-2 pl-2">

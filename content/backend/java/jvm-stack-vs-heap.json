@@ -18,20 +18,20 @@
     "summary": "Objects that escape to the heap drive GC pressure; the JIT can stack-allocate or scalar-replace non-escaping objects, eliminating the allocation entirely.",
     "legacyOrBad": {
       "label": "Escaping object",
-      "snippet": "long sum = 0;\nfor (int i = 0; i < N; i++) {\n  Point p = new Point(i, i);   // escapes? if returned/stored, heap\n  sum += p.distance();\n}",
+      "snippet": "long sum = 0;\nfor (int i = 0; i < N; i++) {\n  Point p = new Point(i, i);   // escapes? if returned/stored, heap  // ❌ OLD: new Point() per iteration → Eden alloc + GC pressure\n  sum += p.distance();\n}",
       "fullFile": {
         "filename": "PointApp.java",
         "language": "java",
-        "code": "public class PointApp {\n  static final int N = 10_000_000;\n\n  static class Point {\n    final int x;\n    final int y;\n\n    Point(int x, int y) {\n      this.x = x;\n      this.y = y;\n    }\n\n    double distance() {\n      return Math.sqrt((double) x * x + (double) y * y);\n    }\n  }\n\n  // Each iteration allocates a Point. If the JIT proves the Point\n  // never escapes this loop (not stored, not passed elsewhere), it\n  // can be scalar-replaced: x and y live in registers, no heap\n  // allocation at all. If the loop handed points to a list instead,\n  // every Point would hit Eden and eventually be GC'd.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      Point p = new Point(i, i);\n      total += p.distance();\n    }\n    System.out.println(total / N);\n  }\n}"
+        "code": "public class PointApp {\n  static final int N = 10_000_000;\n\n  static class Point {\n    final int x;\n    final int y;\n\n    Point(int x, int y) {\n      this.x = x;\n      this.y = y;\n    }\n\n    double distance() {\n      return Math.sqrt((double) x * x + (double) y * y);\n    }\n  }\n\n  // Each iteration allocates a Point. If the JIT proves the Point\n  // never escapes this loop (not stored, not passed elsewhere), it\n  // can be scalar-replaced: x and y live in registers, no heap\n  // allocation at all. If the loop handed points to a list instead,\n  // every Point would hit Eden and eventually be GC'd.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      Point p = new Point(i, i); // ❌ OLD: new Point(i,i) → Eden allocation each iteration\n      total += p.distance();\n    }\n    System.out.println(total / N);\n  }\n}"
       }
     },
     "modernOrGood": {
       "label": "Scalar-replaced (JIT-optimized) equivalent",
-      "snippet": "// Same loop after escape analysis: fields promoted to locals.\ndouble total = 0;\nfor (int i = 0; i < N; i++) {\n  int px = i, py = i;          // scalar replacement\n  total += Math.hypot(px, py); // no object exists at all\n}",
+      "snippet": "// Same loop after escape analysis: fields promoted to locals.\ndouble total = 0;\nfor (int i = 0; i < N; i++) {\n  int px = i, py = i;          // scalar replacement  // ✅ NEW: scalar replacement → fields in registers, no object\n  total += Math.hypot(px, py); // no object exists at all\n}",
       "fullFile": {
         "filename": "ScalarApp.java",
         "language": "java",
-        "code": "public class ScalarApp {\n  static final int N = 10_000_000;\n\n  // This is what the C2 JIT compiles the escaping loop into when\n  // escape analysis + scalar replacement succeed: zero heap\n  // allocations inside the loop, everything in registers.\n  // Run with -XX:+PrintEliminateAllocations to observe the\n  // eliminated allocations.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      int px = i;\n      int py = i;\n      total += Math.sqrt((double) px * px + (double) py * py);\n    }\n    System.out.println(total / N);\n  }\n}"
+        "code": "public class ScalarApp {\n  static final int N = 10_000_000;\n\n  // This is what the C2 JIT compiles the escaping loop into when\n  // escape analysis + scalar replacement succeed: zero heap\n  // allocations inside the loop, everything in registers.\n  // Run with -XX:+PrintEliminateAllocations to observe the\n  // eliminated allocations.\n  public static void main(String[] args) {\n    double total = 0.0;\n    for (int i = 0; i < N; i++) {\n      int px = i; // ✅ NEW: scalar-replaced — x,y in registers, zero heap allocations\n      int py = i;\n      total += Math.sqrt((double) px * px + (double) py * py);\n    }\n    System.out.println(total / N);\n  }\n}"
       }
     }
   },

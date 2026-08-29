@@ -19,14 +19,10 @@
   let modernPaneEl = $state<HTMLDivElement | null>(null);
   let previouslyFocused: HTMLElement | null = null;
 
-  /** Which file is shown in the <1024px tabbed layout. */
-  let activeSide = $state<'legacy' | 'modern'>('legacy');
-
   let syncing = $state(false);
 
   $effect(() => {
     if (open) {
-      activeSide = 'legacy';
       previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       document.body.style.overflow = 'hidden';
       requestAnimationFrame(() => {
@@ -80,7 +76,7 @@
       aria-modal="true"
       aria-labelledby="full-diff-title"
       tabindex="-1"
-      class="flex h-auto max-h-[85vh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-surface shadow-2xl sm:max-h-[85vh] sm:max-w-6xl sm:rounded-xl"
+      class="flex h-[88vh] max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-surface shadow-2xl sm:rounded-xl sm:max-w-6xl"
       onkeydown={onKeydown}
     >
       <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
@@ -97,89 +93,41 @@
         </button>
       </div>
 
-      <!-- Mobile / tablet (<1024px): tabbed single pane -->
-      <div class="flex border-b border-border lg:hidden" role="tablist" aria-label="Diff view">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeSide === 'legacy'}
-          aria-controls="diff-pane-legacy-tab"
-          id="diff-tab-legacy"
-          class={cn(
-            'min-h-11 flex-1 px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
-            activeSide === 'legacy'
-              ? 'bg-[rgba(248,81,73,0.12)] text-red-600 dark:text-red-400'
-              : 'text-text-muted hover:text-text'
-          )}
-          onclick={() => (activeSide = 'legacy')}
-        >
-          {legacy.label}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeSide === 'modern'}
-          aria-controls="diff-pane-modern-tab"
-          id="diff-tab-modern"
-          class={cn(
-            'min-h-11 flex-1 px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
-            activeSide === 'modern'
-              ? 'bg-[rgba(63,185,80,0.12)] text-green-600 dark:text-green-400'
-              : 'text-text-muted hover:text-text'
-          )}
-          onclick={() => (activeSide = 'modern')}
-        >
-          {modern.label}
-        </button>
-      </div>
-
-      <div class="min-h-0 flex-1">
-        <!-- <1024px pane -->
-        <div class="h-full lg:hidden">
-          {#if activeSide === 'legacy'}
-            <div
-              id="diff-pane-legacy-tab"
-              role="tabpanel"
-              aria-labelledby="diff-tab-legacy"
-              class="flex h-full flex-col"
-            >
-              {@render PaneHeader(legacy, 'legacy')}
-              <div class="diff-pane-legacy code-block min-h-0 flex-1 overflow-auto overscroll-contain text-sm">
-                {@html legacy.html}
-              </div>
+      <div class="flex min-h-0 flex-1 flex-col">
+        <!-- <1024px: stacked vertical comparison (Top Legacy → Bottom Modern).
+             Body scrolls vertically; each code pane scrolls horizontally. -->
+        <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 space-y-3 lg:hidden">
+          <div class="flex flex-col overflow-hidden rounded-lg border border-border">
+            {@render PaneHeader(legacy, 'legacy')}
+            <div class="diff-pane-legacy code-block overflow-x-auto text-sm">
+              {@html legacy.html}
             </div>
-          {:else}
-            <div
-              id="diff-pane-modern-tab"
-              role="tabpanel"
-              aria-labelledby="diff-tab-modern"
-              class="flex h-full flex-col"
-            >
-              {@render PaneHeader(modern, 'modern')}
-              <div class="diff-pane-modern code-block min-h-0 flex-1 overflow-auto overscroll-contain text-sm">
-                {@html modern.html}
-              </div>
+          </div>
+          <div class="flex flex-col overflow-hidden rounded-lg border border-border">
+            {@render PaneHeader(modern, 'modern')}
+            <div class="diff-pane-modern code-block overflow-x-auto text-sm">
+              {@html modern.html}
             </div>
-          {/if}
+          </div>
         </div>
 
-        <!-- >=1024px pane: side-by-side -->
-        <div class="hidden h-full grid-cols-2 lg:grid">
-          <div class="flex min-h-0 flex-col border-r border-border">
+        <!-- >=1024px: side-by-side with ratio-synced scroll (unchanged behavior) -->
+        <div class="hidden min-h-0 flex-1 grid grid-cols-2 h-full lg:grid">
+          <div class="flex min-h-0 min-w-0 flex-col border-r border-border">
             {@render PaneHeader(legacy, 'legacy')}
             <div
               bind:this={legacyPaneEl}
-              class="diff-pane-legacy code-block min-h-0 flex-1 overflow-auto overscroll-contain text-sm"
+              class="diff-pane-legacy code-block min-h-0 flex-1 overflow-y-auto overflow-x-auto overscroll-contain text-sm"
               onscroll={() => syncScroll(legacyPaneEl, modernPaneEl)}
             >
               {@html legacy.html}
             </div>
           </div>
-          <div class="flex min-h-0 flex-col">
+          <div class="flex min-h-0 min-w-0 flex-col">
             {@render PaneHeader(modern, 'modern')}
             <div
               bind:this={modernPaneEl}
-              class="diff-pane-modern code-block min-h-0 flex-1 overflow-auto overscroll-contain text-sm"
+              class="diff-pane-modern code-block min-h-0 flex-1 overflow-y-auto overflow-x-auto overscroll-contain text-sm"
               onscroll={() => syncScroll(modernPaneEl, legacyPaneEl)}
             >
               {@html modern.html}
@@ -195,9 +143,16 @@
   <div class="flex items-center justify-between gap-2 border-b border-border bg-canvas px-3 py-2">
     <span class="flex min-w-0 items-center gap-2">
       <span
-        class={cn('h-2 w-2 shrink-0 rounded-full', tint === 'legacy' ? 'bg-red-500' : 'bg-green-500')}
-        aria-hidden="true"
-      ></span>
+        class={cn(
+          'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap',
+          tint === 'legacy'
+            ? 'bg-[rgba(248,81,73,0.15)] text-red-600 dark:text-red-400'
+            : 'bg-[rgba(63,185,80,0.15)] text-green-600 dark:text-green-400'
+        )}
+        translate="no"
+      >
+        {pane.label}
+      </span>
       <span class="truncate font-mono text-xs text-text" translate="no">{pane.filename}</span>
       <span class="hidden rounded-full border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted sm:inline" translate="no">
         {pane.language}

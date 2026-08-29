@@ -40,7 +40,7 @@
 
     <a
       href="/"
-      class="inline-flex min-h-11 items-center gap-2 rounded-md px-1 font-bold text-text transition-colors hover:text-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+      class="inline-flex min-h-11 min-w-0 items-center gap-2 rounded-md px-1 font-bold text-text transition-colors hover:text-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
       aria-label="Under The Hood — home"
       data-sveltekit-preload-data="hover"
     >

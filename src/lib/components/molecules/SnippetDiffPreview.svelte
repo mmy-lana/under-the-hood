@@ -29,7 +29,7 @@
   </div>
 
   <div class="grid gap-0 lg:grid-cols-2">
-    <div class="border-b border-border p-2 lg:border-b-0 lg:border-r">
+    <div class="min-w-0 max-w-full overflow-hidden border-b border-border p-2 lg:border-b-0 lg:border-r">
       <div class="mb-2 flex items-center justify-between gap-2 pl-2">
         <span class="inline-flex items-center gap-2 font-mono text-xs text-text-muted">
           <span class="h-2 w-2 rounded-full bg-red-500" aria-hidden="true"></span>
@@ -41,7 +41,7 @@
         {@html legacy.html}
       </div>
     </div>
-    <div class="p-2">
+    <div class="min-w-0 max-w-full overflow-hidden p-2">
       <div class="mb-2 flex items-center justify-between gap-2 pl-2">
         <span class="inline-flex items-center gap-2 font-mono text-xs text-text-muted">
           <span class="h-2 w-2 rounded-full bg-green-500" aria-hidden="true"></span>

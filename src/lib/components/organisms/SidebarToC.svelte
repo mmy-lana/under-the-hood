@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X } from '@lucide/svelte';
+  import { X, ChevronDown } from '@lucide/svelte';
   import { cn } from '$lib/utils/cn';
   import type { TopicSchema } from '$lib/content/schema';
   import { trapTab } from '$lib/utils/keyboard';
@@ -33,6 +33,31 @@
       }))
       .filter((g) => g.subcategories.length > 0)
   );
+
+  function autoOpenMap(): Record<string, boolean> {
+    const map: Record<string, boolean> = {};
+    for (const g of groups) {
+      for (const [name, items] of g.subcategories) {
+        // activeId may be undefined (home page) → default ALL collapsed.
+        map[name] = activeId != null && items.some((t) => t.id === activeId);
+      }
+    }
+    return map;
+  }
+
+  let openSubcats = $state<Record<string, boolean>>(autoOpenMap());
+
+  // On navigation (activeId change) auto-expand ONLY the new active subcategory
+  // and collapse the rest. $effect.pre runs before DOM update → no flash.
+  // Does NOT read openSubcats → user toggles persist until the next navigation.
+  $effect.pre(() => {
+    activeId; // track
+    openSubcats = autoOpenMap();
+  });
+
+  function toggleSubcat(name: string): void {
+    openSubcats[name] = !openSubcats[name];
+  }
 
   $effect(() => {
     if (open) {
@@ -70,27 +95,47 @@
         </a>
       </h3>
       {#each group.subcategories as [name, items] (name)}
+        {@const isOpen = openSubcats[name] ?? false}
         <div class="mb-2">
-          <h4 class="px-3 pb-1 font-mono text-[11px] text-accent" translate="no">{name}</h4>
-          <ul class="space-y-0.5">
-            {#each items as topic (topic.id)}
-              <li>
-                <a
-                  href={`/${topic.category}/${topic.subcategory}/${topic.id}/`}
-                  aria-current={activeId === topic.id ? 'page' : undefined}
-                  class={cn(
-                    'block rounded-md px-3 py-2 text-sm leading-snug transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
-                    activeId === topic.id
-                      ? 'bg-accent/10 font-medium text-accent'
-                      : 'text-text-muted hover:bg-surface hover:text-text'
-                  )}
-                  data-sveltekit-preload-data="hover"
-                >
-                  {topic.title}
-                </a>
-              </li>
-            {/each}
-          </ul>
+          <button
+            type="button"
+            onclick={() => toggleSubcat(name)}
+            aria-expanded={isOpen}
+            aria-controls={`subcat-list-${name}`}
+            class="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-1.5 text-left transition-colors hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+          >
+            <span class="flex min-w-0 items-center gap-2">
+              <span class="font-mono text-[11px] text-accent" translate="no">{name}</span>
+              <span class="shrink-0 rounded-full bg-canvas px-1.5 py-0.5 text-[10px] text-text-muted">
+                {items.length} topics
+              </span>
+            </span>
+            <ChevronDown
+              class={cn('h-4 w-4 shrink-0 text-text-muted transition-transform', isOpen && 'rotate-180')}
+              aria-hidden="true"
+            />
+          </button>
+          {#if isOpen}
+            <ul id={`subcat-list-${name}`} class="mt-0.5 space-y-0.5">
+              {#each items as topic (topic.id)}
+                <li>
+                  <a
+                    href={`/${topic.category}/${topic.subcategory}/${topic.id}/`}
+                    aria-current={activeId === topic.id ? 'page' : undefined}
+                    class={cn(
+                      'block rounded-md px-3 py-2 text-sm leading-snug transition-colors focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
+                      activeId === topic.id
+                        ? 'bg-accent/10 font-medium text-accent'
+                        : 'text-text-muted hover:bg-surface hover:text-text'
+                    )}
+                    data-sveltekit-preload-data="hover"
+                  >
+                    {topic.title}
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </div>
       {/each}
     </div>

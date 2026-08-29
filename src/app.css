@@ -52,13 +52,32 @@
   color-scheme: light;
 }
 
-/* Shiki output: force the constant dark canvas regardless of active theme. */
+/* Shiki output: force the constant dark canvas regardless of active theme.
+   Width rules keep the dark bg + line-number gutter from clipping inside
+   horizontally-scrolling .code-block viewports (SPEC §4). Scoped to Shiki
+   output so inline <code>/<kbd> in reading prose stay inline. */
 .shiki {
   background-color: var(--code-bg) !important;
+  display: block;
+  width: fit-content;
+  min-width: 100%;
+}
+.shiki code {
+  display: block;
+  width: fit-content;
+  min-width: 100%;
+  color: var(--code-text);
+}
+.shiki .line {
+  display: block;
+  min-width: 100%;
 }
 .code-block {
   background: var(--code-bg);
   color: var(--code-text);
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
 }
 .diff-pane-legacy {
   background-color: var(--diff-legacy-tint);
