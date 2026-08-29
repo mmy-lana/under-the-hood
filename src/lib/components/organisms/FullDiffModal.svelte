@@ -80,7 +80,7 @@
       aria-modal="true"
       aria-labelledby="full-diff-title"
       tabindex="-1"
-      class="flex h-dvh w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-surface shadow-2xl sm:h-auto sm:max-h-[85vh] sm:max-w-6xl sm:rounded-xl"
+      class="flex h-auto max-h-[85vh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-surface shadow-2xl sm:max-h-[85vh] sm:max-w-6xl sm:rounded-xl"
       onkeydown={onKeydown}
     >
       <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
