@@ -131,7 +131,7 @@
 
 <!-- Desktop: persistent sticky sidebar -->
 <aside
-  class="hidden xl:block"
+  class="hidden w-72 shrink-0 xl:block"
   aria-label="Table of contents"
 >
   <nav class="sticky top-[calc(var(--hdr-h)+1rem)] max-h-[calc(100dvh-var(--hdr-h)-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-surface p-3">
