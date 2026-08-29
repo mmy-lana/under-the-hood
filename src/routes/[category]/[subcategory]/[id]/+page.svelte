@@ -28,13 +28,13 @@
     ) as Partial<Record<RosettaFramework, HighlightedCode>>
   );
 
-  const legacyPane = $derived({
+  const snippetLegacy = $derived({
     ...data.legacyPane,
     html: data.html.legacySnippet,
     code: data.topic.codeComparison.legacyOrBad.snippet
   });
 
-  const modernPane = $derived({
+  const snippetModern = $derived({
     ...data.modernPane,
     html: data.html.modernSnippet,
     code: data.topic.codeComparison.modernOrGood.snippet
@@ -143,8 +143,8 @@
     <SnippetDiffPreview
       title={topic.codeComparison.title}
       summary={topic.codeComparison.summary}
-      legacy={legacyPane}
-      modern={modernPane}
+      legacy={snippetLegacy}
+      modern={snippetModern}
       onexpand={() => (diffOpen = true)}
     />
   </section>
