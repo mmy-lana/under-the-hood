@@ -1,0 +1,58 @@
+{
+  "id": "provide-inject-reactivity",
+  "title": "provide() / inject(): Dependency Injection & Readonly Reactive Wrappers",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "provide", "inject", "dependency-injection", "readonly", "reactivity"],
+  "prerequisites": ["Vue 3 ref() and reactive()", "Component hierarchy"],
+  "progressiveExplaining": {
+    "eli5": "If a great-grandparent wants to give a family heirloom to a great-grandchild, they don't have to pass it through every parent and child in the middle. The ancestor puts it in a family vault (`provide`), and any descendant can open the vault (`inject`) with a secret key. And to make sure the kids don't break the heirloom, the ancestor can lock it in view-only mode (`readonly`).",
+    "junior": "`provide(key, value)` allows an ancestor component to share data with all its descendants without prop drilling. Any child component calls `inject(key, defaultValue)` to read the value. If you pass a `ref()` or `reactive()` object to `provide`, changes made in the parent remain reactive in the child. To prevent children from mutating the shared state directly, wrap it in `readonly(state)`.",
+    "senior": "Architecturally, `provide`/`inject` implements hierarchical Inversion of Control (IoC) scoped to the component tree instance. Unlike global Pinia/Vuex stores (which are singletons), provided dependencies are instance-scoped: multiple instances of a component subtree can provide different configurations. To enforce unidirectional data flow, the provider should expose updater functions alongside `readonly()` state wrappers rather than allowing descendants to mutate injected refs directly.",
+    "underTheHood": "In `@vue/runtime-core`, each `ComponentInternalInstance` has a `provides` object. By default, an instance inherits its parent's `provides` via `Object.create(parent.provides)`. When `provide(key, val)` is called, the component clones its `provides` object to shadow parent keys. When `inject(key)` is called, it performs an `O(1)` prototype chain lookup on `currentInstance.parent.provides[key]`. Injection keys using `Symbol()` provide compile-time TypeScript type safety via `InjectionKey<T>`."
+  },
+  "rosettaStone": {
+    "react": "`createContext()` + `useContext()` (triggers consumer re-renders).",
+    "angular": "Hierarchical Dependency Injection via `@Injectable()` and `providers: []`.",
+    "vue": "`provide(key, ref)` + `inject(key)` with prototype chain resolution.",
+    "svelte": "Svelte `setContext(key, val)` + `getContext(key)`."
+  },
+  "codeComparison": {
+    "title": "Deep Prop Drilling vs provide/inject with readonly Protection",
+    "summary": "Passing props through intermediate layers is fragile; `provide`/`inject` with `readonly` guarantees clean dependency injection.",
+    "legacyOrBad": {
+      "label": "Prop Drilling Through Layers",
+      "snippet": "<Child :theme=\"theme\" :user=\"user\" /> // ❌ Passed through 4 intermediate layers",
+      "fullFile": {
+        "filename": "ParentDrill.vue",
+        "language": "vue",
+        "code": "<template>\n  <!-- ❌ OLD: Intermediate components must accept and re-forward\n       props they don't even use, cluttering component interfaces. -->\n  <IntermediateLevelOne :theme=\"theme\" :user=\"user\" />\n</template>\n\n<script setup>\nimport { ref } from 'vue';\nconst theme = ref('dark');\nconst user = ref({ name: 'Ada' });\n</script>"
+      }
+    },
+    "modernOrGood": {
+      "label": "provide/inject with readonly & Mutator",
+      "snippet": "provide('theme', { theme: readonly(theme), toggleTheme }); // ✅ NEW: Direct access with mutation safety",
+      "fullFile": {
+        "filename": "ParentProvide.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref, readonly, provide } from 'vue';\nimport IntermediateLevelOne from './IntermediateLevelOne.vue';\n\nconst theme = ref('dark');\n\nfunction toggleTheme() {\n  theme.value = theme.value === 'dark' ? 'light' : 'dark';\n}\n\n// ✅ NEW: Provide readonly state + explicit updater method\nprovide('themeContext', {\n  theme: readonly(theme),\n  toggleTheme\n});\n</script>\n\n<template>\n  <IntermediateLevelOne />\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why should you pass `readonly()` wrapped refs to `provide()` in large applications?",
+      "contextIntro": "Interviewers test your knowledge of unidirectional data flow and state architecture.",
+      "detailedAnswer": "If a raw mutable `ref` is provided, any deeply nested child component can mutate `theme.value = 'light'`, making it extremely difficult to track which component caused state bugs. Wrapping the ref in `readonly(theme)` and providing an explicit updater function (e.g. `toggleTheme`) ensures that state mutations remain owned and debuggable solely by the provider component.",
+      "trapWarning": "Do not pass plain primitive values `provide('theme', theme.value)` if you want reactivity; pass the `ref` itself (or `readonly(ref)`)."
+    },
+    {
+      "question": "How do you achieve TypeScript type safety with `provide` and `inject`?",
+      "contextIntro": "Checks TypeScript tooling expertise with Vue 3.",
+      "detailedAnswer": "Use Vue's **`InjectionKey<T>`** utility with a `Symbol`: `export const ThemeKey: InjectionKey<Ref<string>> = Symbol('theme')`. When providing (`provide(ThemeKey, theme)`) and injecting (`const theme = inject(ThemeKey)`), TypeScript automatically infers the exact type `Ref<string>` without manual type casting.",
+      "trapWarning": "Using raw string keys `provide('theme', ...)` loses TypeScript type inference and risks collisions across third-party plugins."
+    }
+  ]
+}

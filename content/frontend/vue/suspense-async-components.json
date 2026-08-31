@@ -1,0 +1,58 @@
+{
+  "id": "suspense-async-components",
+  "title": "<Suspense> Boundary and defineAsyncComponent() Loading Orchestration",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "suspense", "defineAsyncComponent", "async", "code-splitting", "loading"],
+  "prerequisites": ["Vue 3 `<script setup>` with top-level `await`", "Dynamic imports `import()`"],
+  "progressiveExplaining": {
+    "eli5": "If you order a meal with a steak that takes 10 minutes and fries that take 1 minute, you don't bring the fries out immediately to get cold. `<Suspense>` is the restaurant kitchen coordinator: it waits until all async dishes are ready, shows a waiting menu (fallback) in the meantime, and serves the whole meal together at the exact same second.",
+    "junior": "`<Suspense>` is a built-in component that orchestrates nested asynchronous dependencies in the component tree. It provides two slots: `#default` (your async components) and `#fallback` (the loading indicator). An async dependency is any component using top-level `await` in `<script setup>` or loaded via `defineAsyncComponent(() => import('./Child.vue'))`. `<Suspense>` waits for all nested async children to resolve before revealing the tree.",
+    "senior": "Architecturally, `<Suspense>` creates an asynchronous resolution boundary in the VNode patch pipeline. When an async component mounts, it halts the synchronous render branch and registers a pending promise with the nearest parent `SuspenseContext`. The boundary displays the `#fallback` slot. While fallback is active, all child async operations resolve concurrently. Once all dependencies fulfill, Vue transitions to the `#default` slot and mounts the hydrated DOM tree.",
+    "underTheHood": "In `@vue/runtime-core`, `SuspenseImpl` manages `deps` (a counter of unresolved asynchronous tasks). When a component with an `async setup()` evaluates, its setup returns a Promise instead of a render function. The renderer flags the instance `Async` and increments `suspense.deps`. Upon Promise settlement, `deps` decrements. When `deps === 0`, `suspense.resolve()` flushes the DOM and triggers `onActivated` / `mounted` lifecycle hooks."
+  },
+  "rosettaStone": {
+    "react": "`<Suspense fallback={<Loading />}><AsyncChild /></Suspense>` catching thrown promises.",
+    "angular": "`@defer (on immediate) { <AsyncChild /> } @loading { <Loading /> }`.",
+    "vue": "`<Suspense><template #default><AsyncChild /></template><template #fallback><Loading /></template></Suspense>`.",
+    "svelte": "`{#await asyncPromise}<Loading />{:then data}<AsyncChild {data} />{/await}`."
+  },
+  "codeComparison": {
+    "title": "Per-Component Loading Spinners vs Coordinated <Suspense>",
+    "summary": "Multiple independent loading spinners create visual layout thrashing; `<Suspense>` coordinates nested async children into one fallback.",
+    "legacyOrBad": {
+      "label": "Scattered Individual Spinners",
+      "snippet": "<div v-if=\"loading\">Spinner</div><div v-else>Content</div> // ❌ Staggered pop-in",
+      "fullFile": {
+        "filename": "DashboardFragmented.vue",
+        "language": "vue",
+        "code": "<template>\n  <!-- ❌ OLD: Multiple children managing their own loading states\n       pop in at different times, causing visual jank and content jumps. -->\n  <div class=\"dashboard\">\n    <UserProfileWithSpinner />\n    <UserStatsWithSpinner />\n    <RecentOrdersWithSpinner />\n  </div>\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Coordinated Vue <Suspense>",
+      "snippet": "<Suspense><template #default><Dashboard /></template><template #fallback><Skeleton /></template></Suspense> // ✅ NEW",
+      "fullFile": {
+        "filename": "DashboardSuspense.vue",
+        "language": "vue",
+        "code": "<template>\n  <!-- ✅ NEW: Suspense coordinates all nested top-level awaits and async components\n       into a single atomic visual transition. -->\n  <Suspense>\n    <template #default>\n      <div class=\"dashboard\">\n        <UserProfile /> <!-- uses top-level await in <script setup> -->\n        <UserStats />   <!-- uses top-level await in <script setup> -->\n        <RecentOrders />\n      </div>\n    </template>\n    <template #fallback>\n      <div class=\"dashboard-skeleton\">Loading full dashboard...</div>\n    </template>\n  </Suspense>\n</template>\n\n<script setup>\nimport { defineAsyncComponent } from 'vue';\nimport UserProfile from './UserProfile.vue';\nimport UserStats from './UserStats.vue';\n\n// Lazy code-split async component:\nconst RecentOrders = defineAsyncComponent(() => import('./RecentOrders.vue'));\n</script>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What qualifies a component as an 'async dependency' that triggers `<Suspense>` in Vue 3?",
+      "contextIntro": "Interviewers test your understanding of what triggers the Suspense boundary.",
+      "detailedAnswer": "A component is treated as an async dependency by `<Suspense>` if: (1) it uses **top-level `await`** inside `<script setup>`, (2) its `setup()` hook returns a `Promise`, or (3) it is loaded via **`defineAsyncComponent()`**.",
+      "trapWarning": "A component that performs data fetching inside `onMounted(async () => ...)` is NOT an async dependency for Suspense because `setup()` finishes synchronously."
+    },
+    {
+      "question": "How do you handle errors when an async component inside `<Suspense>` rejects or fails to load?",
+      "contextIntro": "Checks knowledge of error handling alongside Suspense.",
+      "detailedAnswer": "Use the **`onErrorCaptured`** lifecycle hook in the parent component or wrap the `<Suspense>` boundary in an Error Boundary component. When an async component fails, `onErrorCaptured` intercepts the error and allows you to set an error state to display a fallback error view.",
+      "trapWarning": "`<Suspense>` only manages loading/fallback states; it does *not* catch runtime errors or rejected promises on its own."
+    }
+  ]
+}

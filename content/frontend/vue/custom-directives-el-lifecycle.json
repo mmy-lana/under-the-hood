@@ -1,0 +1,58 @@
+{
+  "id": "custom-directives-el-lifecycle",
+  "title": "Custom Directives: Element Lifecycle Hooks (created, mounted, updated, unmounted)",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "directives", "dom", "lifecycle", "mounted", "v-custom"],
+  "prerequisites": ["Vue Template Directives", "DOM element manipulation"],
+  "progressiveExplaining": {
+    "eli5": "Custom directives are special instruction tags (like `v-focus` or `v-click-outside`) you can attach to any HTML tag. They give you direct access to the real HTML element the moment it appears, updates, or disappears from the screen, making it easy to attach custom browser tools like tooltips or auto-scrollers.",
+    "junior": "Custom directives provide low-level DOM access on plain elements. Define a directive object with lifecycle hooks: `created`, `beforeMount`, `mounted`, `beforeUpdate`, `updated`, `beforeUnmount`, `unmounted`. Inside a hook (e.g. `mounted(el, binding)`), `el` is the raw DOM element and `binding.value` contains the evaluated expression. Register globally with `app.directive('name', ...)` or locally in `<script setup>` with `const vFocus = { mounted: (el) => el.focus() }`.",
+    "senior": "Architecturally, Custom Directives provide an encapsulation boundary for imperative DOM integration (e.g. IntersectionObserver, drag-and-drop, focus traps) without wrapping markup in bloated wrapper components. Directives in Vue 3 have a lifecycle synchronized with Component VNode lifecycles. They should be pure DOM bridges; avoid storing component business state inside directive instances. For SSR, directives require custom SSR directive transforms because DOM manipulation cannot execute on the server.",
+    "underTheHood": "The template compiler transforms `v-focus=\"val\"` into a VNode directive descriptor `{ dir: vFocus, value: val, modifiers, arg }` attached to the VNode's `.dirs` array. During the renderer patch phase (`mountElement`, `patchElement`, `unmount`), Vue invokes `invokeDirectiveHook()`. This iterates through the VNode's `.dirs`, executing the corresponding hook (`mounted`, `updated`, `unmounted`) with `(el, binding, vnode, prevVNode)`."
+  },
+  "rosettaStone": {
+    "react": "Custom hooks using `useRef` + `useEffect` DOM element attachment.",
+    "angular": "Angular `@Directive()` with `ElementRef` and lifecycle hooks (`ngOnInit`, `ngOnDestroy`).",
+    "vue": "Custom directive object with `mounted(el, binding)` and `unmounted(el)`.",
+    "svelte": "Svelte `use:action` returning `{ update, destroy }`."
+  },
+  "codeComparison": {
+    "title": "Template Ref Boilerplate vs Reusable Custom Directive",
+    "summary": "Managing element focus via template refs in every component is repetitive; a `v-focus` directive makes it declarative.",
+    "legacyOrBad": {
+      "label": "Manual Template Ref Focus",
+      "snippet": "const inputRef = ref(null); onMounted(() => inputRef.value.focus()); // ❌ Repeated per component",
+      "fullFile": {
+        "filename": "AutoFocusInput.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ❌ OLD: Requires manual template ref wiring and onMounted lifecycle logic\n// in every single component that needs autofocus.\nimport { ref, onMounted } from 'vue';\n\nconst inputRef = ref(null);\n\nonMounted(() => {\n  if (inputRef.value) {\n    inputRef.value.focus();\n  }\n});\n</script>\n\n<template>\n  <input ref=\"inputRef\" placeholder=\"Search...\" />\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Reusable v-focus Directive",
+      "snippet": "const vFocus = { mounted: (el) => el.focus() }; // ✅ NEW: Declarative and reusable",
+      "fullFile": {
+        "filename": "AutoFocusDirective.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ✅ NEW: Directives starting with 'v' in <script setup> can be used directly in template.\nconst vFocus = {\n  mounted: (el) => el.focus()\n};\n</script>\n\n<template>\n  <input v-focus placeholder=\"Search...\" />\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between Vue 2 and Vue 3 custom directive lifecycle hook names?",
+      "contextIntro": "Interviewers test your migration knowledge and framework lifecycle comprehension.",
+      "detailedAnswer": "Vue 2 used `bind`, `inserted`, `update`, `componentUpdated`, and `unbind`. Vue 3 renamed these hooks to align directly with Vue component lifecycles: `created`, `beforeMount`, `mounted` (replaces `inserted`), `beforeUpdate`, `updated` (replaces `componentUpdated`), `beforeUnmount`, and `unmounted` (replaces `unbind`).",
+      "trapWarning": "Using `inserted` in Vue 3 will fail silently as the hook is never invoked."
+    },
+    {
+      "question": "Why do custom directives require special handling during Server-Side Rendering (SSR)?",
+      "contextIntro": "Checks awareness of isomorphic rendering limitations with DOM directives.",
+      "detailedAnswer": "Custom directives manipulate the physical DOM (`el.focus()`, `el.addEventListener()`). Because the server has no real DOM environment, custom directives will throw errors or have no effect during SSR unless a custom server directive transform (`getSSRProps`) is provided to convert directive values into static HTML attributes.",
+      "trapWarning": "If a directive only needs to attach event listeners or styles, prefer standard Vue template attributes or components when building SSR/Nuxt applications."
+    }
+  ]
+}

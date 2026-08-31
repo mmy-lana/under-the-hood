@@ -1,0 +1,58 @@
+{
+  "id": "keep-alive-cache-max-lru",
+  "title": "<KeepAlive>: Component Instance Caching, LRU Eviction, and onActivated Hooks",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "keep-alive", "caching", "lru", "onActivated", "onDeactivated"],
+  "prerequisites": ["Vue dynamic components `<component :is>`", "Component lifecycle"],
+  "progressiveExplaining": {
+    "eli5": "When you switch tabs in a web app, the old tab usually gets destroyed and throws away all your typed text. `<KeepAlive>` is like putting the old tab in a suspended hibernation pod: it freezes its memory, DOM, and scroll position. When you click back to that tab, it wakes up instantly in 0ms without re-fetching or resetting your forms.",
+    "junior": "`<KeepAlive>` is a built-in component that caches inactive component instances instead of destroying them. When switching dynamic components (`<component :is=\"view\">`), wrapped components stay in memory. Instead of `onMounted`/`onUnmounted`, cached components trigger `onActivated()` when shown and `onDeactivated()` when hidden. Use `include`, `exclude`, and `:max=\"10\"` to control caching limits.",
+    "senior": "Architecturally, `<KeepAlive>` is an internal abstract component that bypasses standard VNode unmounting. When a component wrapped in `<KeepAlive>` is replaced, its DOM sub-tree is detached from the document and retained in an in-memory VNode cache map. When re-activated, the cached VNode instance is re-inserted into the DOM directly. The `:max` prop implements a **Least Recently Used (LRU)** eviction strategy: when cache capacity is exceeded, the oldest inactive instance is permanently unmounted.",
+    "underTheHood": "In the renderer, `<KeepAlive>` maintains `cache = new Map<CacheKey, VNode>()` and `keys = new Set<CacheKey>()`. On mount, it intercepts `unmount()` by invoking `deactivate(instance, vnode)`. It sets `shapeFlag |= ShapeFlags.COMPONENT_KEPT_ALIVE`. On re-render with a cache hit, `activate()` re-appends `instance.subTree.el` to the parent container and flushes `onActivated` lifecycle hooks through the scheduler post-flush queue."
+  },
+  "rosettaStone": {
+    "react": "Offscreen / Activity component (React 19 experimental `<Activity mode=\"hidden\">`).",
+    "angular": "Angular `RouteReuseStrategy` caching detached `RouteRef` trees.",
+    "vue": "`<KeepAlive :max=\"10\"><component :is=\"activeTab\" /></KeepAlive>`.",
+    "svelte": "SvelteKit shallow routing / snapshot state restoration."
+  },
+  "codeComparison": {
+    "title": "Destroyed Component State vs Cached KeepAlive Instance",
+    "summary": "Switching tabs without `<KeepAlive>` resets state and re-fetches; `<KeepAlive>` preserves form input and component state.",
+    "legacyOrBad": {
+      "label": "Uncached Dynamic Component",
+      "snippet": "<component :is=\"currentTab\" /> // ❌ Destroys state and DOM on every tab switch",
+      "fullFile": {
+        "filename": "TabsUncached.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref } from 'vue';\nimport TabA from './TabA.vue';\nimport TabB from './TabB.vue';\n\nconst currentTab = ref(TabA);\n</script>\n\n<template>\n  <button @click=\"currentTab = TabA\">Tab A</button>\n  <button @click=\"currentTab = TabB\">Tab B</button>\n  \n  <!-- ❌ TabA is completely destroyed when switching to TabB;\n       all form inputs and scroll position in TabA are lost! -->\n  <component :is=\"currentTab\" />\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "KeepAlive Cached Component",
+      "snippet": "<KeepAlive :max=\"5\"><component :is=\"currentTab\" /></KeepAlive> // ✅ NEW: Preserves state in memory",
+      "fullFile": {
+        "filename": "TabsCached.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref } from 'vue';\nimport TabA from './TabA.vue';\nimport TabB from './TabB.vue';\n\nconst currentTab = ref(TabA);\n</script>\n\n<template>\n  <button @click=\"currentTab = TabA\">Tab A</button>\n  <button @click=\"currentTab = TabB\">Tab B</button>\n  \n  <!-- ✅ NEW: Keeps up to 5 tab instances cached in memory using LRU eviction.\n       Form inputs, state, and scroll position remain 100% intact. -->\n  <KeepAlive :max=\"5\">\n    <component :is=\"currentTab\" />\n  </KeepAlive>\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Do `onMounted` and `onUnmounted` run when a cached `<KeepAlive>` component is toggled back and forth?",
+      "contextIntro": "Interviewers test your knowledge of KeepAlive-specific lifecycle hooks.",
+      "detailedAnswer": "No. `onMounted` only runs *once* when the component is initially created. When switching away, `onUnmounted` is bypassed and **`onDeactivated`** runs. When returning to the cached component, `onMounted` does *not* run again; instead, **`onActivated`** executes.",
+      "trapWarning": "If you fetch fresh data inside `onMounted()`, a cached KeepAlive component will never re-fetch data on revisit. Move re-validation logic to `onActivated()`."
+    },
+    {
+      "question": "What happens when the number of cached components exceeds the `:max` prop?",
+      "contextIntro": "Checks understanding of the internal cache eviction algorithm.",
+      "detailedAnswer": "`<KeepAlive>` implements a **Least Recently Used (LRU)** eviction policy. When the cache size exceeds `:max`, the component instance that has been inactive for the longest time is evicted from the cache map and permanently unmounted (running its `onUnmounted` hook).",
+      "trapWarning": "Setting `:max` too high can cause excessive memory consumption on mobile devices as dozens of full DOM subtrees remain pinned in RAM."
+    }
+  ]
+}

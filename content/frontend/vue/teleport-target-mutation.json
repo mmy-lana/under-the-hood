@@ -1,0 +1,58 @@
+{
+  "id": "teleport-target-mutation",
+  "title": "<Teleport>: DOM Relocation Outside Component Root & Dynamic Targets",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "teleport", "dom", "modals", "top-layer", "portal"],
+  "prerequisites": ["Vue Template Syntax", "CSS Stacking Contexts & z-index"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a nested Russian doll. If the smallest doll inside tries to open a giant umbrella (a modal), the umbrella gets crushed inside the tiny doll's shell. `<Teleport>` beams the umbrella straight out of the doll's belly and attaches it to the ceiling of the entire room (`<body>`), so it can open to full size without getting trapped.",
+    "junior": "`<Teleport to=\"body\">` moves its template markup to a different DOM node (like `document.body` or `#modals-container`) while maintaining its reactive component connection. It is the standard solution for modals, tooltips, and notifications to prevent them from being cut off by parent CSS `overflow: hidden` or `z-index` stacking contexts. The `disabled` prop lets you toggle teleportation dynamically.",
+    "senior": "Architecturally, `<Teleport>` decouples physical DOM rendering from the virtual component hierarchy. The teleported content remains a child of the parent component in the Vue Virtual DOM tree: props, reactive state, `provide`/`inject`, and parent-child event listeners continue to function seamlessly. Teleport supports dynamic targets (`:to=\"target\"`), multiple teleports targeting the same container (appended in order), and SSR hydration matching.",
+    "underTheHood": "In `@vue/runtime-core`, Teleport is an internal built-in component with custom `process()` methods. When mounted, the renderer creates anchor comment nodes (`<!--teleport start-->` and `<!--teleport end-->`) in the original parent DOM position to mark its virtual slot. The actual child DOM nodes are inserted into the target DOM element resolved by `document.querySelector(to)`. When updating, the renderer patches elements inside the target container."
+  },
+  "rosettaStone": {
+    "react": "`createPortal(<Modal />, document.body)` from `react-dom`.",
+    "angular": "Angular CDK `Portal` / `Overlay` service.",
+    "vue": "`<Teleport to=\"body\"><Modal /></Teleport>`.",
+    "svelte": "Svelte custom action moving element to `document.body`."
+  },
+  "codeComparison": {
+    "title": "CSS-Trapped Modal vs Vue <Teleport>",
+    "summary": "Nested modal markup gets clipped by parent CSS; `<Teleport to=\"body\">` mounts directly into body.",
+    "legacyOrBad": {
+      "label": "Clipped Nested Modal",
+      "snippet": "<div class=\"modal\">...</div> // ❌ Trapped inside overflow: hidden container",
+      "fullFile": {
+        "filename": "ClippedCard.vue",
+        "language": "vue",
+        "code": "<template>\n  <!-- ❌ OLD: Parent has overflow: hidden and fixed height.\n       The modal rendered inside is visually cut off and broken! -->\n  <div class=\"card\" style=\"overflow: hidden; height: 120px; border: 1px solid black;\">\n    <h3>Card Header</h3>\n    <div v-if=\"showModal\" class=\"modal\" style=\"position: fixed; inset: 0; background: white;\">\n      Modal Content Trapped Inside Card!\n    </div>\n    <button @click=\"showModal = true\">Open Modal</button>\n  </div>\n</template>\n\n<script setup>\nimport { ref } from 'vue';\nconst showModal = ref(false);\n</script>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Teleport to Body",
+      "snippet": "<Teleport to=\"body\"><div v-if=\"showModal\" class=\"modal\">...</div></Teleport> // ✅ NEW",
+      "fullFile": {
+        "filename": "TeleportCard.vue",
+        "language": "vue",
+        "code": "<template>\n  <div class=\"card\" style=\"overflow: hidden; height: 120px; border: 1px solid black;\">\n    <h3>Card Header</h3>\n    <button @click=\"showModal = true\">Open Modal</button>\n\n    <!-- ✅ NEW: Teleport teleports DOM nodes to <body> escaping parent overflow/z-index -->\n    <Teleport to=\"body\">\n      <div v-if=\"showModal\" class=\"modal-backdrop\" style=\"position: fixed; inset: 0; background: rgba(0,0,0,0.5);\">\n        <div class=\"modal-content\" style=\"background: white; padding: 20px;\">\n          <h2>Full Screen Modal</h2>\n          <button @click=\"showModal = false\">Close</button>\n        </div>\n      </div>\n    </Teleport>\n  </div>\n</template>\n\n<script setup>\nimport { ref } from 'vue';\nconst showModal = ref(false);\n</script>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if the target element specified in `<Teleport to=\"#modal\">` does not exist in the DOM when the component mounts?",
+      "contextIntro": "Interviewers test your knowledge of mounting order and querySelector timing.",
+      "detailedAnswer": "If the target element does not exist in the DOM when the component mounts, Vue will throw a runtime warning (`[Vue warn]: Failed to locate Teleport target with selector...`) and rendering of the teleported content will fail. The target DOM element must already exist in the HTML *before* the component containing `<Teleport>` is mounted.",
+      "trapWarning": "Do not attempt to teleport to a sibling element that renders later in the same template; target elements must already be present in the DOM (e.g. in `index.html` or a previously mounted layout)."
+    },
+    {
+      "question": "How does native DOM event bubbling behave for elements inside `<Teleport>` in Vue 3 vs React Portals?",
+      "contextIntro": "Checks cross-framework event architecture comprehension.",
+      "detailedAnswer": "In Vue 3, **native DOM events bubble through the physical HTML DOM tree**, following the target's new position in the DOM. (This differs from React Portals, where synthetic events bubble through the virtual component tree). However, Vue component custom events (`$emit`) still propagate through the Vue component hierarchy as expected.",
+      "trapWarning": "A native `@click` on the parent container in Vue will *not* catch clicks from teleported elements if they were moved outside that container in the physical DOM."
+    }
+  ]
+}

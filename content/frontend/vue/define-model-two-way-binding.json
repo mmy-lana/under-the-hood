@@ -1,0 +1,58 @@
+{
+  "id": "define-model-two-way-binding",
+  "title": "defineModel() Macro: Synthetic Props and Update Events",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.4+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "defineModel", "v-model", "two-way-binding", "macros", "script-setup"],
+  "prerequisites": ["Vue v-model basics", "script-setup compiler macros"],
+  "progressiveExplaining": {
+    "eli5": "In older Vue, making a custom input component that works with `v-model` required declaring a prop, an event listener, and writing code to emit changes back to the parent. `defineModel()` is a magic two-way wire: you treat the value like a local variable, and whenever you change it, the parent's variable updates automatically.",
+    "junior": "`defineModel()` is a compiler macro in `<script setup>` that simplifies two-way bindings. `const model = defineModel();` replaces the boilerplate of declaring `defineProps(['modelValue'])` and `defineEmits(['update:modelValue'])`. You can mutate `model.value = 'newVal'` directly in the child, and Vue automatically emits the update event to synchronize the parent's `v-model`.",
+    "senior": "Architecturally, `defineModel()` provides first-class bidirectional state encapsulation. The compiler desugars `const model = defineModel()` into a `modelValue` prop and an `update:modelValue` emit. At runtime, it returns a `customRef` whose getter reads the prop and whose setter calls `emit('update:modelValue', value)`. It supports named models (`defineModel('title')`), modifiers (`const [model, modifiers] = defineModel({ set: ... })`), and default fallbacks without parent desynchronization.",
+    "underTheHood": "During compilation, `@vue/compiler-sfc` injects a synthetic prop into `props` normalization and an event into `emits`. The runtime creates a `Ref` wrapper backed by a `customRef`. The getter tracks the input prop value. When mutated, the setter calls the component instance's `$emit` method. In the parent, `v-model=\"val\"` compiles to `:modelValue=\"val\" @update:modelValue=\"$event => val = $event\"`."
+  },
+  "rosettaStone": {
+    "react": "Controlled props pattern: passing `value` and `onChange` callbacks.",
+    "angular": "Angular 17.2+ `model()` two-way signal binding primitive.",
+    "vue": "`const model = defineModel()` with parent `v-model=\"val\"`.",
+    "svelte": "Svelte 5 `$bindable()` inside `$props()` destructuring."
+  },
+  "codeComparison": {
+    "title": "Manual props/emits v-model Boilerplate vs defineModel()",
+    "summary": "Manual `v-model` requires declaring matching props and emits; `defineModel()` creates a clean, mutable ref.",
+    "legacyOrBad": {
+      "label": "Manual Props & Emits (Vue 3.2)",
+      "snippet": "const props = defineProps(['modelValue']); const emit = defineEmits(['update:modelValue']); // ❌ Verbose",
+      "fullFile": {
+        "filename": "CustomInputLegacy.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ❌ OLD: Required declaring props and emits separately and wiring a manual emit handler.\nconst props = defineProps({\n  modelValue: { type: String, default: '' }\n});\nconst emit = defineEmits(['update:modelValue']);\n\nfunction onInput(e) {\n  emit('update:modelValue', e.target.value);\n}\n</script>\n\n<template>\n  <input :value=\"props.modelValue\" @input=\"onInput\" />\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Vue 3.4+ defineModel()",
+      "snippet": "const model = defineModel({ type: String, default: '' }); // ✅ NEW: Direct mutable ref",
+      "fullFile": {
+        "filename": "CustomInputModern.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ✅ NEW: defineModel() returns a ref that can be bound directly with v-model!\nconst model = defineModel({\n  type: String,\n  default: ''\n});\n</script>\n\n<template>\n  <input v-model=\"model\" />\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you handle named `v-model` bindings and custom modifiers with `defineModel()`?",
+      "contextIntro": "Interviewers test your knowledge of advanced `v-model` features in Vue 3.4+.",
+      "detailedAnswer": "For named models (e.g. `v-model:title=\"postTitle\"`), pass the name as the first argument: `const title = defineModel('title')`. For custom modifiers (e.g. `v-model.capitalize=\"text\"`), destructure the returned tuple: `const [model, modifiers] = defineModel({ set(value) { if (modifiers.capitalize) return value.toUpperCase(); return value; } })`.",
+      "trapWarning": "Do not declare `defineProps(['title'])` and `defineModel('title')` in the same component; declaring both creates conflicting duplicate prop declarations."
+    },
+    {
+      "question": "Can `defineModel()` be used conditionally or inside functions?",
+      "contextIntro": "Checks understanding of compiler macro execution boundaries.",
+      "detailedAnswer": "No. `defineModel()` is a compiler macro, not a runtime function. It must be called at the top level of `<script setup>` so the compiler can statically analyze the component's public props and emits contract.",
+      "trapWarning": "Placing `defineModel()` inside a lifecycle hook or conditional `if` block will cause a compile-time error."
+    }
+  ]
+}

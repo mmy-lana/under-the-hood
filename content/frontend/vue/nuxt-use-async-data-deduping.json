@@ -1,0 +1,58 @@
+{
+  "id": "nuxt-use-async-data-deduping",
+  "title": "Nuxt 3 useAsyncData: Payload Hydration & SSR Request Deduplication",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Nuxt 3.x / Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "nuxt", "useAsyncData", "useFetch", "ssr", "hydration", "deduplication"],
+  "prerequisites": ["Nuxt 3 SSR fundamentals", "Vue 3 Composition API"],
+  "progressiveExplaining": {
+    "eli5": "When a web page renders on the server, it asks the database for data, builds the HTML, and sends it to your phone. If your phone's browser immediately asks the database for the exact same data again, that's a wasteful double-fetch. `useAsyncData` writes the server's answers into a hidden suitcase in the HTML payload, so the phone browser opens the suitcase and uses the data instantly with zero duplicate requests.",
+    "junior": "`useAsyncData(key, handler)` is Nuxt 3's composable for fetching data during Server-Side Rendering (SSR) without duplicating the network request on client hydration. `const { data, pending, error, refresh } = await useAsyncData('users', () => $fetch('/api/users'))`. Nuxt executes the handler on the server, inlines the result into the SSR payload (`nuxtApp.payload.data[key]`), and on client hydration, reads directly from the payload cache.",
+    "senior": "Architecturally, `useAsyncData` solves the universal SSR hydration double-fetch problem. It creates a unique key-based cache entry stored in `nuxtApp.payload.data`. During SSR, the async handler blocks server rendering until resolved. The serialized JSON is embedded in `<script type=\"application/json\" id=\"__NUXT_DATA__\">`. During client-side hydration, Nuxt checks if `payload.data[key]` exists: if present, it resolves `data` synchronously from memory and skips executing the handler, guaranteeing that client hydration performs **0 network requests**.",
+    "underTheHood": "`useAsyncData` generates or receives a string `key`. On the server, `asyncData` registers a promise that is awaited before emitting HTML. The serialized result is encoded via `devalue` (supporting Dates, BigInts, and circular refs). On the client, `useAsyncData` initializes a `shallowRef(nuxtApp.payload.data[key])`. Only on subsequent client-side route navigations (where payload is empty) does it invoke the fetch handler on the client."
+  },
+  "rosettaStone": {
+    "react": "Next.js React Server Components passing serialized props to client boundaries.",
+    "angular": "Angular SSR `TransferState` caching HTTP responses between server and client.",
+    "vue": "Nuxt 3 `useAsyncData('key', () => $fetch(...))` payload hydration.",
+    "svelte": "SvelteKit `+page.server.ts` `load()` serializing data into page payload."
+  },
+  "codeComparison": {
+    "title": "Naive onMounted Client Fetch vs Nuxt useAsyncData SSR Hydration",
+    "summary": "Fetching in `onMounted` causes layout shifts and double-fetching; `useAsyncData` renders on the server and hydrates from payload.",
+    "legacyOrBad": {
+      "label": "Client-Only Fetch (Double Fetch / Layout Shift)",
+      "snippet": "onMounted(async () => { users.value = await $fetch('/api/users'); }); // ❌ Fails SSR & SEO",
+      "fullFile": {
+        "filename": "UsersNaive.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ❌ OLD: onMounted never runs on the server during SSR. The server returns\n// an empty shell (hurting SEO), and the client fetches on mount, causing a loading flicker.\nimport { ref, onMounted } from 'vue';\n\nconst users = ref([]);\nconst loading = ref(true);\n\nonMounted(async () => {\n  users.value = await $fetch('/api/users');\n  loading.value = false;\n});\n</script>\n\n<template>\n  <div v-if=\"loading\">Loading...</div>\n  <ul v-else><li v-for=\"u in users\" :key=\"u.id\">{{ u.name }}</li></ul>\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Nuxt 3 useAsyncData SSR Payload",
+      "snippet": "const { data: users } = await useAsyncData('users', () => $fetch('/api/users')); // ✅ NEW",
+      "fullFile": {
+        "filename": "UsersOptimized.vue",
+        "language": "vue",
+        "code": "<script setup>\n// ✅ NEW: useAsyncData runs on the server during SSR, embeds data in payload,\n// and hydrates on the client instantly with zero duplicate fetch!\nconst { data: users, pending } = await useAsyncData('users', () => $fetch('/api/users'), {\n  lazy: false,\n  transform: (data) => data.map(u => ({ id: u.id, name: u.name }))\n});\n</script>\n\n<template>\n  <div v-if=\"pending\">Loading...</div>\n  <ul v-else><li v-for=\"u in users\" :key=\"u.id\">{{ u.name }}</li></ul>\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if you omit the custom `key` argument in `useAsyncData`?",
+      "contextIntro": "Interviewers test your knowledge of Nuxt's auto-generated key heuristics.",
+      "detailedAnswer": "If the `key` argument is omitted (e.g. `useAsyncData(() => $fetch(...))`), Nuxt auto-generates a key based on the file path and line number of the call site. However, if you extract `useAsyncData` into a shared custom composable called from multiple components, they will share the *same* auto-generated key, causing one call to overwrite the other's payload. Always provide an explicit unique key when wrapping in custom composables.",
+      "trapWarning": "Never use dynamic runtime IDs (e.g. `Math.random()`) as the key; keys must be deterministic between server and client for payload hydration matching."
+    },
+    {
+      "question": "What is the difference between `useFetch(url)` and `useAsyncData(key, () => $fetch(url))` in Nuxt 3?",
+      "contextIntro": "Checks knowledge of Nuxt 3 composable sugar wrappers.",
+      "detailedAnswer": "`useFetch(url)` is a convenient shorthand wrapper that automatically calls `useAsyncData` under the hood. It auto-generates a cache key based on the URL and options, and automatically sets up reactive URL watchers. `useAsyncData` is the lower-level primitive useful for non-fetch async operations (e.g. querying a CMS SDK, Redis, or local database directly).",
+      "trapWarning": "Using `$fetch` alone without `useAsyncData` inside a setup function will cause the request to execute twice: once on the server, and again on client hydration."
+    }
+  ]
+}
