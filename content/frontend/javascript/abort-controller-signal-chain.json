@@ -1,0 +1,61 @@
+{
+  "id": "abort-controller-signal-chain",
+  "title": "AbortController & AbortSignal: Cascading Fetch/Listener Cleanup",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "DOM spec (AbortController/AbortSignal), fetch",
+  "lastUpdated": "2026-08-31",
+  "tags": ["abort-controller", "abort-signal", "fetch", "cleanup", "cancellation", "events"],
+  "prerequisites": [
+    "fetch and async/await basics",
+    "Understanding of event listeners and cleanup"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a radio dispatcher with a master kill-switch that can silence every walkie-talkie on the network at once. Each agent also has a small personal kill-switch. If the dispatcher flips the master switch, every agent's radio stops working immediately — even if the agents didn't touch their own switches. AbortController is that master switch: one signal can be wired to cancel many tasks at once (a chain of walkie-talkies), and each task also gets a clear way to stop itself. When the switch flips, all connected tasks stop cleanly at the same moment.",
+    "junior": "AbortController lets you cancel fetch requests and other async work. const ac = new AbortController(); fetch(url, { signal: ac.signal }); // later: ac.abort();. Aborting rejects the fetch with an AbortError (name === 'AbortError'), and you catch it to distinguish cancellation from real failures. The signal is also an EventTarget: signal.addEventListener('abort', handler) lets other work react. You can pass the same signal to multiple fetches, so one abort cancels them all. Always clean up: remove the listener or call controller.abort() in teardown to avoid leaks in components that unmount mid-request.",
+    "senior": "Architecturally, AbortSignal is an event emitter whose abort event is fired once when abort() is called. A single controller can fan out to many operations (parallel fetches, streams, event listeners), and abort cascades to all of them. The signal also supports combining: AbortSignal.any([signalA, signalB]) (or the older static AbortSignal.abort) creates a derived signal that aborts when any source aborts — useful for 'either user cancelled OR timeout reached'. Proper cleanup means removing abort listeners so the signal (and its closure state) can be GC'd; failing to do so leaks listeners on long-lived signals. Fetch, streams, and even DOM APIs (requestIdleCallback via option) accept signals.",
+    "underTheHood": "An AbortController owns an AbortSignal object with an internal aborted flag and an abort reason. Calling abort() sets the flag, stores the reason (default DOMException AbortError), and synchronously dispatches the abort event to registered listeners, then follows dependent signals (AbortSignal.any chains propagate via their own internal dependent lists). Fetch's network layer observes the signal and tears down the request (rejecting the promise and aborting the underlying connection), which prevents the response body from being read. Because abort propagation is synchronous event dispatch, all dependent operations observe the cancellation in the same tick — and the GC can reclaim listeners once they're removed."
+  },
+  "rosettaStone": {
+    "react": "React effects commonly create an AbortController per effect and abort() in cleanup to cancel in-flight fetches on unmount.",
+    "angular": "Angular's HttpClient supports { signal } for request cancellation; subscriptions also need manual unsubscribe, but signals cover fetch-style work.",
+    "vue": "Vue composables (onScopeDispose) pair with AbortController for cancellation when the component scope tears down.",
+    "svelte": "Svelte 5 $effect cleanup can abort controllers automatically, and SvelteKit load functions receive fetch that can be signaled."
+  },
+  "codeComparison": {
+    "title": "Ignoring cancellation vs aborting in teardown",
+    "summary": "An unmanaged fetch continues after unmount and can set state on a dead component; aborting in cleanup cancels the request and prevents state races.",
+    "legacyOrBad": {
+      "label": "Fetch without abort on unmount",
+      "snippet": "fetch(url).then(setState); // ❌ OLD: no signal — keeps running after unmount, may setState on a removed component",
+      "fullFile": {
+        "filename": "abort-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: The fetch is never cancelled when the component unmounts.\n// The request keeps consuming network, and when it resolves it calls\n// setState on a component that is no longer mounted — a state-after-\n// unmount race that leaks work and can crash or corrupt UI.\nasync function loadUser(userId) {\n  // ❌ OLD: no AbortSignal wired in\n  const res = await fetch(`/api/users/${userId}`);\n  const data = await res.json();\n  setState(data); // runs even if the component already unmounted\n}\n\n// If the user navigates away mid-request, the promise still resolves,\n// the closure still runs, and the network work was wasted. Rapid\n// navigation can interleave responses out of order (stale state)."
+      }
+    },
+    "modernOrGood": {
+      "label": "AbortController cleanup",
+      "snippet": "const ac = new AbortController();\nconst res = await fetch(url, { signal: ac.signal }); // ✅ NEW: wired in\nac.abort(); // cancels the request; rejects with AbortError",
+      "fullFile": {
+        "filename": "abort-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Wire an AbortSignal into the fetch and abort in teardown.\n// The request is cancelled, the promise rejects with AbortError, and\n// no setState runs after unmount.\nasync function loadUser(userId) {\n  const ac = new AbortController(); // ✅ NEW: one controller per request\n  try {\n    const res = await fetch(`/api/users/${userId}`, { signal: ac.signal });\n    const data = await res.json();\n    setState(data);\n  } catch (err) {\n    if (err.name === 'AbortError') return; // ✅ NEW: expected cancellation\n    throw err; // real failures still propagate\n  } finally {\n    // In component teardown: ac.abort() cancels the in-flight request.\n    ac.abort();\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly happens when you call abort() on a fetch, and how can you tell cancellation apart from a real error?",
+      "contextIntro": "This probes the cancellation mechanics — that abort rejects with a specific error type and triggers network teardown — which is central to correct async UI code.",
+      "detailedAnswer": "Calling abort() sets the signal's aborted flag, stores the abort reason, and synchronously dispatches the abort event. The fetch operation observes the signal; its promise rejects with a DOMException whose name is 'AbortError' (the stored reason) rather than a network/HTTP error. The underlying network request is torn down — the connection is cancelled and any streaming response is aborted. To distinguish cancellation from failures, check err.name === 'AbortError' (or err === signal.reason) and rethrow otherwise. Because the rejection is a DOMException, unhandled abort rejections still surface as unhandled rejections if you forget the catch.",
+      "trapWarning": "The naive answer is 'abort just makes fetch return undefined'. It rejects the promise, and uncaught abort rejections cause unhandled-rejection errors. Another trap: catching the error and treating AbortError like a server error — cancellation is expected control flow, not a failure, so it must be filtered. Candidates who check the error name and rethrow non-abort errors show production-ready async handling."
+    },
+    {
+      "question": "Why should you remove abort event listeners, and how does a single signal cancel multiple operations?",
+      "contextIntro": "This tests listener hygiene and fan-out semantics — interviewers want to see that AbortSignal is an EventTarget whose listeners must be cleaned up, not just a fetch option.",
+      "detailedAnswer": "AbortSignal is an EventTarget: registering signal.addEventListener('abort', fn) means `fn` is retained as long as the signal lives AND the listener isn't removed. If you keep the controller in a long-lived module/scope, stale listeners accumulate — each holding its closure — which leaks memory and can run unexpected code on later aborts. The fan-out pattern is safe: passing one signal to many fetches (or streams/event listeners) makes abort() cancel all of them in the same synchronous dispatch. For multi-source cancellation, AbortSignal.any([...]) creates a dependent signal that propagates when any source aborts; dependent signals internally register with their sources, so removing listeners on the dependent still matters for cleanup.",
+      "trapWarning": "The naive answer is 'abort listeners are automatically removed when the fetch completes'. They are not — a completed fetch does not unsubscribe custom abort listeners. Another trap: assuming aborting a controller with no active listeners is a no-op you can skip cleaning up; if you registered any listener, you must remove it or null the controller reference. Candidates who treat signal listeners with the same hygiene as addEventListener show real discipline."
+    }
+  ]
+}

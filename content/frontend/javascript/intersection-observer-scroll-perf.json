@@ -1,0 +1,61 @@
+{
+  "id": "intersection-observer-scroll-perf",
+  "title": "IntersectionObserver: Async Off-Main-Thread Threshold Checks",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "IntersectionObserver API (Level 2)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["intersection-observer", "scroll", "performance", "lazy-loading", "observers", "viewport"],
+  "prerequisites": [
+    "DOM and viewport concepts",
+    "Understanding of scroll events and layout"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Instead of a security guard who runs across the building every single time someone takes a step (every scroll movement), the building installs special floor sensors that automatically report when someone crosses a hallway line. The sensors do their checking quietly in the background, so the guard isn't exhausted by constant running. IntersectionObserver is those sensors: it quietly watches whether a sign is visible in the viewing window and tells you only when it crosses the line, without making the page do frantic work on every scroll move.",
+    "junior": "IntersectionObserver reports when an element intersects the viewport (or another root element) — useful for lazy-loading images, infinite scroll, and read-progress indicators. const io = new IntersectionObserver((entries) => { entries.forEach(e => { if (e.isIntersecting) load(e.target); }); }, { threshold: 0.25 }); io.observe(img);. The callback runs asynchronously when the observed element crosses configured thresholds (0 to 1, or an array like [0, 0.5, 1]). Unobserve/disconnect when done. Compared to scroll + getBoundingClientRect, this runs off the hot scroll path and is far cheaper.",
+    "senior": "Architecturally, IntersectionObserver is implemented in the browser engine, not in JavaScript — the intersection computation happens asynchronously, typically on the compositor or a dedicated intersection engine that checks element bounds against the root after scroll/layout settle. It only fires callbacks when a threshold is crossed, not on every pixel of scroll. rootMargin lets you grow/shrink the root box (e.g. pre-load images 200px before they enter). This off-main-thread design avoids forced synchronous layout (the classic getBoundingClientRect-on-scroll jank). For scroll-linked UI, this is the recommended primitive over scroll listeners.",
+    "underTheHood": "The browser maintains an observer registration list per document. After a scrolling or layout update, the engine performs an intersection computation pass (asynchronously, in the rendering steps) that tests each observed target's border box against the root's intersection rectangle (root bounds expanded by rootMargin, clipped to the document). The intersection ratio is computed and compared to the thresholds; if a threshold is newly crossed, the engine queues an IntersectionObserverEntry and schedules the callback as a task (via 'queue a task' on the observer's task source) rather than a microtask. The computation is integrated with the compositor where possible, so scroll-driven checks happen without forcing a main-thread layout read."
+  },
+  "rosettaStone": {
+    "react": "react-intersection-observer wraps the API for hooks; React apps use it for lazy images and infinite lists.",
+    "angular": "Angular can use the API in directives or the browser's native lazy loading; @angular/cdk has a ScrollDispatcher but IO is preferred for visibility.",
+    "vue": "vueuse's useIntersectionObserver integrates it with component lifecycle; Vue lazy-image components commonly wrap it.",
+    "svelte": "Svelte actions (use:action) are a natural fit for attaching an IntersectionObserver to an element on mount."
+  },
+  "codeComparison": {
+    "title": "Scroll + getBoundingClientRect vs IntersectionObserver for visibility",
+    "summary": "Reading geometry on every scroll forces synchronous layout and janks; IntersectionObserver computes intersection asynchronously and fires only on threshold crossings.",
+    "legacyOrBad": {
+      "label": "Scroll listener + getBoundingClientRect",
+      "snippet": "window.addEventListener('scroll', () => { const r = el.getBoundingClientRect(); if (r.top < innerHeight) load(); }); // ❌ OLD: layout read per scroll frame",
+      "fullFile": {
+        "filename": "visibility-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A scroll listener that reads geometry on every event forces\n// a SYNCHRONOUS LAYOUT (reflow) each time. Because scroll fires at\n// high frequency, this janks the page and burns main-thread time —\n// especially with many observed elements.\nwindow.addEventListener('scroll', () => {\n  // ❌ OLD: getBoundingClientRect forces layout synchronously\n  const r = el.getBoundingClientRect();\n  if (r.top < window.innerHeight) {\n    loadContent();\n    window.removeEventListener('scroll', handler);\n  }\n});\n\n// The handler runs on every scroll tick even when the element is far\n// off-screen — O(N) geometry reads per frame."
+      }
+    },
+    "modernOrGood": {
+      "label": "IntersectionObserver",
+      "snippet": "const io = new IntersectionObserver(entries => { if (entries[0].isIntersecting) load(); });\nio.observe(el); // ✅ NEW: async, engine-computed, threshold-based",
+      "fullFile": {
+        "filename": "visibility-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: IntersectionObserver computes intersection asynchronously\n// (off the main-thread scroll path) and only fires the callback when a\n// configured threshold is crossed — not on every pixel of scroll.\nconst io = new IntersectionObserver(\n  (entries) => {\n    if (entries[0].isIntersecting) {\n      loadContent();\n      io.disconnect(); // stop observing once loaded\n    }\n  },\n  { rootMargin: '200px' } // ✅ NEW: pre-load before the element enters\n);\n\nio.observe(el); // ✅ NEW: observe once; the engine does the rest\n\n// No scroll listeners, no synchronous layout reads. The browser\n// performs the intersection check in its own async rendering steps."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is IntersectionObserver better than listening to scroll events and calling getBoundingClientRect?",
+      "contextIntro": "This is the classic performance question — interviewers want the layout-thrash and off-main-thread mechanics, not just 'it's the modern API'.",
+      "detailedAnswer": "A scroll listener runs on the main thread at scroll frequency; every getBoundingClientRect call inside forces a synchronous layout pass to return up-to-date geometry, which can invalidate and re-flow the page mid-frame — the leading cause of scroll jank. IntersectionObserver moves the intersection computation into the engine's own asynchronous rendering/compositor pipeline: after a scroll or layout update, the engine checks observed targets against the root box and only queues a callback when a threshold is crossed. This avoids per-scroll layout reads, is coalesced, and scales to many observed elements without binding main-thread work to scroll frequency.",
+      "trapWarning": "The naive answer is 'getBoundingClientRect is accurate but IntersectionObserver is approximate'. Both are accurate; the difference is synchronous-layout cost vs async engine computation. Another trap: assuming the IO callback fires on every scroll position change — it fires only when the intersection ratio crosses a configured threshold, so code that expects per-frame updates must use appropriate thresholds or fall back to rAF-driven measurement for pixel-exact animations."
+    },
+    {
+      "question": "When does the IntersectionObserver callback actually run relative to the event loop, and how does rootMargin/threshold affect it?",
+      "contextIntro": "This tests knowledge of delivery timing (a task, not a microtask) and the threshold/rootMargin tuning knobs that control when callbacks fire.",
+      "detailedAnswer": "The callback is queued as a task on the observer's task source after the engine's intersection computation pass (part of the rendering steps), so it runs asynchronously after the current task — not in the middle of your synchronous code, and not as a microtask. The intersection ratio is compared against the thresholds array; when a value newly crosses any threshold (including 0 and 1), an entry is queued. rootMargin expands or shrinks the root's intersection rectangle before clipping, letting you trigger callbacks before the element actually enters the viewport (pre-loading). This timing and threshold behavior is what makes it safe for lazy-loading without blocking rendering.",
+      "trapWarning": "The naive answer is 'the callback fires synchronously during scroll'. It is an async task delivered after the engine's intersection pass. Another trap: assuming isIntersecting equals 'fully visible' — it only means the intersection ratio exceeds the current threshold (e.g. threshold: 0 fires as soon as 1px is visible). Candidates who explain the task-source delivery and ratio/threshold crossing mechanics show real depth."
+    }
+  ]
+}

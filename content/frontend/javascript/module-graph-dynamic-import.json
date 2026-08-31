@@ -1,0 +1,61 @@
+{
+  "id": "module-graph-dynamic-import",
+  "title": "ESM Static Linking, Cyclic Graph Evaluation, and import() Runtime Chunks",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2015+ modules, HTML/Node ESM",
+  "lastUpdated": "2026-08-31",
+  "tags": ["esm", "modules", "dynamic-import", "cyclic-dependencies", "bundling", "import"],
+  "prerequisites": [
+    "ES module syntax (import/export)",
+    "Understanding of the module graph and bundlers"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a recipe book where every recipe is a page, and pages can say 'see page 12 for the sauce'. Before anyone cooks, the editor checks every page: every 'see page 12' must point to a real page, and every page must be complete — this is the linking pass, done up front. Then, during cooking, pages are cooked one by one in order, and if two pages point at each other, the cook still manages because the recipe book already knows both pages exist. A special request to 'cook page 50 now' (dynamic import) fetches that page on demand instead of cooking the whole book at once.",
+    "junior": "ES modules are statically analyzable: import statements are hoisted and resolved before any code runs, which is what enables tree-shaking. Static imports load the whole graph eagerly; import('./mod.js') loads a module on demand at runtime and returns a promise of its namespace. Use dynamic import for code-splitting (load heavy features only when needed), lazy routes, and conditional loading: const { format } = await import('./formatter.js');. Named exports of a module are live bindings — importing a variable gives you a live link to the module's value, not a copy. Cyclic imports work in ESM because the graph is linked first, then evaluated depth-first with live bindings.",
+    "senior": "Architecturally, ESM separates linking from evaluation: the linker resolves the module graph statically (via import specifiers resolved to module records) before executing anything. Evaluation then runs in post-order (dependencies first), with live bindings so cycles don't break — a module that imports a binding from a not-yet-evaluated module sees the binding's eventual value once initialized. Dynamic import() creates a separate module request at runtime: the engine (or bundler) fetches a new chunk, links it into the existing graph, and evaluates it lazily, returning a namespace object. This is what enables code splitting: bundlers use import() boundaries to emit separate chunks loaded on demand.",
+    "underTheHood": "The engine keeps a module map keyed by resolved URL/identifier to module records. Static import creates dependency edges during parsing (ModuleRequests), and linking instantiates each module's environment with export bindings bound to the importing module's slots — this is the 'linking' that makes cycles safe. Evaluation is a depth-first traversal with an in-progress set: a cycle returns to a module already being evaluated instead of re-running it. Dynamic import() invokes the HostResolveImportedModule path at runtime: it fetches/parses the new module record, instantiates it, evaluates it (if not already), and resolves the returned promise with its module namespace object. Bundlers (Vite/Rollup/webpack) turn import() into chunk boundaries and rewrite specifiers to hashed chunk URLs, splitting the graph into lazy-loaded files."
+  },
+  "rosettaStone": {
+    "react": "React Router's lazy() uses dynamic import for route-level code splitting; React 19 Suspense integrates the returned promise.",
+    "angular": "Angular's loadChildren/lazy routes and @defer use dynamic imports to split NgModules and standalone components into chunks.",
+    "vue": "defineAsyncComponent(() => import('./X.vue')) and Vue Router's lazy routes are built on dynamic import.",
+    "svelte": "SvelteKit's +page/+layout imports and vite's build split chunks at dynamic import boundaries automatically."
+  },
+  "codeComparison": {
+    "title": "Eager static import vs on-demand dynamic import for a heavy module",
+    "summary": "A static import pulls the heavy module into the initial bundle; dynamic import() defers loading to a runtime chunk, shrinking the startup payload.",
+    "legacyOrBad": {
+      "label": "Static import of a heavy module",
+      "snippet": "import { renderChart } from './chart.js'; // ❌ OLD: chart.js is part of the initial bundle",
+      "fullFile": {
+        "filename": "chunk-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A static import at the top of the file makes `chart.js` (and\n// its own dependencies) part of the eagerly-loaded module graph. The\n// bundler includes it in the initial chunk — so every user downloads\n// and parses the chart library even if they never open the chart view.\nimport { renderChart } from './chart.js'; // ❌ OLD: eager edge in the graph\n\n// The module is linked and evaluated up front. Startup cost includes\n// the chart library's size, parse time, and execution time regardless\n// of whether renderChart is ever called on this page."
+      }
+    },
+    "modernOrGood": {
+      "label": "Dynamic import on demand",
+      "snippet": "const { renderChart } = await import('./chart.js'); // ✅ NEW: separate runtime chunk, loaded lazily",
+      "fullFile": {
+        "filename": "chunk-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: import() creates a runtime chunk boundary. `chart.js` is NOT\n// in the initial bundle — it is fetched, linked, and evaluated only\n// when the user actually needs the chart.\nasync function openChart() {\n  // ✅ NEW: the bundler emits chart.js as its own lazy chunk\n  const { renderChart } = await import('./chart.js');\n  renderChart(data);\n}\n\n// The module is requested at runtime: the engine resolves and\n// instantiates the new module record on demand. This shrinks the\n// initial payload and defers parse/execute cost until interaction."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do cyclic imports work in ES modules without breaking, and what makes them safe at all?",
+      "contextIntro": "This tests the crucial distinction between linking and evaluation — a concept that separates people who understand ESM from those who think it's just 'better require'.",
+      "detailedAnswer": "ESM decouples linking from evaluation. First, the linker resolves the entire graph and instantiates every module's environment, binding each module's exported names to shared slots — this happens before any module body executes. Then evaluation runs in post-order (dependencies first). When a cycle is encountered, the traversal sees the module is already being evaluated (an 'in-progress' marker) and skips re-running it. Because exports are live bindings to slots, a module that imports a value from a not-yet-initialized module holds a binding that will hold the real value once that module finishes evaluating — so calling the imported function too early fails, but reading it later works. This is why cycles with function declarations are fine but cycles that use a binding at module top-level during evaluation can observe undefined.",
+      "trapWarning": "The naive answer is 'cycles are a bug you should just avoid'. They occur naturally in real graphs and ESM handles them by design — but only thanks to live bindings and the in-progress guard. Another trap: assuming imports are copies — they are live bindings, so mutating an exported value in one module is visible in all importers, and using a binding before the exporting module initialized yields undefined (the classic TDZ gotcha for cyclic imports)."
+    },
+    {
+      "question": "What is the actual difference between static import and dynamic import() at the engine level, and how does that enable code splitting?",
+      "contextIntro": "Interviewers want the runtime mechanics — static edges resolved at link time vs a runtime resolution request — and how bundlers translate that into chunks.",
+      "detailedAnswer": "Static imports are resolved at module link time: the engine builds the dependency edges while parsing (ModuleRequests) and instantiates the whole reachable graph before evaluation begins. Dynamic import() is a runtime operation: when executed, it calls the host's module resolution (HostResolveImportedModule) to fetch and parse a new module record, instantiates it, evaluates it if not already evaluated, and resolves the returned promise with the module namespace. At the engine level this is a separate module request added to the module map; at the bundler level, import() boundaries become chunk split points — the bundler emits the dynamically-imported subtree as its own file loaded via script/fetch on demand. That split is exactly what code splitting relies on.",
+      "trapWarning": "The naive answer is 'dynamic import is just a lazy static import'. It is a fundamentally runtime operation with a promise, and it cannot be hoisted — using the imported namespace at module top level is impossible because the import hasn't resolved yet. Another trap: assuming bundlers split automatically at every import() — they do, but you still control boundaries; splitting too finely creates network waterfall overhead, and too coarsely defeats lazy loading. Candidates who describe the module-map resolution and chunk boundary semantics show real understanding."
+    }
+  ]
+}

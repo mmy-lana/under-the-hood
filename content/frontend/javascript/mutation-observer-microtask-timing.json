@@ -1,0 +1,61 @@
+{
+  "id": "mutation-observer-microtask-timing",
+  "title": "MutationObserver: Batched Microtask DOM Change Delivery",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "DOM spec (MutationObserver)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["mutation-observer", "dom", "microtask", "batching", "observers", "performance"],
+  "prerequisites": [
+    "DOM manipulation basics",
+    "Understanding of the event loop and microtasks"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a scribe whose job is to note every change to a library's catalog. Instead of running to the catalog room and writing each change the instant it happens, the scribe waits until the librarian finishes their current task, then writes down ALL the changes that happened in one go. This way the scribe isn't interrupting constantly and the list is complete. MutationObserver is that scribe: it watches the catalog (the page) and reports all the changes together at a quiet moment, instead of firing dozens of times mid-work.",
+    "junior": "MutationObserver watches DOM changes and fires a callback with a list of all mutations that happened since the last delivery. const obs = new MutationObserver((records) => { /* records is an array */ }); obs.observe(target, { childList: true, subtree: true, attributes: true });. The callback is delivered asynchronously, batched: if you make 100 DOM changes in one synchronous block, the observer fires ONCE with 100 records. This makes it efficient for reacting to content changes (e.g. re-measuring, highlighting, or syncing state). Use disconnect() to stop. Unlike mutation events (deprecated), it doesn't fire for every single change synchronously and doesn't break the page.",
+    "senior": "Architecturally, MutationObserver is designed around batched asynchronous delivery: mutations are queued into a list during the mutation (the 'notify' step) and delivered at the end of the current task via a microtask checkpoint. The observer callback receives a MutationRecord array with addedNodes, removedNodes, attributeName, target, and more. This batching makes it safe to observe your own writes (you can re-enter without infinite synchronous feedback because delivery is deferred) and avoids the performance catastrophe of the old DOM mutation events. You can process records per microtask or throttle to animation frames.",
+    "underTheHood": "The DOM spec's 'queue a mutation record' appends to the observer's record queue and schedules a microtask if one isn't pending. At the microtask checkpoint, the engine runs the observer callback with the accumulated records and clears the queue. Mutation records are allocated per change (with addedNodes/removedNodes as NodeList snapshots), so heavy mutation churn can allocate many records — which is why batching matters and why you should disconnect observers you no longer need. The observer's observation uses a weak-ish registration on the target (target-to-observer map); disconnecting removes it so the node can be GC'd."
+  },
+  "rosettaStone": {
+    "react": "React uses its own renderer; MutationObserver is used by testing/analysis tooling (e.g. detecting re-render counts) rather than core rendering.",
+    "angular": "Zone.js used mutation-event hacks historically; modern Angular prefers signals and ChangeDetectorRef over DOM observation.",
+    "vue": "Vue 3's reactivity doesn't use MutationObserver for state, but v-model internals and SSR hydration checks sometimes observe DOM.",
+    "svelte": "Svelte compiles DOM updates directly; MutationObserver is useful in Svelte apps for third-party widget integration or contenteditable sync."
+  },
+  "codeComparison": {
+    "title": "DOM mutation events (deprecated) vs MutationObserver batching",
+    "summary": "Old mutation events fired synchronously per change and broke the page; MutationObserver batches records and delivers them in a microtask.",
+    "legacyOrBad": {
+      "label": "DOMNodeInserted / mutation events",
+      "snippet": "document.addEventListener('DOMNodeInserted', handler); // ❌ OLD: fires synchronously for EVERY insertion",
+      "fullFile": {
+        "filename": "mutation-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: The old mutation events (DOMNodeInserted, DOMAttrModified,\n// etc.) fired SYNCHRONOUSLY for every single DOM change. A loop that\n// inserts 10,000 nodes triggers 10,000 handler calls in the middle of\n// the work — and mutating inside the handler re-triggers the event,\n// which is why they caused infinite loops and jank.\ndocument.addEventListener('DOMNodeInserted', (e) => {\n  // ❌ OLD: runs inline during the insertion — blocks rendering,\n  // and DOM mutation here can re-fire the event recursively.\n  console.log('node added', e.target);\n});\n\n// Deprecated and removed from browsers; still appears in old codebases."
+      }
+    },
+    "modernOrGood": {
+      "label": "MutationObserver batching",
+      "snippet": "const obs = new MutationObserver(records => handle(records)); // ✅ NEW: batched, async delivery\nobs.observe(root, { childList: true, subtree: true });",
+      "fullFile": {
+        "filename": "mutation-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: MutationObserver batches all mutations that occur in a\n// synchronous block and delivers them ONCE in a microtask. The callback\n// receives a full array of MutationRecords.\nconst obs = new MutationObserver((records) => {\n  // ✅ NEW: records is the complete batched list — process once, not\n  // once per mutation.\n  for (const rec of records) {\n    console.log('added', rec.addedNodes, 'to', rec.target);\n  }\n});\n\nobs.observe(root, { childList: true, subtree: true });\n\n// Insert 10,000 nodes in one loop: the observer fires ONCE after the\n// current task, with 10,000 records — no per-mutation jank.\nfor (let i = 0; i < 10_000; i++) {\n  root.append(document.createElement('div'));\n}\n\n// Later: obs.disconnect() to stop observing and release the target."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is MutationObserver delivered asynchronously and batched, instead of firing synchronously on every DOM change?",
+      "contextIntro": "Interviewers want the design rationale — batching plus microtask delivery — because it explains the API's performance profile and why old mutation events were removed.",
+      "detailedAnswer": "Synchronous per-change delivery (the old mutation events) caused two problems: it interrupted the middle of the mutating code, forcing layout/rendering work inline and re-entrantly, and a handler that mutated the DOM would re-trigger the event, causing infinite loops. MutationObserver decouples notification from mutation: changes are queued into records, and a microtask is scheduled. At the microtask checkpoint after the current task, the callback runs once with the full record list. This makes observing your own writes safe (no synchronous feedback loop) and keeps delivery off the critical rendering path. The cost is that records are allocated per change, so observers should be disconnected when unused.",
+      "trapWarning": "The naive answer is 'MutationObserver fires after every DOM change'. It fires once per microtask checkpoint with ALL accumulated changes, so the callback may run less often than you mutate — relying on one-callback-per-change breaks code. Another trap: assuming the callback runs synchronously after each mutation; it runs at the end of the task, so you cannot read the immediately-post-mutation DOM state inside the same synchronous block expecting the observer to have run."
+    },
+    {
+      "question": "Can you observe your own DOM mutations with MutationObserver without causing an infinite loop, and why?",
+      "contextIntro": "This probes whether you understand the re-entrancy safety that batching provides — a real concern when a UI library observes content it also writes.",
+      "detailedAnswer": "Yes. When your synchronous code mutates the DOM, the observer merely queues records and schedules a microtask — it does not call your handler during the mutation. Your handler then runs at the microtask checkpoint, after the current task completes. If your handler mutates the DOM again, those new mutations are queued for the NEXT microtask delivery, so you get one re-delivery, not an unbounded synchronous loop. This is why MutationObserver can safely back libraries that both write and observe content (e.g. rich text editors), whereas the old mutation events deadlocked or overflowed on the same pattern. To avoid any feedback, guard by checking whether a mutation is self-originated or disconnect the observer while writing.",
+      "trapWarning": "The naive answer is 'mutating inside the observer callback always causes an infinite loop'. Because delivery is deferred to a microtask, each handler run gets its own delivery cycle — but repeated mutation per delivery can still grow indefinitely across microtasks if not guarded. Another trap: assuming the observer callback runs synchronously during the microtask checkpoint before the current task finishes; it runs after, so state read timing matters for correctness."
+    }
+  ]
+}

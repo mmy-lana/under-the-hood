@@ -1,0 +1,61 @@
+{
+  "id": "weakmap-weakset-gc-ephemerons",
+  "title": "WeakMap / WeakSet: Ephemerons & Garbage Collector Reclamation",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2015+ (WeakMap/WeakSet semantics)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["weakmap", "weakset", "ephemeron", "garbage-collection", "memory", "weak-reference"],
+  "prerequisites": [
+    "How Map and Set work",
+    "Basics of garbage collection and object lifetimes"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Think of a cloakroom that keeps a tag for each coat it is holding. The tag has a note with the coat owner's name, but only as long as the owner is actually in the building. The moment the owner walks out and nobody else mentions him, the cloakroom quietly rips up the tag too. A WeakMap is that cloakroom: it holds information about a thing, but only while that thing is still alive somewhere else. As soon as the thing is truly gone, the note disappears automatically, so the cloakroom never fills with useless tags for people who left.",
+    "junior": "WeakMap stores key → value pairs where the key is an object (or symbol) held 'weakly': the key does not keep the object alive. If the key object becomes unreachable, the entry is removed automatically, so you cannot leak memory by leaving stale metadata around. WeakSet is the same idea for a set of objects. Practical uses: caching computed results keyed by objects, storing private data per-instance (like a symbol table), and tracking 'seen' objects without preventing their collection. Because keys are weak, you cannot iterate a WeakMap or check its size — the API is deliberately limited (get, set, has, delete).",
+    "senior": "Architecturally, WeakMap/WeakSet entries are ephemerons: a key is held weakly, but the value is held strongly — and the value's liveness depends on the key's reachability. If the key becomes garbage, the whole entry is collectable, even if the value references the key (a cycle through the weak map does not keep the key alive). This makes them the correct tool for storing metadata/private state on objects you do not own, without perturbing GC. Contrast with Map: a Map holds keys strongly, so a long-lived Map with object keys can pin entire object graphs indefinitely — the classic cache leak.",
+    "underTheHood": "The engine implements WeakMap with an ephemeron table. During marking, the GC cannot treat weak-map values as strongly reachable; instead, ephemeron processing runs iteratively: it marks strongly reachable roots, then repeatedly scans weak-map edges — if a key is marked reachable, mark its value (and transitively anything the value reaches) — until a fixpoint. This extra marking pass is why the value of an ephemeron whose key is only reachable via another ephemeron's value requires the iterative algorithm. V8 keeps WeakMap entries in a special hash table (ephemeron hash table) where keys are weak; collections with only weak keys get reclaimed without resurrecting cycles. The inability to enumerate is a direct consequence: enumeration would force the engine to keep keys alive across GC."
+  },
+  "rosettaStone": {
+    "react": "React internals have used WeakMap-based caches for memoized data keyed by component/fiber objects.",
+    "angular": "Angular's Ivy uses WeakMap/weak references for metadata and node registries so detached components can be reclaimed.",
+    "vue": "Vue's reactivity and effect scopes use weak collections to avoid pinning component instances.",
+    "svelte": "Svelte 5 runtime uses WeakMaps to associate internal state with DOM nodes without leaking them."
+  },
+  "codeComparison": {
+    "title": "Per-instance metadata: Map (strong) vs WeakMap (weak) for private state",
+    "summary": "A WeakMap keyed by the instance lets the instance be collected with its metadata; a Map keyed by the instance pins both forever.",
+    "legacyOrBad": {
+      "label": "Map keyed by object → pins memory",
+      "snippet": "const cache = new Map(); // ❌ OLD: strong key → object kept alive\ncache.set(user, expensiveMeta); // user can never be GC'd while cache lives",
+      "fullFile": {
+        "filename": "metadata-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A Map holds keys STRONGLY. Every object inserted stays alive\n// for as long as the Map exists — even when the rest of the app has\n// dropped all references to it.\nconst metadata = new Map(); // ❌ OLD: strong key references\n\nfunction cacheUser(user) {\n  // The Map pins `user` and everything reachable from `expensiveMeta`.\n  metadata.set(user, { lastSeen: Date.now(), sessions: 1000 });\n}\n\nfunction onUserGone(user) {\n  // Even if the app no longer references `user`, the Map still does,\n  // so it is NOT collectable → memory grows unboundedly.\n  // (A manual metadata.delete(user) is easy to forget.)\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "WeakMap keyed by object → auto-reclaimed",
+      "snippet": "const cache = new WeakMap(); // ✅ NEW: weak key → entry dies with the key\ncache.set(user, expensiveMeta); // when `user` dies, entry is collected",
+      "fullFile": {
+        "filename": "metadata-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: A WeakMap holds keys WEAKLY. When nothing else references\n// `user`, both the key and the associated value become collectable —\n// no manual cleanup required.\nconst metadata = new WeakMap(); // ✅ NEW: weak key — ephemeron entry\n\nfunction cacheUser(user) {\n  // The value is strongly held, but ONLY while the key is alive.\n  metadata.set(user, { lastSeen: Date.now(), sessions: 1000 });\n}\n\nfunction onUserGone(user) {\n  // Dropping the last strong reference to `user` makes the whole\n  // entry unreachable; the GC reclaims key + value automatically.\n  // No metadata.delete() call needed — this is the whole point.\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can't you iterate a WeakMap or read its size, and what would happen if you could?",
+      "contextIntro": "This tests whether you understand that the API restrictions are not arbitrary — they are a direct consequence of how ephemerons must be collected.",
+      "detailedAnswer": "WeakMap keys are held weakly, so their identity can vanish at any GC cycle. If iteration or .size were available, the engine would have to keep a stable, enumerable list of live keys — which forces it to maintain strong references to them to guarantee the list remains consistent across collection. That defeats the entire purpose. The semantics require that a key's presence in the WeakMap never affect its reachability, so the only observable operations are get/set/has/delete, which do not require maintaining a stable snapshot of the key set. The engine uses an ephemeron hash table where keys are weak references and entries are swept when the key dies.",
+      "trapWarning": "The naive answer is 'the API was just simplified for developers'. It is a fundamental GC design consequence, not a convenience choice. Another trap: assuming WeakMap values are also weak — they are not; values are strongly held, they simply die together with their key. Candidates who explain the ephemeron key/value asymmetry show real understanding."
+    },
+    {
+      "question": "How does the GC actually collect a WeakMap entry when the key becomes garbage, and what is an ephemeron?",
+      "contextIntro": "Interviewers want the marking mechanics: why weak-map handling is a separate, iterative phase of GC rather than just 'another weak reference'.",
+      "detailedAnswer": "An ephemeron is a key-value pair whose value is strongly referenced but whose liveness is conditioned on the key: the value is reachable only if the key is reachable. In a tracing GC, weak-map entries cannot be marked eagerly — marking the value because the WeakMap holds it would resurrect the key (value may reference key). So the collector runs a fixpoint pass: after marking strong roots, it repeatedly checks each ephemeron; if the key is marked, it marks the value and follows its edges, repeating until no new marks occur. This guarantees a value is retained only while its key lives, even with cyclic references between keys and values.",
+      "trapWarning": "A common trap is treating a WeakMap like 'a Map that automatically clears on some timer'. Collection is deterministic per GC mark semantics, not time-based, and it is only guaranteed to happen after the key is unreachable. Another trap: assuming WeakMap prevents ALL leaks — if the VALUE itself holds strong references to other large data, the value graph is freed only when the key dies; storing huge values per-key still costs as long as the key lives."
+    }
+  ]
+}

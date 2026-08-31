@@ -1,0 +1,61 @@
+{
+  "id": "event-loop-microtasks-macrotasks",
+  "title": "Event Loop: Microtasks (Promises) vs Macrotasks (Timers, I/O)",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2017+ / HTML event loop",
+  "lastUpdated": "2026-08-31",
+  "tags": ["event-loop", "microtasks", "macrotasks", "promises", "async", "timers"],
+  "prerequisites": [
+    "Basics of Promises and async/await",
+    "Understanding of callbacks and setTimeout"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Think of a bank teller with two trays. The main counter (the big line of things to do) serves one customer at a time and then checks a small urgent tray next to him. That small tray holds very quick jobs, like signing a receipt. Whenever the counter finishes one customer, he empties every single job in the urgent tray before serving the next customer. If someone keeps dropping urgent receipts while he is working, the urgent tray never empties and the main line never moves — the main customers (timers, clicks, network replies) get starved.",
+    "junior": "JavaScript has one main thread and one task queue, but jobs are split into two kinds. Macrotasks are setTimeout, setInterval, setImmediate, I/O callbacks, and message events — they are processed one at a time from the queue. Microtasks are Promise .then/.catch/finally handlers and queueMicrotask — after every macrotask (and after the current synchronous script), the engine drains the ENTIRE microtask queue before moving on. That is why a promise chain runs before the next setTimeout even if the timer was scheduled first: const p = Promise.resolve(); p.then(() => console.log('micro')); setTimeout(() => console.log('macro'), 0); logs 'micro' then 'macro'.",
+    "senior": "Architecturally, the event loop alternates between phases: run one macrotask, then run all microtasks (which can themselves enqueue more microtasks, drained to empty), then possibly render, then the next macrotask. async/await desugars to promises, so every await continuation is a microtask. This gives priority to promise-based work over timer/IO work, which is why long promise chains can starve timers — an important scheduling nuance. Browsers and Node.js both implement this, though Node's loop has more granular phases (timers, poll, check) and drains microtasks at each phase boundary. Understanding the microtask-drain-to-empty rule is essential for reasoning about ordering in real applications.",
+    "underTheHood": "The engine keeps a single macrotask (task) queue and a separate microtask queue. The HTML spec's event loop iteration is: pick the oldest task, run it; then perform a microtask checkpoint that runs every queued microtask (each may enqueue more, processed FIFO until empty). Promises are implemented on top of the jobs queue (the microtask queue); a resolved promise schedules its reaction jobs as microtasks via EnqueueJob. In V8, microtasks are run by v8::MicrotasksScope draining the MicrotaskQueue. setTimeout(fn, 0) posts a macrotask that must wait for the currently executing task and all its microtasks to finish — and for any timer delay clamping. This two-queue design is what makes ordering non-obvious and is a favorite interview topic."
+  },
+  "rosettaStone": {
+    "react": "React batches state updates within a task and flushes in microtasks; its concurrent scheduler uses MessageChannel macrotasks to yield to the browser.",
+    "angular": "Zone.js patches both macrotasks and microtasks to know when to run change detection; the distinction determines when bindings refresh.",
+    "vue": "Vue's scheduler queues watcher jobs as microtasks so multiple mutations in one tick flush once.",
+    "svelte": "Svelte's $effect callbacks are scheduled on microtasks, so effects run after the current synchronous flush."
+  },
+  "codeComparison": {
+    "title": "Predicting execution order between promises and timers",
+    "summary": "The entire microtask queue is drained before the next macrotask runs, so promise continuations always beat same-tick timers regardless of scheduling order.",
+    "legacyOrBad": {
+      "label": "Naive order assumption",
+      "snippet": "setTimeout(() => console.log('timer'), 0); // ❌ OLD: naive code expects timers to run in call order\nPromise.resolve().then(() => console.log('promise')); // runs BEFORE the timer",
+      "fullFile": {
+        "filename": "order-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: The author assumes callbacks run in the order they were\n// scheduled. But setTimeout posts a MACROtask while a resolved\n// promise schedules a MICROtask. The engine drains all microtasks\n// before the next macrotask, so output is NOT call order.\nsetTimeout(() => console.log('timer'), 0); // ❌ OLD: macrotask — waits for microtasks first\nPromise.resolve().then(() => console.log('promise'));\n\n// Actual output:\n//   promise\n//   timer\n\n// Misreading this ordering leads to race bugs in real code where\n// a UI update is expected to reflect a timer result immediately."
+      }
+    },
+    "modernOrGood": {
+      "label": "QueueMicrotask-aware ordering",
+      "snippet": "queueMicrotask(() => console.log('micro')); // ✅ NEW: explicit, predictable microtask\nsetTimeout(() => console.log('macro'), 0); // macrotask runs after the microtask queue drains",
+      "fullFile": {
+        "filename": "order-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: queueMicrotask (or Promise.then) makes intent explicit.\n// The microtask runs during the current microtask checkpoint, before\n// the next macrotask — so we can reason about ordering deterministically.\nqueueMicrotask(() => console.log('micro')); // ✅ NEW: runs first\nsetTimeout(() => console.log('macro'), 0); // macrotask: runs after microtasks drain\n\n// Output:\n//   micro\n//   macro\n\n// When order genuinely matters, prefer await on a promise chain or\n// queueMicrotask so the continuation lands in the microtask queue and\n// is guaranteed to run before any newly posted timer/IO macrotask."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does Promise.resolve().then(f) run before setTimeout(f, 0) even when the timer is scheduled first?",
+      "contextIntro": "This is the canonical ordering question — interviewers want the two-queue model, not just the remembered output, because it underpins async reasoning in real apps.",
+      "detailedAnswer": "There are two queues. setTimeout posts a macrotask; a resolved promise's reaction (the .then callback) is enqueued as a microtask. The event loop runs one macrotask, then performs a microtask checkpoint that drains the microtask queue to empty (including any microtasks enqueued by other microtasks). Since the promise's continuation is already in the microtask queue, it runs during the checkpoint immediately after the current script/task finishes, before the loop advances to pop the timer macrotask. So call order is irrelevant — the queue type decides priority. The only way the timer runs first is if it was already the currently-executing task's predecessor, which it cannot be here.",
+      "trapWarning": "The naive explanation is 'setTimeout(0) means zero delay so it should run first'. Delay is a minimum, not a priority, and it is additionally clamped (e.g. nested timers clamp to 4ms). Another trap: thinking microtasks run after each and every callback within a task — they run only at checkpoints (after the task and at script evaluation), which is subtle but critical for predicting interleaving with I/O."
+    },
+    {
+      "question": "Can a very long chain of promise callbacks prevent timers from ever running?",
+      "contextIntro": "This tests whether you grasp the drain-to-empty semantics and can reason about starvation — a real production concern in tight async loops.",
+      "detailedAnswer": "Yes. After each macrotask, the engine drains the microtask queue completely. If every microtask enqueues another microtask (e.g. an async recursive loop that resolves and awaits itself, or a chain that keeps scheduling .then continuations), the microtask queue never empties, so the loop never advances to pop the next macrotask — timers and I/O callbacks starve. Browsers eventually surface 'slow network is detected' or 'page unresponsive' heuristics, but the starvation is real until the microtask chain yields. This is why tight recursion should periodically defer work to a macrotask (setTimeout/scheduler.yield) rather than pure promise self-resolution.",
+      "trapWarning": "The trap answer is 'the event loop is fair, it will interleave'. Macrotasks and microtasks are not round-robin; microtasks have absolute priority and are drained to empty. Another trap: assuming an async function's await on itself uses the stack — it does not, each await is a fresh microtask, so the chain can grow unboundedly and monopolize the microtask queue."
+    }
+  ]
+}

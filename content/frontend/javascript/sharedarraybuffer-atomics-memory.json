@@ -1,0 +1,61 @@
+{
+  "id": "sharedarraybuffer-atomics-memory",
+  "title": "SharedArrayBuffer & Atomics: Multi-Thread Memory and Futex Locking",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2017+ (SharedArrayBuffer, Atomics)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["sharedarraybuffer", "atomics", "worker", "memory-model", "futex", "concurrency"],
+  "prerequisites": [
+    "Web Workers and message passing basics",
+    "Understanding of typed arrays and ArrayBuffer"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine two cooks working in the same kitchen with one shared cutting board (a SharedArrayBuffer). Both can chop on the same board, but they must be careful: if one writes a note on the board while the other is reading, they can get confused. So they agree on strict rules — write a note fully, read it completely, and never peek halfway. Atomics is the rulebook: it gives special moves like 'write this number in one go' and 'wait here until the number changes'. With those rules, two cooks can share the board safely without bumping into each other.",
+    "junior": "SharedArrayBuffer is an ArrayBuffer that multiple workers can access at the same time — no copying/messaging. You view it with a typed array: const sab = new SharedArrayBuffer(4); const view = new Int32Array(sab);. Atomics provides atomic operations: Atomics.add(view, 0, 1), Atomics.load, Atomics.store, Atomics.compareExchange, and Atomics.wait / Atomics.notify for blocking coordination. This enables lock-free data structures and faster shared state than postMessage copying. Note: SharedArrayBuffer requires cross-origin isolation (COOP/COEP headers) in browsers for security (Spectre mitigation).",
+    "senior": "Architecturally, SharedArrayBuffer gives workers a shared, mutable byte region with a defined memory model. The Atomics methods compile to real hardware atomic instructions (LOCK-prefixed x86 ops / LDXR-STXR on ARM) and act as synchronization points that order memory operations. Atomics.wait on the main thread is forbidden (it would block the UI), but workers may wait. Atomics.notify wakes waiters. This enables building mutexes, semaphores, and lock-free queues in pure JS. The memory model borrows from the C++11 memory model: each atomic access has a seq_cst ordering by default, giving a total order on atomics across agents.",
+    "underTheHood": "SharedArrayBuffer maps to a shared OS memory region (the engine maps one physical page range into multiple agent address spaces). Typed-array views address it directly. Atomics.* are lowered by V8 to atomic machine instructions (e.g. lock xadd for Atomics.add, xchg for exchange) with full seq_cst semantics; Atomics.wait/notify are implemented with OS futex primitives (Linux futex, Windows WaitOnAddress) on a per-agent wait queue keyed by the memory address. The browser requires the cross-origin-isolated context so the shared memory cannot be used for side-channel timing attacks (Spectre) — that is why sab requires COOP/COEP. Unaligned atomics or out-of-range indexes throw RangeError/TypeError."
+  },
+  "rosettaStone": {
+    "react": "React Native and web worker offloading can use SharedArrayBuffer for image/frame buffers between threads.",
+    "angular": "Angular apps rarely use SAB directly; heavy computation can be offloaded to workers sharing typed arrays.",
+    "vue": "Vue's reactivity stays single-threaded; SAB is only relevant when delegating compute to workers in large data apps.",
+    "svelte": "SvelteKit has no special SAB integration — but a Svelte app can pair workers with SAB for data-heavy visualizations."
+  },
+  "codeComparison": {
+    "title": "Worker coordination: postMessage copying vs SharedArrayBuffer + Atomics",
+    "summary": "postMessage clones data per message (allocation + serialization); a SharedArrayBuffer shares the same bytes with atomic synchronization for zero-copy handoff.",
+    "legacyOrBad": {
+      "label": "postMessage with cloning",
+      "snippet": "worker.postMessage(bigData); // ❌ OLD: structured-clones the whole buffer per message",
+      "fullFile": {
+        "filename": "transfer-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: postMessage without transferables STRUCTURE-CLONES the data.\n// For a 100MB buffer that means a full copy (allocation + serialize +\n// deserialize) on every message — latency and memory spikes.\nconst worker = new Worker('worker.js');\nconst bigData = new Float32Array(25_000_000); // 100MB\n\n// ❌ OLD: each postMessage clones this entire array across threads\nworker.postMessage(bigData); // main → worker: full copy\nworker.onmessage = (e) => {\n  const result = e.data; // another full copy back\n  console.log(result);\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "SharedArrayBuffer + Atomics handoff",
+      "snippet": "const sab = new SharedArrayBuffer(100_000_000); // ✅ NEW: zero-copy shared region\nAtomics.store(view, i, value); Atomics.notify(view, 0);",
+      "fullFile": {
+        "filename": "transfer-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Share the buffer once, then coordinate with Atomics.\n// No per-message copies — both threads read/write the same bytes.\nconst worker = new Worker('worker.js');\nconst sab = new SharedArrayBuffer(100_000_000); // ✅ NEW: shared, no copy\nconst view = new Float32Array(sab);\n\nworker.postMessage(sab); // transfer the capability once\n\nview[0] = 1; // write before handoff\n// ✅ NEW: publish the value, then notify the worker to proceed\nAtomics.store(new Int32Array(sab, 0, 1), 0, 1);\nAtomics.notify(new Int32Array(sab, 0, 1), 0);\n\n// Worker computes into the same `view`; main reads results directly.\n// The only copies happen at the typed-array boundaries, not per message."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does using SharedArrayBuffer require cross-origin isolation, and what happens without it?",
+      "contextIntro": "This tests awareness of the security-driven deployment constraint, not just API knowledge — a real gotcha when shipping SAB-based apps.",
+      "detailedAnswer": "SharedArrayBuffer was disabled after the Spectre/Meltdown CPU vulnerabilities because shared memory plus high-resolution timers enable timing side channels. Browsers re-enabled it only inside a cross-origin-isolated context: the page must serve COOP: same-origin and COEP: require-corp (and the response must be valid for those headers), and self-isolated iframes. Without those headers, window.SharedArrayBuffer and window.Atomics are undefined or throw (in some engines they are disabled entirely). This affects deployment: CDNs, third-party scripts, and subresources must all satisfy the COEP requirement, or the feature is unavailable in production even though it works in localhost dev.",
+      "trapWarning": "The naive answer is 'SAB is just an ArrayBuffer you share, no setup needed'. In modern browsers the security headers are mandatory. Another trap: assuming the error is a feature-availability check you can polyfill — SAB cannot be polyfilled because it requires OS-level shared memory; you must restructure headers or fall back to postMessage cloning."
+    },
+    {
+      "question": "Why can't you call Atomics.wait on the main thread, and what is the underlying mechanism of Atomics.notify?",
+      "contextIntro": "This separates candidates who understand the event loop constraint from those who treat Atomics as a magic API — the futex mechanism is the real substance.",
+      "detailedAnswer": "Atomics.wait blocks the calling thread until the memory location changes or a timeout expires. On the main thread, blocking freezes the entire page — event loop, rendering, and input — so the spec forbids it (it throws a TypeError). On a worker it is fine because the thread is not the UI thread. Under the hood, Atomics.wait/notify are implemented with OS futex primitives: the engine parks the thread on a wait queue associated with the address, and Atomics.notify wakes up to N waiters on that address. The atomic store that precedes the notify must be visible to the waiter for correct ordering — which is why the memory model treats these as seq_cst operations.",
+      "trapWarning": "The naive answer is 'Atomics.wait is just a busy-wait loop you can use anywhere'. It is a real blocking primitive tied to OS futexes and cannot run on the main thread. Another trap: forgetting that the notified waiter may not immediately see the latest store without proper ordering — Atomics.load after waking can return a stale value if the writer did not use an atomic store/notify pair consistently. Candidates who connect wait/notify to the futex and the memory-model ordering demonstrate depth."
+    }
+  ]
+}

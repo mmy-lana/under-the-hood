@@ -1,0 +1,61 @@
+{
+  "id": "async-await-state-machine",
+  "title": "async/await: Generator De-Sugaring & Microtask Queue Steps",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2017+ (async/await, generators)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["async-await", "generators", "state-machine", "microtask", "promises", "control-flow"],
+  "prerequisites": [
+    "Promises and the microtask queue",
+    "Understanding of generator functions and yield"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Think of a chef following a very long recipe where some steps require waiting for the oven. Instead of standing frozen at the oven door, the chef writes a bookmark on the page: 'step 12, waiting for the cake to bake'. He does other kitchen work, and when the timer rings, he returns to step 12 exactly where he left off. The recipe with bookmarks is like the modern way of cooking with pauses: the cook pauses at a waiting line, notes the place, does other chores, and picks up exactly there when the waiting is over — the page and the bookmark keep track of where he was.",
+    "junior": "async functions always return a Promise. Inside, await pauses the function until the awaited promise settles, then resumes with the resolved value (or throws on rejection, caught by try/catch). async function getData() { const res = await fetch(url); return res.json(); } is the modern replacement for .then chains. Await works on any thenable and even non-promises (they are wrapped). Async functions are built on generators + promises under the hood; each await is a suspension point. Use await in loops and conditionals naturally — no more promise chains or nesting. Remember: an unhandled rejection inside an async function without try/catch rejects the returned promise.",
+    "senior": "Architecturally, async/await is a compiler transformation: the engine rewrites the function body into a state machine (or generator-based resumption) where each await is a state boundary. The function runs synchronously until the first await, then returns a pending promise to the caller. When the awaited value settles, a microtask resumes the state machine from the saved state. Because resumption is a microtask, every await boundary yields to the microtask queue — which is why await ordering interleaves predictably with other promise work but not with timers. Errors become rejections propagated down the promise chain; try/catch around await works because the rejection lands in the resumed frame.",
+    "underTheHood": "V8 lowers async functions into a compiled state machine with a saved context: local variables live in a heap-allocated context across awaits. The function body is split at each await into states; a suspend marker stores the current state and the awaited promise, and a resume path (a promise reaction) re-enters the state machine when the promise settles. Await also performs a 'throwaway promise' — it wraps the awaited value and arranges for the reaction to run as a microtask (via PerformPromiseThen). Generators use the same machinery (GeneratorObject + [[GeneratorState]]), and async/await historically desugared to generator-based resumption with a promise wrapper; modern engines fuse them into a single specialized machine for performance."
+  },
+  "rosettaStone": {
+    "react": "React data fetching with async/await inside effects; Suspense integrates with promise-based loading.",
+    "angular": "Angular services use async/await with HttpClient promises; RxJS toPromise bridges to await.",
+    "vue": "Vue composables expose async setup logic; await in setup() is supported in Composition API.",
+    "svelte": "SvelteKit load functions are async; the framework awaits them during SSR/hydration."
+  },
+  "codeComparison": {
+    "title": "Promise chain vs async/await for sequential async steps",
+    "summary": "async/await reads like synchronous code and shares the same microtask machinery, avoiding nested .then callbacks and manual error handling.",
+    "legacyOrBad": {
+      "label": "Nested promise chains",
+      "snippet": "fetch(url).then(r => r.json()).then(data => process(data)).catch(err => handle(err)); // ❌ OLD: linear but callback-heavy",
+      "fullFile": {
+        "filename": "chain-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: promise chains work but obscure control flow. Each .then is a\n// microtask, so this behaves exactly like awaits — the issue is\n// readability and error-handling structure, not semantics.\nfunction loadAndProcess(url) {\n  return fetch(url)\n    .then((r) => {\n      if (!r.ok) throw new Error('bad status');\n      return r.json();\n    })\n    .then((data) => process(data))\n    .catch((err) => {\n      console.error(err);\n      return fallback();\n    });\n}\n\nfunction process(d) {\n  return d;\n}\nfunction fallback() {\n  return {};\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "async/await",
+      "snippet": "async function load(url) {\n  const r = await fetch(url); // ✅ NEW: suspension point, reads like sync\n  return process(await r.json());\n}",
+      "fullFile": {
+        "filename": "async-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: async/await — each await is a state-machine boundary; the\n// function yields to the microtask queue and resumes at the saved state.\nasync function loadAndProcess(url) {\n  try {\n    const r = await fetch(url); // ✅ NEW: resume here when the promise settles\n    if (!r.ok) throw new Error('bad status');\n    const data = await r.json(); // ✅ NEW: second suspension point\n    return process(data);\n  } catch (err) {\n    console.error(err);\n    return fallback();\n  }\n}\n\n// The async function always returns a promise; errors flow to its\n// rejection, and try/catch works because rejection resumes the frame.\n\nfunction process(d) {\n  return d;\n}\nfunction fallback() {\n  return {};\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the event loop actually resume an async function after await, and why is it a microtask and not a macrotask?",
+      "contextIntro": "Interviewers want the scheduling mechanics — that await resumption is a promise reaction enqueued as a microtask — which determines observable ordering in real apps.",
+      "detailedAnswer": "An async function runs synchronously until its first await. The awaited promise is then processed via PerformPromiseThen, which registers a reaction (resume function). When the awaited promise settles, that reaction is enqueued on the microtask queue, not the macrotask queue. The event loop drains the microtask queue at checkpoints (after the current task and script), so resumption happens as soon as the current task completes — before any timers or I/O macrotasks. Because each await boundary enqueues a fresh microtask, an async function with multiple awaits interleaves with other promise-based work but never 'jumps the queue' ahead of timers. This is why awaiting in a loop yields control between iterations.",
+      "trapWarning": "The naive answer is 'await returns control to the event loop as a new task'. Await resumes in the microtask queue, which has higher priority than tasks. Another trap: assuming await polls or blocks — it suspends the state machine and releases the thread; blocking happens only with Atomics.wait or synchronous busy loops. Candidates who name the promise reaction + microtask enqueue show they understand the mechanism."
+    },
+    {
+      "question": "What happens to the local variables of an async function while it is suspended at an await, and where do they live?",
+      "contextIntro": "This probes the state-machine/context mechanics of async functions — that suspended state is heap-allocated, not on the stack.",
+      "detailedAnswer": "When an async function suspends at an await, its execution context is saved so it can resume later. In V8, the compiler allocates the function's local variables in a heap-allocated context (or a dedicated suspended-frame object) rather than plain stack slots, because the stack frame is popped when the function yields to the caller. The saved state includes the current state index (which await we're at) and the live locals. On resumption, the state machine restores that context and continues from the saved state. This is why closures and async functions both rely on heap-allocated environments, and why capturing large objects in long-lived async closures can retain memory.",
+      "trapWarning": "The naive answer is 'locals stay in the stack frame until the promise resolves'. The stack frame is gone the moment the function yields; locals survive in the heap context. Another trap: assuming each await creates a new function call on the stack — it is a state-machine resume, not a recursive call, so deep await chains do not grow the call stack. Candidates who mention the saved context and state index demonstrate real understanding."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "intl-and-temporal-api",
+  "title": "Modern Temporal API: Immutable Calendar Math vs Mutable Date",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "Temporal proposal (Stage 3, ECMA-262)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["temporal", "date", "intl", "timezone", "calendar", "immutable"],
+  "prerequisites": [
+    "JavaScript Date basics",
+    "Understanding of timezones and UTC"
+  ],
+  "progressiveExplaining": {
+    "eli5": "The old wall clock (Date) is a single dial that changes in place — if you want to know tomorrow's time, you must twiddle the dial and hope you remember the original. The new system (Temporal) is like a book of printed tickets: each ticket shows a moment, and computing next week simply means picking a new ticket — the old one never changes, so you can always go back and check what you started with. Because the tickets never get scribbled over, calculations are easy to trust and re-check.",
+    "junior": "Temporal provides new date/time types: Temporal.Instant (a precise UTC moment), Temporal.PlainDate, PlainTime, PlainDateTime (wall-clock values without timezone), Temporal.ZonedDateTime (moment + timezone), and Temporal.Duration. They are immutable: every operation returns a NEW instance — d.add({ days: 1 }) returns a new date, leaving d unchanged (unlike Date.setDate which mutates). Temporal.Now.zonedDateTimeISO() gets the current moment. Math like .add, .subtract, .until, .since works with calendar-aware durations. Dates compare with plain <, >, and .equals. This replaces the error-prone mutable Date API for real applications.",
+    "senior": "Architecturally, Temporal separates three distinct concepts that Date conflates: an absolute instant (Instant), a wall-clock reading in a calendar (PlainDate/PlainDateTime), and a zone-aware civil time (ZonedDateTime). Durations are calendar- and clock-aware (a month is not a fixed number of milliseconds), so arithmetic like adding '1 month' to January 31 resolves to Feb 28/29 via the calendar's overflow rules. Timezone/DST transitions are handled by the timezone database; ZonedDateTime arithmetic can skip or repeat wall-clock hours and Temporal resolves those deterministically. This design eliminates the DST bugs and epoch ambiguity that plague Date-based code.",
+    "underTheHood": "Temporal.Instant stores an exact BigInt epoch-nanosecond count, giving nanosecond precision (Date only has milliseconds). PlainDate stores year/month/day in the ISO calendar; ZonedDateTime combines an instant with an IANA timezone and computes offsets by consulting the embedded tzdata. Arithmetic runs through the calendar's date-add algorithms and the timezone's offset transitions; results are new records, so the engine can represent them as fixed internal slots with no mutable state. Comparison is defined on the underlying instant. The API is exposed as standard library classes (polyfillable today, native in engines as the proposal advances) — the era of parsing '2026-03-08T02:30:00' into ambiguous Date semantics is over."
+  },
+  "rosettaStone": {
+    "react": "React apps still use Date + libraries like date-fns; Temporal offers a future native alternative for scheduling UIs.",
+    "angular": "Angular pipes and forms use Date; Temporal types need adapters but provide safe calendar math for booking/calendar features.",
+    "vue": "Vue date pickers can consume Temporal values directly via its ISO string methods.",
+    "svelte": "SvelteKit load functions can return Temporal strings; client components parse with Temporal for safe math."
+  },
+  "codeComparison": {
+    "title": "Adding a day: mutable Date.setDate vs immutable Temporal",
+    "summary": "Date mutates in place and is easy to corrupt with DST/overflow; Temporal returns a new immutable value with calendar-safe arithmetic.",
+    "legacyOrBad": {
+      "label": "Mutable Date arithmetic",
+      "snippet": "const d = new Date(); // ❌ OLD: mutable\nconst t = d.setDate(d.getDate() + 1); // mutates d in place — original lost",
+      "fullFile": {
+        "filename": "date-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Date methods MUTATE the instance. To keep the original you\n// must remember to copy first; DST and month boundaries are easy to\n// get wrong (setDate+1 in DST-spring can land on the wrong hour).\nconst d = new Date('2026-03-07T12:00:00Z');\nconst start = d; // ❌ OLD: this is the SAME object\n\nd.setDate(d.getDate() + 1); // ❌ OLD: mutates `d` AND `start` in place\n\n// `start` now points to the mutated date — the original is gone.\nconsole.log(d.toISOString());\nconsole.log(start === d); // true — both are the mutated instance\n\n// Timezone math (adding 24h across a DST shift) also changes the wall\n// clock unexpectedly because setDate works on the local civil date."
+      }
+    },
+    "modernOrGood": {
+      "label": "Immutable Temporal arithmetic",
+      "snippet": "const t = Temporal.Now.zonedDateTimeISO(); // ✅ NEW: immutable\nconst next = t.add({ days: 1 }); // returns a NEW value; t unchanged",
+      "fullFile": {
+        "filename": "temporal-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Temporal values are immutable — every operation returns a new\n// instance, so the original is always preserved. Calendar arithmetic is\n// timezone- and calendar-aware by default.\nconst t = Temporal.Now.zonedDateTimeISO(); // ✅ NEW: immutable snapshot\nconst tomorrow = t.add({ days: 1 }); // ✅ NEW: new ZonedDateTime, t untouched\n\nconsole.log(t.toString()); // original unchanged\nconsole.log(tomorrow.toString()); // exactly one civil day later\n\n// DST-safe: adding { days: 1 } preserves the wall-clock time across a\n// spring-forward/fall-back transition, unlike setDate + 24h.\n// Durations compare with .until/.since, no epoch-ms guessing."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Date considered a poor API for calendar math, and what does Temporal fix structurally?",
+      "contextIntro": "Interviewers use this to test whether you understand the conceptual conflation in Date (instant vs wall-clock vs timezone) that causes real production bugs.",
+      "detailedAnswer": "Date conflates three distinct concepts: an absolute instant, a local wall-clock reading, and a timezone interpretation. Its methods mutate in place, work in milliseconds (losing sub-ms precision), and arithmetic like setDate is calendar- and DST-unaware — adding 24h across a DST transition changes the wall clock unexpectedly, and adding '1 month' is undefined. Temporal splits these into Instant, PlainDate/PlainTime/PlainDateTime, and ZonedDateTime, all immutable with nanosecond precision. Arithmetic is done through calendar and timezone algorithms (with explicit overflow rules for month-ends and DST gaps), so the results are deterministic and reproducible.",
+      "trapWarning": "The naive answer is 'Date is fine if you just use UTC everywhere'. UTC-only breaks local calendar features and still leaves you with mutable in-place mutation bugs. Another trap: assuming Temporal is just 'Date with better method names' — it is a different type system (separate types for instants vs wall clocks), so adopting it means restructuring how you model time, not swapping one call for another."
+    },
+    {
+      "question": "How does Temporal handle adding a month to January 31, and what are the overflow options?",
+      "contextIntro": "This tests whether you understand calendar-aware duration semantics — a subtle area where naive epoch-millisecond math fails silently.",
+      "detailedAnswer": "A calendar month is not a fixed number of milliseconds, so Temporal computes month arithmetic through the calendar's date-add algorithm. Adding { months: 1 } to 2026-01-31 constrains the day to the last valid day of February: the default 'constrain' overflow produces 2026-02-28 (or 2026-02-29 in a leap year). The 'reject' option throws instead of clamping, and 'balance' lets out-of-range components roll over. The same machinery handles DST gaps and ambiguous wall-clock times in ZonedDateTime. This is the correct behavior for real business logic (subscriptions, billing, schedules) that epoch-ms math silently gets wrong.",
+      "trapWarning": "The naive answer is 'just add 30 days or 2629746000 ms'. That drifts from calendar months and breaks date-of-month invariants. Another trap: assuming Temporal.Duration { months: 1 } is a fixed quantity — it is relative to the starting point's calendar, which is exactly the property that makes it correct. Candidates who name the constrain/reject/balance overflow options demonstrate real depth."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "prototypal-inheritance-prototype-chain",
+  "title": "Prototype Chain: [[Prototype]], __proto__, and Object.create(null)",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2015+ (modern prototype semantics)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["prototype", "inheritance", "prototype-chain", "object-create", "proto"],
+  "prerequisites": [
+    "JavaScript objects and property lookup",
+    "Basics of functions and constructors"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a help desk where every employee, when asked a question they cannot answer, points to a more senior colleague behind them. If the junior cannot help, they point to the senior; if the senior cannot help, they point to the manager, and so on until someone answers or nobody can. In JavaScript, every item has a hidden 'senior colleague' pointer called its prototype. When you ask an item for a property it doesn't have, it passes the question to its prototype, then that one's prototype, all the way up the chain — this is how items share behavior without each one owning every method.",
+    "junior": "Every object has an internal [[Prototype]] (the object it inherits from). Property lookup walks up this chain: obj.method looks on obj, then obj's prototype, then that one's, until found or reaching null. You read/set it with Object.getPrototypeOf / Object.setPrototypeOf, or the modern-ish __proto__ accessor. Object.create(proto) creates a fresh object with a chosen prototype, and Object.create(null) creates an object with NO prototype at all (no toString, no hasOwnProperty). Class syntax is sugar over this: class Dog extends Animal sets Dog.prototype's prototype to Animal.prototype. Property shadowing: defining a same-named property on the object stops the walk (the own property wins).",
+    "senior": "At the architecture level, inheritance is delegation through a linked prototype chain rather than copying. A failed lookup on an object walks [[Get]] up the chain until null; whether a property is 'own' matters because own properties shadow inherited ones regardless of writability. The chain terminates in Object.prototype, whose own prototype is null. Object.create(null) objects break the chain entirely — useful for maps/dictionaries where inherited keys (constructor, hasOwnProperty) would collide. Because the chain is resolved at access time, mutating a shared prototype affects all objects delegating to it. This dynamic linking is why prototype pollution (injecting properties into a shared prototype) is a serious security concern.",
+    "underTheHood": "The engine stores the prototype as an internal slot [[Prototype]]; V8 keeps a Map transition to the proto and an out-of-line backing store when shape changes. The OrdinaryGetOwnProperty / OrdinaryGet internal operations implement the walk: [[Get]] checks own properties, then recurses into the prototype via the [[GetPrototypeOf]] internal method. For objects sharing the same hidden class, the prototype pointer is fixed in the Map, so the walk to the prototype is a single pointer dereference. class extends sets the derived constructor's prototype property to a new object whose [[Prototype]] is the base constructor's prototype, and wires the constructors' [[Prototype]] so static inheritance works. Object.create(null) creates an object whose Map has a null prototype — [[GetPrototypeOf]] returns null and the walk stops immediately."
+  },
+  "rosettaStone": {
+    "react": "React components use prototype delegation for class components (extends Component), while function components avoid the chain.",
+    "angular": "Angular decorators and DI metadata leverage prototype-based inheritance on class hierarchies.",
+    "vue": "Vue 3 dropped Vue 2's prototype-mutation reactivity; component options inheritance still uses class/object delegation.",
+    "svelte": "Svelte compiles components to plain JS objects and functions, rarely relying on user-facing prototype chains."
+  },
+  "codeComparison": {
+    "title": "Object.create(null) vs a plain object literal for a dictionary",
+    "summary": "A null-prototype object avoids inherited Object.prototype keys that could collide with or hijack dictionary lookups.",
+    "legacyOrBad": {
+      "label": "Plain object literal as a map",
+      "snippet": "const map = {}; // ❌ OLD: inherits from Object.prototype\nmap['hasOwnProperty'] = 'x'; // shadows an inherited method; lookups can collide",
+      "fullFile": {
+        "filename": "map-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A plain {} inherits from Object.prototype, so its prototype\n// chain includes keys like 'constructor', 'hasOwnProperty', '__proto__'.\n// If untrusted input names collide, lookups/iterations can misbehave.\nconst map = {}; // ❌ OLD: prototype chain → Object.prototype → null\nmap['toString'] = 'injected'; // shadows the inherited toString\n\nconsole.log(Object.keys(map)); // ['toString']\n// Reading map.someMissingKey walks the chain up to Object.prototype.\n// This is why using {} for a dictionary is fragile for arbitrary keys."
+      }
+    },
+    "modernOrGood": {
+      "label": "Null-prototype dictionary",
+      "snippet": "const map = Object.create(null); // ✅ NEW: no prototype chain at all\nmap['hasOwnProperty'] = 'x'; // safe: nothing inherited to collide with",
+      "fullFile": {
+        "filename": "map-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Object.create(null) creates an object whose [[Prototype]] is\n// null — no inherited Object.prototype keys. Ideal for dictionaries keyed\n// by arbitrary (possibly untrusted) strings.\nconst map = Object.create(null); // ✅ NEW: [[Prototype]] = null, chain ends here\nmap['toString'] = 'injected'; // now a plain own property, nothing to collide\nmap['__proto__'] = 'safe'; // not interpreted as a setter — it's just a key\n\nconsole.log(Object.keys(map)); // ['toString', '__proto__']\n// Property lookups stop at the object itself; no prototype walk occurs."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between __proto__ and prototype, and what does Object.create(null) actually change?",
+      "contextIntro": "Interviewers use this to distinguish developers who truly understand the prototype model from those who only remember syntax — the trio of __proto__, .prototype, and Object.create(null) is a reliable probe.",
+      "detailedAnswer": "__proto__ is a legacy accessor on Object.prototype that reads/writes the [[Prototype]] of the object it is called on (settable via a setter). .prototype is a plain property that exists only on constructor functions (and classes) — it is the object that becomes the [[Prototype]] of instances created via new. Object.create(null) creates an object whose own [[Prototype]] is literally null, so its chain terminates immediately and it inherits no Object.prototype members. Mutating __proto__ on a normal object changes the live prototype used by the chain, which is why the prototype accessor is discouraged in favor of Object.setPrototypeOf or Object.create.",
+      "trapWarning": "The classic trap is conflating __proto__ (on the instance, its prototype) with .prototype (on the constructor, used to build instances) — they point to related but different objects. Another trap: assuming Object.create(null) objects still have toString — they do not, because the chain is empty, so calling map.toString() throws unless you define it yourself."
+    },
+    {
+      "question": "How can prototype pollution happen, and why is the chain relevant to security?",
+      "contextIntro": "This connects the prototype model to a real vulnerability class — interviewers want you to show that the chain is live, shared, and mutable at runtime.",
+      "detailedAnswer": "Property lookup walks the live prototype chain. If code merges untrusted JSON into an object using a naive deep merge that assigns __proto__, constructor.prototype, or prototype keys, it can inject properties onto a shared prototype (e.g. Object.prototype). Once a property like isAdmin is added to a shared prototype, every object that delegates to it reports that property as 'present' during lookup, even though no own property exists — enabling privilege escalation. Object.create(null) dictionaries are immune because they have no chain to pollute. Mitigations include never deep-merging untrusted keys, freezing prototypes, and using null-prototype maps for attacker-controlled keys.",
+      "trapWarning": "The naive answer is 'pollution only affects the object being written'. Because the prototype is shared and lookup is dynamic, writing to a shared prototype affects every delegating object. Another trap: thinking JSON.parse output is safe — JSON.parse won't create setters, but a vulnerable merge that assigns __proto__ afterwards can still write the prototype slot on the target. Candidates who explain the live shared chain and the null-prototype fix demonstrate real security awareness."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "proxy-reflect-internal-methods",
+  "title": "Proxy & Reflect: Trapping [[Get]], [[Set]], and Engine Invariants",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ES2015+ (Proxy/Reflect)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["proxy", "reflect", "meta-programming", "internal-methods", "traps", "invariants"],
+  "prerequisites": [
+    "JavaScript object property semantics",
+    "Understanding of getters/setters and descriptors"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a security guard at a building's front desk. Everyone who wants to visit the building must check in with the guard first — the guard decides whether to allow the visit, change the visitor's destination, or silently keep a record. But the guard must follow strict rules: he can never claim a room is empty if the real building says someone lives there, and he can never pretend a locked door is open. In JavaScript, a Proxy is that guard around a thing: every request to read or change a property passes through the guard's rules, but the guard must always tell the truth about the fixed properties of the real thing.",
+    "junior": "A Proxy wraps an object (the target) and lets you intercept operations via traps: get, set, has, deleteProperty, ownKeys, apply, construct, and more. const p = new Proxy(target, { get(obj, key) { return key in obj ? obj[key] : 'missing'; } });. Reflect provides the default behavior as plain functions: Reflect.get(target, key) does the standard lookup, and calling it inside a trap avoids infinite recursion. Use Proxies for validation, logging, observability (like Vue's reactivity), memoization, and mocking. Note: a proxy does NOT change the target — traps are added behavior around it. Proxies are slower than plain objects, so use them where interception is the feature, not on every hot path.",
+    "senior": "Architecturally, Proxies intercept the internal methods of the object model — [[Get]], [[Set]], [[HasProperty]], [[OwnPropertyKeys]], [[GetPrototypeOf]], [[DefineOwnProperty]], etc. Reflect mirrors these exact operations as callable functions, so forwarding all traps through Reflect preserves default semantics, including receiver binding for getters and strict-mode behavior. The crucial design property is the invariant system: a trap result that violates an object's fixed attributes (e.g. reporting a non-configurable, non-writable property as absent) throws a TypeError. This is why Proxies cannot fully lie about invariants, making them safe for engine optimizations (though they do force deoptimization to the slow path).",
+    "underTheHood": "When V8 sees a proxy as the receiver of an operation, it dispatches to a runtime/slow path that calls the matching trap instead of the fast Map-based property path. get traps must call [[Get]] on the target to verify invariants: for a non-configurable, non-writable data property, the trap must return the exact same value; for a non-configurable accessor without a setter, the trap must return undefined. The ownKeys trap must include all non-configurable own keys and must not include keys the target does not have (unless the target has no non-configurable keys). Reflect.* functions are specified to invoke the same internal methods, so Reflect.get(target, key, receiver) forwards receiver — critical for getters whose this should be the proxy, not the target."
+  },
+  "rosettaStone": {
+    "react": "React dev tools and state libs use proxies to instrument component state; production hot paths avoid proxies for speed.",
+    "angular": "Zone.js patches rather than proxies most internals, but Angular's zoneless experiments use signal-based (non-proxy) reactivity.",
+    "vue": "Vue 3 reactivity IS proxy-based: reactive() wraps objects and intercepts get/set/has/ownKeys to track and trigger effects.",
+    "svelte": "Svelte 5 runes use compiler-driven signals rather than proxies — compiled access, not runtime interception."
+  },
+  "codeComparison": {
+    "title": "Naive forwarding trap vs correct Reflect-forwarding trap with receiver",
+    "summary": "Hand-rolling get traps with target[key] breaks getter receiver binding; forwarding through Reflect preserves correct this semantics.",
+    "legacyOrBad": {
+      "label": "Manual forwarding without receiver",
+      "snippet": "get(target, key) { return target[key]; } // ❌ OLD: breaks getter `this` — getters see target, not proxy",
+      "fullFile": {
+        "filename": "proxy-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Returning target[key] bypasses the receiver argument. When the\n// target has a getter, that getter runs with `this === target`, NOT the\n// proxy — so the getter cannot observe proxy-internal state and other\n// traps are skipped for the property access chain.\nconst target = {\n  _count: 0,\n  get count() {\n    // `this` here should be the proxy in correct code, but with the\n    // bad trap below it is the raw target.\n    return this._count;\n  }\n};\n\nconst proxy = new Proxy(target, {\n  get(obj, key) {\n    // ❌ OLD: no receiver passed — getter `this` becomes `target`\n    return obj[key];\n  }\n});\n\nconsole.log(proxy.count); // 0, but `this` inside the getter was `target`"
+      }
+    },
+    "modernOrGood": {
+      "label": "Reflect.get with receiver forwarding",
+      "snippet": "get(target, key, receiver) { return Reflect.get(target, key, receiver); } // ✅ NEW: getters see the proxy",
+      "fullFile": {
+        "filename": "proxy-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Reflect.get(target, key, receiver) performs the standard\n// [[Get]] and forwards `receiver` as the getter's `this`. Getters now\n// observe the proxy, so proxy-level state and later traps compose\n// correctly.\nconst target = {\n  _count: 0,\n  get count() {\n    // `this` is the proxy, so a get trap on `_count` will fire.\n    return this._count;\n  }\n};\n\nconst proxy = new Proxy(target, {\n  get(obj, key, receiver) {\n    // ✅ NEW: forward receiver — getter `this` === proxy\n    return Reflect.get(obj, key, receiver);\n  }\n});\n\nconsole.log(proxy.count); // 0, and `this._count` hit the proxy get trap"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why must a get trap return the exact same value for a non-configurable, non-writable property, and what happens if it doesn't?",
+      "contextIntro": "This probes your understanding of proxy invariants — the hard contract that keeps proxies from corrupting the object model and lets engines trust object metadata.",
+      "detailedAnswer": "A non-configurable, non-writable own data property on the target is fixed: no operation may change or conceal its value without violating the object's invariant. The get trap's result is checked against the target: the engine calls [[Get]] on the target, and if the property is a non-configurable, non-writable data property, the trap must return exactly that value. Violating this throws a TypeError. This invariant protects engine invariants (e.g. shape/Map assumptions) and guarantees that a proxy cannot masquerade as having a different value for a permanently fixed property, which would otherwise break spec-guaranteed behaviors like constant folding.",
+      "trapWarning": "The naive answer is 'the proxy can return anything it wants because it is a proxy'. Invariants forbid lying about non-configurable properties, including non-configurable accessors (get must be undefined if no setter), ownKeys must include non-configurable keys, and getPrototypeOf must return the target's actual non-extensible prototype. Another trap: assuming the invariant check is optional — engines enforce it with a TypeError, so violating it is a hard crash, not a silent fallback."
+    },
+    {
+      "question": "What is the difference between proxy.get(target, key) and Reflect.get(target, key, receiver)?",
+      "contextIntro": "Interviewers ask this to see whether you understand receiver semantics and why naive trap forwarding is subtly broken for accessors.",
+      "detailedAnswer": "Reflect.get(target, key, receiver) executes the exact [[Get]] internal method with an explicit receiver — the `this` used when evaluating an accessor (getter) found during the lookup. A bare target[key] inside a get trap performs a plain property access with this bound to target, so getters run against the raw target instead of the proxy: proxy-internal state is invisible to them, and any chained property reads bypass your traps. Forwarding receiver is essential for correct proxy composition — Vue's reactive, for example, forwards receiver so nested getters observe the reactive wrapper. For data properties there is no difference; the difference only manifests with accessors and inherited getters.",
+      "trapWarning": "The naive answer is 'they are identical for property reads'. They diverge precisely when an accessor is encountered on the prototype or target. Another trap: forgetting that Reflect functions exist for every trap and are the canonical forwarder — hand-rolling forwarding with target[key] or target[key] = v subtly breaks receiver/this, strict mode, and invariant checks. Candidates who reach for Reflect.* by default show they know the contract."
+    }
+  ]
+}

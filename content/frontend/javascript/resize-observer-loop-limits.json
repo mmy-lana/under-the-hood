@@ -1,0 +1,61 @@
+{
+  "id": "resize-observer-loop-limits",
+  "title": "ResizeObserver: Depth-Order Measurement and Loop Limit Guard",
+  "category": "frontend",
+  "subcategory": "javascript",
+  "versionContext": "ResizeObserver API (Level 1)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["resize-observer", "layout", "responsive", "observers", "loop-limit", "measurement"],
+  "prerequisites": [
+    "DOM layout and CSS box model",
+    "Understanding of the event loop and microtasks"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a tailor who measures every customer's suit and adjusts it to fit. If the tailor's tape measure were to change size whenever he measured someone, he would never finish — every measurement would make the next one different. So the shop has a strict rule: measure everyone in a set order, and if a measurement changes someone's size again, you may only do a couple of fix-up rounds before you stop and say 'that's as good as it gets'. ResizeObserver is that tailor with the same rule: it measures elements, applies sizes, and if the sizes keep changing, it stops after a few rounds to avoid an endless loop.",
+    "junior": "ResizeObserver reports when an element's content-box or border-box size changes. const ro = new ResizeObserver((entries) => { for (const e of entries) { console.log(e.contentRect.width); } }); ro.observe(el);. Unlike window resize events, it observes individual elements and fires after layout settles, with an array of ResizeObserverEntry (target + contentRect + borderBoxSize/contentBoxSize). Useful for responsive components, canvas sizing, and text-overflow clamping. Call ro.disconnect() when done. Entries are delivered once per layout pass, batched; the API is built to avoid infinite feedback when you resize elements inside the callback.",
+    "senior": "Architecturally, ResizeObserver delivers notifications after layout, once per frame, batched per observed element. If a callback resizes an element, that triggers another layout pass and a re-delivery; the spec guards against infinite loops by allowing only a bounded number of resize processing passes per frame (the 'loop limit'). Elements are processed in depth order (tree order) so a parent's resize is delivered before its children. contentRect gives content-box geometry; contentBoxSize/borderBoxSize give per-axis boxes with device-pixel precision. This makes it the reliable primitive for element-level responsive behavior, unlike window resize + manual measurement.",
+    "underTheHood": "The engine keeps a set of observed targets with their last-known sizes. After layout, it computes the new sizes; any change marks the entry for delivery. Delivery happens in the rendering steps ('broadcast active resize observations'): entries are grouped by depth order and passed to the callback synchronously within that step. If the callback mutates sizes, the engine re-runs layout and repeats; the loop limit (spec: 2 processing rounds per update) forces an 'error' event on the ResizeObserver (delivered as a task) when repeated resizing prevents convergence, so the page does not hang. This is why infinite loops are prevented deterministically rather than by heuristics."
+  },
+  "rosettaStone": {
+    "react": "ResizeObserver is the modern replacement for window-resize-driven layout in React components (resize-detector, react-resize-observer).",
+    "angular": "Angular apps can wrap ResizeObserver in directives; @angular/cdk's Layout module historically used window resize, moving to IO/RO where possible.",
+    "vue": "vueuse's useResizeObserver exposes it as a composable; element-level responsive logic fits Composition API nicely.",
+    "svelte": "Svelte actions make ResizeObserver attachment declarative: use:resize creates the observer on mount and cleans up on unmount."
+  },
+  "codeComparison": {
+    "title": "window.resize + manual measurement vs ResizeObserver",
+    "summary": "Window resize events miss element-level changes and need manual measurement; ResizeObserver observes the element itself with batched delivery after layout.",
+    "legacyOrBad": {
+      "label": "window.resize listener + manual measure",
+      "snippet": "window.addEventListener('resize', () => { const w = el.offsetWidth; render(w); }); // ❌ OLD: only fires on window resize, forces layout read",
+      "fullFile": {
+        "filename": "resize-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: window.resize only fires when the VIEWPORT changes — it\n// misses element-level size changes (flex/grid layout shifts, content\n// growth, container queries without CQ) and reads offsetWidth, which\n// forces a synchronous layout.\nwindow.addEventListener('resize', () => {\n  // ❌ OLD: manual measurement on every window resize\n  const w = el.offsetWidth; // forces layout read\n  render(w);\n});\n\n// If the element resizes because its content or CSS changes but the\n// window doesn't move, this handler never fires — layout stays stale.\n// Also requires manual cleanup and re-measure on font-load/DOM change."
+      }
+    },
+    "modernOrGood": {
+      "label": "ResizeObserver on the element",
+      "snippet": "const ro = new ResizeObserver(entries => { render(entries[0].contentRect.width); });\nro.observe(el); // ✅ NEW: observes the element, batched, after layout",
+      "fullFile": {
+        "filename": "resize-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: ResizeObserver watches the element itself, delivers entries\n// after layout settles, and batches multiple changes into one callback.\nconst ro = new ResizeObserver((entries) => {\n  for (const entry of entries) {\n    const w = entry.contentRect.width; // ✅ NEW: content-box geometry\n    render(w);\n  }\n});\n\nro.observe(el); // ✅ NEW: fires for ANY size change of el, not just window\n\n// Catches flex/grid-driven resizes, container changes, and content\n// growth. Call ro.disconnect() in cleanup to stop observing."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if you resize an element inside a ResizeObserver callback — how does the browser avoid an infinite loop?",
+      "contextIntro": "This is the defining design question of ResizeObserver — interviewers want the loop-limit mechanism and the depth-order processing rule, not just 'don't resize in the callback'.",
+      "detailedAnswer": "Resizing an element inside the callback triggers another layout pass and another delivery. To prevent infinite feedback, the spec defines a bounded resize processing loop: per rendering update, the engine runs at most two processing passes. If after the limit an observation still reports a size change, the engine does not keep looping; it queues an error event (a 'ResizeObserver loop limit exceeded' error delivered as a task) and stops further resizing for that cycle. Elements are processed in depth order (parents before children), so a parent resize that changes child sizes is delivered coherently. This deterministic guard is why the API is safe to use for self-resizing components (e.g. canvas fit-to-container).",
+      "trapWarning": "The naive answer is 'just don't resize inside the callback'. Self-resizing is a legitimate pattern; the loop limit makes it bounded rather than infinite. Another trap: assuming the error is thrown synchronously — it is reported asynchronously as an error event, so it can be missed in tests. Candidates who explain the two-pass limit and the error event demonstrate understanding of the API's core contract."
+    },
+    {
+      "question": "What is the difference between contentRect and contentBoxSize/borderBoxSize, and why does depth-order processing matter?",
+      "contextIntro": "This tests precise knowledge of the entry structure and the ordering semantics that prevent cascading measurement bugs in real layouts.",
+      "detailedAnswer": "contentRect is the content-box rectangle (x, y, width, height) in CSS pixels, but it is computed relative to the element's padding box origin and can be lossy for subpixel or non-rectangular layouts. contentBoxSize and borderBoxSize are arrays of ResizeObserverSize objects ({ inlineSize, blockSize }) that preserve device-pixel precision and respect writing modes. Depth-order processing means the engine broadcasts entries parents-first: a parent's size change is delivered before its children, so child observations already reflect the parent's updated size — preventing the classic 'child measured before parent resized' bug. Using borderBoxSize when you care about the full box (borders included) is the recommended precise read.",
+      "trapWarning": "The naive answer is 'contentRect is always the right measurement'. It is deprecated-by-preference in the spec for subpixel precision and has confusing x/y origin semantics. Another trap: assuming entries arrive in observation order — they arrive in depth order per the spec, so relying on insertion order for layout logic breaks. Candidates who cite contentBoxSize/borderBoxSize and depth-order broadcasting show real mastery."
+    }
+  ]
+}
