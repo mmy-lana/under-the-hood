@@ -1,0 +1,69 @@
+{
+  "id": "synchronized-vs-reentrantlock-aqa",
+  "title": "synchronized Monitor Inflations vs ReentrantLock (AQS)",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (biased locking removed in 15, synchronized + AQS)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "synchronized",
+    "reentrantlock",
+    "aqs",
+    "monitor",
+    "locking",
+    "concurrency"
+  ],
+  "prerequisites": [
+    "Java threads and synchronization basics",
+    "Understanding of locks and condition variables"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A library has one reading room with a key. The first way to use it: a visitor takes the key, locks the door, reads, and returns the key — if someone else wants in, they wait outside politely (synchronized). The second way: a front desk manages a list; visitors can ask for the key with a timer, interrupt the wait, or reserve several copies, and the desk can wake just one waiter or all of them (ReentrantLock). The front desk is more flexible but has more moving parts.",
+    "junior": "synchronized blocks/methods use intrinsic monitors: automatic, concise, and reentrant (the same thread can re-acquire). ReentrantLock offers more: tryLock(timeout), lockInterruptibly(), fair locking, and Condition objects (await/signal instead of wait/notify). Both are reentrant. Performance is similar in modern JVMs; choose synchronized for simplicity and ReentrantLock when you need timeout/try-lock/interruptibility/fairness/multiple conditions. Always release ReentrantLock in finally (unlock), whereas synchronized releases automatically.",
+    "senior": "Architecturally, synchronized uses the object header's mark word: an uncontended lock is a thin lock (CAS on the mark word), which inflates to a heavyweight monitor (ObjectMonitor) under contention. Since JDK 15, biased locking is disabled by default and removed (JDK 15+), so the fast path is thin-lock CAS. ReentrantLock is built on AbstractQueuedSynchronizer (AQS): a volatile state (0 = unlocked, 1+ = held count), a CLH-style FIFO wait queue of nodes, and park/unpark via LockSupport. AQS supports exclusive (lock) and shared (semaphore/read lock) modes. Conditions are additional queues with signal semantics.",
+    "underTheHood": "synchronized: the JIT emits monitorenter/monitorexit (or optimized fast-path CAS via the interpreter/JIT 'thin lock'); ObjectMonitor has an owner, a contention count, a wait set, and a cxq/EntryList for blocked threads. Inflation is on-demand. ReentrantLock: AQS uses a head/tail volatile Node queue; acquire loops CAS the tail, then parks with LockSupport.park (which uses the platform's futex/park mechanism). unlock sets state and unparks the successor. Fair locks check if the queue is empty before acquiring (to honor FIFO); non-fair locks barge. tryLock uses a single CAS without queueing. Conditions: each ConditionObject has its own queue; await() releases the lock and parks, signal() transfers one node to the sync queue."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM concurrency concern.",
+    "angular": "N/A — JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "synchronized timeout problem vs ReentrantLock tryLock",
+    "summary": "synchronized cannot time out or be interrupted while waiting; ReentrantLock.tryLock(timeout) gives bounded waits, but requires manual unlock.",
+    "legacyOrBad": {
+      "label": "synchronized — no timeout, no interrupt",
+      "snippet": "synchronized (lock) {\n  // ❌ OLD: if another thread holds the lock forever, this blocks forever\n}",
+      "fullFile": {
+        "filename": "LockingBad.java",
+        "language": "java",
+        "code": "// ❌ OLD: synchronized has no timeout or interruptible wait. If the\n// lock holder hangs, every waiter blocks indefinitely — a classic\n// production incident (threads pile up, thread pool exhausts).\npublic class LockingBad {\n  private final Object lock = new Object();\n\n  public void doWork() {\n    synchronized (lock) { // ❌ OLD: unbounded wait\n      // ... critical section\n    }\n  }\n\n  // No way to say 'wait at most 2 seconds' or to interrupt a waiter\n  // that's stuck on the monitor — the only escape is a thread dump and\n  // a restart."
+      }
+    },
+    "modernOrGood": {
+      "label": "ReentrantLock.tryLock with timeout",
+      "snippet": "if (lock.tryLock(2, TimeUnit.SECONDS)) { try { ... } finally { lock.unlock(); } } // ✅ NEW",
+      "fullFile": {
+        "filename": "LockingGood.java",
+        "language": "java",
+        "code": "import java.util.concurrent.TimeUnit;\nimport java.util.concurrent.locks.ReentrantLock;\n\n// ✅ NEW: tryLock gives a bounded wait (timeout) and is interruptible.\n// Must release in finally — the lock does NOT auto-release.\npublic class LockingGood {\n  private final ReentrantLock lock = new ReentrantLock();\n\n  public boolean doWork() {\n    try {\n      // ✅ NEW: bounded wait — fails fast after 2s instead of blocking\n      if (!lock.tryLock(2, TimeUnit.SECONDS)) {\n        return false; // ✅ NEW: handle 'couldn't get the lock' gracefully\n      }\n      try {\n        // ... critical section\n        return true;\n      } finally {\n        lock.unlock(); // ✅ NEW: manual release, guaranteed by finally\n      }\n    } catch (InterruptedException e) {\n      Thread.currentThread().interrupt(); // restore the flag\n      return false;\n    }\n  }\n}\n\n// Also available: lock.lockInterruptibly(), fair = true, and\n// lock.newCondition() for await/signal with multiple queues."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is lock inflation, and how does a synchronized block behave when uncontended vs contended?",
+      "contextIntro": "This tests the monitor mechanics — interviewers want the thin-lock → heavyweight transition and why uncontended synchronized is cheap, not just 'synchronized uses the monitor'.",
+      "detailedAnswer": "An uncontended synchronized block performs a thin-lock fast path: a single CAS on the object header's mark word, typically by the interpreter/JIT with no OS involvement — very cheap. When contention occurs (another thread tries to acquire), the lock 'inflates' to a heavyweight ObjectMonitor: the mark word is replaced with a pointer to the monitor structure, which manages an owner field, entry queues (cxq/EntryList), and a wait set for wait/notify. Inflated monitors park blocked threads via the OS (LockSupport/mutex), which is expensive. Since JDK 15, biased locking is removed, so there is no biased-lock acquisition; the fast path is thin-lock CAS, and the slow path is the inflated monitor. This design is why synchronized scales well when uncontended and degrades under heavy contention like any parking-based lock.",
+      "trapWarning": "The naive answer is 'synchronized is always heavyweight'. It's thin until contention inflates it. Another trap: assuming synchronized and ReentrantLock have identical semantics — both are reentrant, but ReentrantLock adds timeout/interrupt/fairness/conditions, and synchronized's wait/notify requires holding the monitor (with spurious-wakeup caveats). Candidates who describe the mark word and inflation path show real JVM understanding."
+    },
+    {
+      "question": "How does AQS (AbstractQueuedSynchronizer) implement ReentrantLock, and what are the key components?",
+      "contextIntro": "This probes the queue-based synchronizer design — interviewers want the volatile state + CLH queue + park/unpark model that underlies most of java.util.concurrent.",
+      "detailedAnswer": "AQS maintains a single volatile int state and a doubly-linked FIFO wait queue of Node objects. For ReentrantLock (exclusive mode): lock() calls acquire(1), which tries compareAndSetState(0→1); on failure, it enqueues a Node (CAS the tail) and parks the thread via LockSupport.park, looping until it wins. unlock() calls release(1): setState to 0 and unpark the successor node's thread. Reentrancy is handled by counting: acquire increments state per re-acquisition, release decrements. Fair mode checks whether the queue has waiting predecessors before barging; non-fair (default) attempts a CAS first (barging). Conditions are separate ConditionObject queues: await() releases state and parks on the condition queue; signal() transfers one node to the sync queue. The same AQS framework implements Semaphore (shared mode), CountDownLatch, and ReadWriteLock.",
+      "trapWarning": "The naive answer is 'AQS is a lock implementation'. It's a framework for building synchronizers; ReentrantLock is one use of it. Another trap: thinking park/unpark is a spin — it's an OS-level thread park (futex-like), and fairness isn't the default. Candidates who name the state machine, the CLH queue, and the shared/exclusive modes show real depth."
+    }
+  ]
+}

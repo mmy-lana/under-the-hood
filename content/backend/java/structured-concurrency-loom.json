@@ -1,0 +1,68 @@
+{
+  "id": "structured-concurrency-loom",
+  "title": "Structured Concurrency (JEP 453): StructuredTaskScope Error Propagation",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (StructuredTaskScope, JEP 453)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "structured-concurrency",
+    "StructuredTaskScope",
+    "loom",
+    "virtual-threads",
+    "jep-453"
+  ],
+  "prerequisites": [
+    "Java threads and ExecutorService basics",
+    "Understanding of virtual threads"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A tour group has a leader who sends three scouts to check three routes. The old way: the leader sends the scouts, doesn't keep track of them, and each scout reports back whenever they feel like it — if one scout gets lost, the others keep wandering forever. The new way: the leader forms a strict group — all scouts start together, the leader waits for all of them, and if any scout fails, the leader calls everyone back immediately and cancels the stragglers. No scout is left wandering, and the leader always knows the group's overall status.",
+    "junior": "StructuredTaskScope creates a scope for child tasks with a clear lifecycle: try (var scope = new StructuredTaskScope.ShutdownOnFailure()) { Future<String> a = scope.fork(() -> fetchA()); Future<String> b = scope.fork(() -> fetchB()); scope.join(); // wait for all; throw if any failed String result = a.resultNow() + b.resultNow(); }. The scope ensures all child threads finish before the scope closes (no orphaned tasks), and failures propagate: ShutdownOnFailure cancels remaining tasks when one fails. Use it with virtual threads for fan-out/fan-in concurrency with proper error handling and no task leaks.",
+    "senior": "Architecturally, structured concurrency binds the lifetime of child tasks to the scope: the scope is the syntactic and runtime owner of its subtasks. Tasks forked into a StructuredTaskScope are started immediately (on virtual threads), and the scope's close() (via try-with-resources) waits for all tasks to complete (join()), then throws if any failed (for ShutdownOnFailure) or collects results (ShutdownOnSuccess). If a task throws, the policy cancels the siblings via interruption. This gives the error-handling guarantees of a synchronous call: a failure in any child aborts the whole unit of work, and no child outlives the scope — eliminating thread/task leaks and the 'fire and forget' complexity of raw executor usage.",
+    "underTheHood": "StructuredTaskScope internally manages a set of fork results and a policy. fork(Callable) submits the task to the scope's executor (virtual-thread-per-task); when the task completes, its result/exception is recorded. join() blocks until all tasks complete or the policy's shutdown condition is met; ShutdownOnFailure shuts down (interrupts) remaining tasks when the first exception is recorded, then join() returns and the scope throws the first exception. The scope's close() throws if join() wasn't successful (ExceptionInInitializerError-style or the collected failure). The JVM's virtual thread scheduler runs these tasks on carrier threads; the scope ties their lifetime to the try-with-resources block so leaving the block cancels unfinished work."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM concurrency feature.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "ExecutorService fire-and-forget vs StructuredTaskScope",
+    "summary": "Raw executors leak tasks on early failure (siblings keep running); structured scope cancels siblings and guarantees all work ends with the block.",
+    "legacyOrBad": {
+      "label": "Raw executor with lost children",
+      "snippet": "var e = Executors.newVirtualThreadPerTaskExecutor(); // ❌ OLD: no scope",
+      "fullFile": {
+        "filename": "FetchLegacy.java",
+        "language": "java",
+        "code": "import java.util.concurrent.*;\n\n// ❌ OLD: Raw executor usage. If fetchB() throws, fetchA() is still\n// running with no automatic cancellation — an orphaned task that can\n// outlive the request. Also, waiting on two futures manually is\n// verbose and error-prone.\npublic class FetchLegacy {\n  String fetch() throws Exception {\n    try (var e = Executors.newVirtualThreadPerTaskExecutor()) {\n      Future<String> a = e.submit(() -> fetchA()); // ❌ OLD\n      Future<String> b = e.submit(() -> fetchB()); // ❌ OLD\n      // ❌ OLD: if fetchB throws, fetchA keeps running (leak);\n      // cancel() is manual and easily forgotten.\n      String ra = a.get();\n      String rb = b.get();\n      return ra + rb;\n    }\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "StructuredTaskScope with failure propagation",
+      "snippet": "try (var scope = new StructuredTaskScope.ShutdownOnFailure()) { // ✅ NEW",
+      "fullFile": {
+        "filename": "FetchModern.java",
+        "language": "java",
+        "code": "import java.util.concurrent.*;\n\n// ✅ NEW: Structured scope. All child tasks are tied to the scope's\n// lifetime; on the first failure, siblings are cancelled; close()\n// throws if anything failed. No orphaned tasks.\npublic class FetchModern {\n  String fetch() throws Exception {\n    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {\n      // ✅ NEW: fork both subtasks\n      Future<String> a = scope.fork(() -> fetchA()); // ✅ NEW\n      Future<String> b = scope.fork(() -> fetchB()); // ✅ NEW\n\n      scope.join(); // ✅ NEW: wait for all (or shutdown on first failure)\n      scope.throwIfFailed(); // ✅ NEW: propagate the first exception\n\n      return a.resultNow() + b.resultNow(); // ✅ NEW: both succeeded\n    } // ✅ NEW: scope.close() also cancels anything still running\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What problem does structured concurrency solve that plain executors don't, especially with virtual threads?",
+      "contextIntro": "This tests the rationale — interviewers want the lifetime-ownership and failure-propagation guarantees that raw executors lack, and why virtual threads make the problem acute.",
+      "detailedAnswer": "Plain executors decouple task lifetime from the caller: subtasks can outlive the method that created them, especially on early return or exception — the classic orphaned-task leak. With virtual threads (cheap, abundant), developers fork many tasks casually, so the orphan problem scales: a request that returns early can leave dozens of virtual threads running indefinitely, holding resources. Structured concurrency makes the scope the owner: all forked tasks must complete (or be cancelled) before the scope closes, and ShutdownOnFailure/ShutdownOnSuccess policies define how a partial failure resolves the whole unit. This restores the guarantee of synchronous code — a function either completes all its work or throws, with no dangling children — which is critical for correctness and resource management at scale.",
+      "trapWarning": "The naive answer is 'executors with futures are fine if you cancel'. Manual cancellation is error-prone and easily skipped; the scope makes the guarantee structural. Another trap: thinking structured concurrency is only about syntax — it enforces a lifetime and cancellation contract (close() waits, join() propagates). Candidates who tie it to virtual-thread adoption and orphan prevention show real understanding."
+    },
+    {
+      "question": "How do ShutdownOnFailure and ShutdownOnSuccess differ, and when would you use each?",
+      "contextIntro": "This tests the policy semantics — interviewers want the shutdown condition and the result-collection behavior for each built-in policy.",
+      "detailedAnswer": "ShutdownOnFailure shuts down the scope as soon as the first subtask throws: remaining tasks are interrupted/cancelled, join() returns, and throwIfFailed() rethrows the first exception. It is for fan-out where ALL results are required — if any call fails, the whole operation fails, so cancel the rest immediately. ShutdownOnSuccess completes as soon as the first subtask returns successfully: it shuts down the remaining tasks and lets you read the first successful result via result() (or throws if all failed). It is for 'any is enough' patterns — racing requests to multiple replicas, finding the first available source. Both still enforce the lifetime guarantee: close() waits for (or cancels) stragglers. The choice is driven by whether you need all results or just the first success.",
+      "trapWarning": "The naive answer is 'both just wait for all tasks'. Their shutdown conditions differ (first failure vs first success), which changes cancellation behavior and which tasks get interrupted. Another trap: calling resultNow() on a scope whose policy didn't complete as expected — ShutdownOnSuccess.result() throws if no task succeeded, and resultNow() on a failed future throws. Candidates who map the policy to the use case (all-results vs first-available) show real depth."
+    }
+  ]
+}

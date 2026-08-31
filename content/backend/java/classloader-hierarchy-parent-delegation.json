@@ -1,0 +1,68 @@
+{
+  "id": "classloader-hierarchy-parent-delegation",
+  "title": "ClassLoader: Bootstrap, Platform, App & Parent Delegation",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 9+ (modules, Platform ClassLoader)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "classloader",
+    "bootstrap",
+    "platform",
+    "parent-delegation",
+    "jvm"
+  ],
+  "prerequisites": [
+    "Java class loading basics",
+    "Understanding of JVM startup and the classpath"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A school has a chain of teachers for finding books. The newest teacher (app) is asked first for a book, but if she doesn't have it, she asks her senior (platform), who asks the head librarian (bootstrap) who keeps the essential core books. The rule is strict: always ask upward first, and only look in your own shelf if your seniors don't have the book. This way everyone agrees on ONE copy of a book — no two teachers with different editions of the same book.",
+    "junior": "The JVM loads classes with three built-in loaders: the Bootstrap ClassLoader (JDK core classes like java.lang, java.util — implemented natively, no parent), the Platform ClassLoader (JDK modules, previously called Extension), and the Application/System ClassLoader (your classpath). The parent-delegation model: when asked to load a class, a loader first asks its parent, and only tries to load it itself if the parent fails. This ensures core classes are always the JDK's version. Custom loaders (ClassLoader subclasses) can break delegation by overriding loadClass, useful for plugin systems and hot reload.",
+    "senior": "Architecturally, class loading is lazy and delegation-based: loadClass(name) walks up the parent chain, and each loader searches its own namespace (classpath entries or modules) only after parents fail. The parent-first model prevents class version conflicts and maintains the type identity of core classes. The loading process is: find class bytes, defineClass (link: verify, prepare, resolve), and initialize (run static initializers) separately. Class identity is (classloader, name) — two loaders can load the same class name as DIFFERENT types, which is the root cause of ClassCastException in plugin systems. JDK 9+ modularity uses the Platform ClassLoader for modules and the boot layer for java.base.",
+    "underTheHood": "The Bootstrap loader is not a Java class — it's part of the VM (implemented in the HotSpot runtime, loading from the jrt:/java.base module and -Xbootclasspath). The Platform ClassLoader (a Java class, jdk.internal.loader.ClassLoaders$PlatformClassLoader) has the bootstrap loader as parent and loads JDK modules. The AppClassLoader (ClassLoaders$AppClassLoader) has the platform loader as parent and loads the classpath. loadClass first checks the cache (already-loaded), then calls parent.loadClass, then findClass. findClass for AppClassLoader scans the classpath (or the module path). Custom loaders typically override findClass (delegation preserved) or loadClass (delegation broken). defineClass calls the VM's SystemDictionary, which manages the (loader, name) -> Klass mapping and enforces the constraint that a class name maps to one Klass per loader."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM runtime concern.",
+    "angular": "N/A — JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "Classpath conflicts with multiple versions vs consistent delegation",
+    "summary": "Without delegation, two loaders could load different versions of the same class, breaking type identity; parent-first delegation guarantees one canonical version.",
+    "legacyOrBad": {
+      "label": "Duplicate class versions on the classpath",
+      "snippet": "lib-a/lib/log4j.jar:1.2  lib-b/lib/log4j.jar:1.1  # ❌ OLD: two versions, chaos",
+      "fullFile": {
+        "filename": "classpath-conflict.txt",
+        "language": "text",
+        "code": "# ❌ OLD: Two versions of the same library on the classpath. The\n# AppClassLoader finds ONE of them (classpath order wins), while\n# different parts of the app may compile/expect the other version —\n# producing NoSuchMethodError, NoClassDefFoundError, or silent\n# behavior differences at runtime.\nlib-a/lib/log4j-core.jar  # version 2.17\nlib-b/lib/log4j-core.jar  # version 2.14  <- duplicate classes\n\n# The parent-delegation model cannot help here: both copies are in the\n# SAME loader's namespace, and classpath order decides the winner —\n# there is no delegation between them. The fix is dependency\n# management (Maven/Gradle) to keep a single version, or isolated\n# loaders (like an app server) for genuinely different versions."
+      }
+    },
+    "modernOrGood": {
+      "label": "Isolated custom classloaders for versioned plugins",
+      "snippet": "class PluginLoader extends ClassLoader {\n  // ✅ NEW: child-first for plugin libs, parent-first for JDK classes\n}",
+      "fullFile": {
+        "filename": "PluginLoader.java",
+        "language": "java",
+        "code": "// ✅ NEW: A custom loader isolates each plugin's dependencies so\n// different versions can coexist, while STILL delegating JDK classes\n// to the parent (never reload java.lang).\npublic class PluginLoader extends ClassLoader {\n  private final java.nio.file.Path pluginDir;\n\n  public PluginLoader(java.nio.file.Path dir, ClassLoader parent) {\n    super(parent); // ✅ NEW: keep bootstrap/platform/app delegation for core\n    this.pluginDir = dir;\n  }\n\n  // ✅ NEW: override findClass (not loadClass) to preserve delegation\n  // for everything the parent can provide.\n  @Override\n  protected Class<?> findClass(String name) throws ClassNotFoundException {\n    try {\n      byte[] bytes = java.nio.file.Files.readAllBytes(\n          pluginDir.resolve(name.replace('.', '/') + \".class\"));\n      return defineClass(name, bytes, 0, bytes.length);\n    } catch (java.io.IOException e) {\n      throw new ClassNotFoundException(name, e);\n    }\n  }\n}\n\n// Each plugin gets its own PluginLoader -> its own copy of a library\n// class, isolated by (loader, name) identity."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does parent-first delegation prevent the same class from being loaded twice, and what is class identity?",
+      "contextIntro": "This tests the core delegation rationale — interviewers want the type-identity model and why breaking delegation causes ClassCastException, a classic debugging trap.",
+      "detailedAnswer": "Parent-first delegation means loadClass asks the parent before searching its own namespace, so a class name resolves to the FIRST loader up the chain that can provide it — giving one canonical definition per class name in the hierarchy. Class identity in the JVM is (classloader, fully-qualified-name): two loaders that both load com.example.Foo define two DISTINCT types, even with identical bytecode. If a parent-loaded class references a class defined by a child loader and vice versa, casts between them fail with ClassCastException (or you get LinkageError on conflicting definitions). This is why plugin systems and app servers isolate each deployment with its own loader while delegating shared/JDK classes upward — the delegation boundary is exactly the type-identity boundary.",
+      "trapWarning": "The naive answer is 'delegation prevents loading the same file twice'. It prevents two DIFFERENT loaders from defining the same name when a parent can provide it, which is about type identity, not file caching. Another trap: seeing ClassCastException and assuming a logic bug — it's often a loader mismatch (e.g. a class loaded by the app loader vs a child loader). Candidates who mention the (loader, name) identity tuple show real understanding."
+    },
+    {
+      "question": "What is the difference between loadClass, findClass, and defineClass, and when would you override each in a custom loader?",
+      "contextIntro": "This probes the ClassLoader API mechanics — interviewers want the delegation-preserving override points and the linking step that defineClass triggers.",
+      "detailedAnswer": "loadClass implements the delegation algorithm (cache check, parent delegation, then findClass); overriding it breaks or customizes delegation. findClass is the hook for loading bytes from your own source (a directory, a network, a DB) — overriding findClass while leaving loadClass alone preserves parent-first delegation, which is the recommended pattern. defineClass converts the byte array into a Class object: it calls into the VM's SystemDictionary to create/register the Klass, and triggers the linking phase (verification, preparation, resolution) lazily. Classes are initialized (static initializers) when first actively used, separately from loading/linking. The correct design: override findClass for custom byte sources; override loadClass only for deliberate child-first or isolation semantics (and even then, delegate JDK classes upward).",
+      "trapWarning": "The naive answer is 'override loadClass to load from a new location'. The delegation-preserving way is findClass. Another trap: calling defineClass directly with unverified bytes — verification is part of linking and can be skipped (defineClass with the verify flag) but that's unsafe. Candidates who describe the three-method split and the SystemDictionary registration show real JVM knowledge."
+    }
+  ]
+}

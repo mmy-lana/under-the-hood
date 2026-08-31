@@ -1,0 +1,69 @@
+{
+  "id": "jit-compilation-c1-c2-graal",
+  "title": "JIT Compilation: Tiered Compilation, C1, C2, GraalVM",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (HotSpot tiered compilation, GraalVM JIT)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "jit",
+    "c1",
+    "c2",
+    "graalvm",
+    "compilation",
+    "hotspot"
+  ],
+  "prerequisites": [
+    "Java bytecode and class loading basics",
+    "Understanding of interpretation vs compilation"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A tour guide has two ways to give a tour. At first, he reads every sign aloud as he walks (interpreting) — slow but starts immediately. After walking the same route many times, he memorizes a perfect script (compiling) and delivers it fast. If a route turns out to be complicated, he writes an even more polished script (deep compilation). If the route changes, he drops back to reading signs. The guide is the JIT: it watches how often code runs and upgrades the delivery method accordingly.",
+    "junior": "The JVM starts by interpreting bytecode, then the JIT compiler compiles hot methods to native machine code at runtime. HotSpot uses tiered compilation by default: C1 (client compiler) compiles quickly with moderate optimization, and C2 (server compiler) does deep optimizations for very hot methods. You can observe with -XX:+PrintCompilation and control with -XX:TieredStopAtLevel. GraalVM provides an alternative JIT (and an AOT compiler for native images). JIT means Java code gets faster the more it runs — benchmarks must warm up.",
+    "senior": "Architecturally, tiered compilation (default since JDK 8) has 5 levels: interpreted (0), C1 with/without profiling (1-3), and C2 (4). The interpreter collects profiling data (branch counts, type profiles via backedges and invocation counters); when a method crosses thresholds, it's queued for C1 (quick compilation with profiling), then promoted to C2 for full optimization using the profile. C2 performs aggressive optimizations: inlining, escape analysis, dead code elimination, loop unrolling, and intrinsic replacement. If assumptions break (e.g. a deoptimization due to a profile mismatch), the JVM deoptimizes back to an earlier tier. GraalVM's JIT is a C2 alternative written in Java, using a graph-based Sea-of-Nodes IR.",
+    "underTheHood": "The HotSpot compiler broker manages compilation tasks on compiler threads. C1 emits a linear-scan-allocated, straightforward native translation quickly. C2 builds a Sea-of-Nodes IR (Ideal Graph) with global value numbering, then applies the optimization pipeline (inlining with a call-site graph, escape analysis to scalar-replace allocations, loop transforms, and machine-code generation via a global register allocator). Profiling comes from interpreter and C1 counters stored in MDO (method data objects). Deoptimization (uncommon trap) reverts an optimized frame to an interpreter frame at a safepoint when a guarded assumption fails. Graal compiles the same bytecode with its own IR and can use partial escape analysis and more aggressive intrinsics."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM runtime concern.",
+    "angular": "N/A — JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "Interpreted baseline vs tiered JIT-compiled execution",
+    "summary": "Running cold code interprets bytecode; hot methods get compiled to native machine code with profiling-driven optimization.",
+    "legacyOrBad": {
+      "label": "Single-tier naive assumption",
+      "snippet": "// ❌ OLD: assuming all Java code runs as compiled native code from the start",
+      "fullFile": {
+        "filename": "Warmup.java",
+        "language": "java",
+        "code": "// ❌ OLD: A common mistake is measuring performance without warmup.\n// The first invocations are INTERPRETED (level 0) — the JIT has not\n// compiled anything yet, so timings look 10-100x slower than steady\n// state and mislead decisions.\npublic class Warmup {\n  static long sum(int n) {\n    long s = 0;\n    for (int i = 0; i < n; i++) s += i; // ❌ OLD: cold -> interpreted\n    return s;\n  }\n\n  public static void main(String[] args) {\n    // ❌ OLD: this measures interpretation, not the JIT'd steady state\n    long t0 = System.nanoTime();\n    long r = sum(1_000_000);\n    System.out.println((System.nanoTime() - t0) + \"ns cold\");\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Warmup before measuring (tiered JIT)",
+      "snippet": "for (int i = 0; i < 10_000; i++) sum(1_000); // ✅ NEW: warm up so C1/C2 compile",
+      "fullFile": {
+        "filename": "Warmup.java",
+        "language": "java",
+        "code": "// ✅ NEW: Warm the method until it is JIT-compiled (tier 4, C2), then\n// measure. Tiered compilation profiles and compiles hot methods, so\n// steady-state timing reflects native code.\npublic class Warmup {\n  static long sum(int n) {\n    long s = 0;\n    for (int i = 0; i < n; i++) s += i;\n    return s;\n  }\n\n  public static void main(String[] args) {\n    // ✅ NEW: warmup loop crosses the invocation thresholds -> C1 then C2\n    for (int i = 0; i < 20_000; i++) sum(1_000);\n\n    long t0 = System.nanoTime();\n    long r = sum(1_000_000); // ✅ NEW: now measures compiled native code\n    System.out.println((System.nanoTime() - t0) + \"ns hot (\" + r + \")\");\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Java code slower at first and faster after warmup, and how does tiered compilation decide when to compile?",
+      "contextIntro": "This tests the interpretation→profiling→compilation model — interviewers want the thresholds and tier progression, not just 'the JIT compiles hot code'.",
+      "detailedAnswer": "The JVM starts by interpreting bytecode (level 0) so execution begins immediately. The interpreter (and later C1 with profiling) collects per-method data: invocation counts, backedge counts (loops), and type profiles of call sites, stored in method data objects. When a method's counters cross the compilation thresholds (e.g. -XX:CompileThreshold, plus tiered thresholds), it is queued to the compiler broker: first C1 with profiling (tier 2/3) for quick native code, then, if still hot, C2 (tier 4) for deep optimization using the collected profile. This lazy, profile-guided progression is why cold code is interpreted (fast startup), warm code gets quick compilation, and hot code gets maximal optimization — and why microbenchmarks must include warmup to reflect steady state.",
+      "trapWarning": "The naive answer is 'the JIT compiles everything at startup'. Compilation is demand-driven and profile-guided, happening after thresholds. Another trap: thinking compiled code is permanent — deoptimization (uncommon traps) reverts to interpretation when a guarded optimization (e.g. an inlined call's assumed type) is violated. Candidates who mention thresholds, MDO profiling, and deoptimization show real understanding."
+    },
+    {
+      "question": "What are C1 and C2, and how does GraalVM's JIT differ from HotSpot's C2?",
+      "contextIntro": "This tests knowledge of the compiler stack and the alternatives — interviewers want to know what each compiler optimizes for and where GraalVM fits.",
+      "detailedAnswer": "C1 (client compiler) is a quick compiler: it produces decent native code fast using a simple linear-scan register allocator, prioritizing fast compilation time (good for startup and short-lived processes). C2 (server compiler) is a heavyweight optimizing compiler: it builds a Sea-of-Nodes (Ideal Graph) IR and runs an extensive optimization pipeline — inlining, escape analysis, scalar replacement, loop optimizations, and vectorization — with a global register allocator. GraalVM's JIT (used with -XX:+UseGraal in some builds, and as the default in GraalVM's JDK) is an alternative to C2 written in Java, using a graph-based IR with partial escape analysis and a different inlining/optimization strategy; it also powers GraalVM Native Image via the same compiler in AOT mode. The choice affects peak throughput and warmup characteristics.",
+      "trapWarning": "The naive answer is 'C1 is faster than C2'. C1 compiles FASTER; C2 produces FASTER code. Another trap: assuming GraalVM is only for native images — it also provides a JIT compiler that can replace C2. Candidates who distinguish compile-time vs runtime performance and name the IR differences show real depth."
+    }
+  ]
+}

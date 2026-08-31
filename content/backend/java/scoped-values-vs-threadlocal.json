@@ -1,0 +1,68 @@
+{
+  "id": "scoped-values-vs-threadlocal",
+  "title": "Scoped Values (JEP 446) vs ThreadLocal Memory Leaks in Virtual Threads",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (ScopedValue preview/incubator, JEP 446)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "scoped-values",
+    "threadlocal",
+    "virtual-threads",
+    "loom",
+    "jep-446"
+  ],
+  "prerequisites": [
+    "Java threads and ThreadLocal basics",
+    "Understanding of virtual threads (Project Loom)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "An office issues each employee a personal locker (ThreadLocal) to keep their own tools. But with a thousand temporary workers (virtual threads) coming and going, the office must build a thousand lockers and remember to clear each one — and if a worker leaves without clearing their locker, it stays forever, wasting space. The new system (scoped values) instead hands each worker a single clipboard at the door, valid only for the duration of their shift, and collects it automatically when they leave. No lockers to leak, and the clipboard is read-only so nobody can sneak in a different version.",
+    "junior": "ThreadLocal gives each thread its own copy of a value, but it's mutable, inherited-by-default (for Threads), and must be manually removed (remove()) to avoid leaks. ScopedValue (JDK 21+ incubator) is immutable and scoped: ScopedValue.where(KEY, value).run(() -> { ... }); — inside the run block, KEY.get() returns value; outside, get() throws. Scoped values propagate to virtual threads and child threads created within the scope, and they are never 'inherited' after the scope ends. Use them for request-scoped context (user id, trace id) instead of ThreadLocal.",
+    "senior": "Architecturally, ScopedValue is designed for the virtual-thread world: a scoped value is a binding stored in a scope, immutable for its lifetime, and shared down the call tree (and into threads created in the scope). Unlike ThreadLocal (which maps thread → value in a per-thread map), scoped values are stored as immutable bindings in the current scope/stack context, so there is no per-thread mutable storage to clean up. This eliminates the two ThreadLocal problems amplified by virtual threads: unbounded retention (a virtual thread's ThreadLocal map leaks if not removed) and the cost of maintaining millions of ThreadLocal maps. Scoped values also give a performance win because reads are a single lookup of the current scope's binding rather than a map lookup.",
+    "underTheHood": "ScopedValue is implemented in the JDK via a scope carrier: each thread (or virtual thread) carries a snapshot of the current scoped-value bindings in its execution context. where(k, v) creates a new binding; run() installs it for the duration of the callback (using the StackableScope / DynamicInstantiator machinery), and the JVM restores the previous bindings afterward. Reads (ScopedValue.get()) look up the binding in the current scope — O(1) with no allocation. Since bindings are immutable and scoped to the execution, they naturally work across virtual-thread scheduling (the carrier thread changes don't matter). This is in contrast to ThreadLocal's ThreadLocalMap, which is per-thread mutable state requiring explicit removal to avoid pinning references after the request completes."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM concurrency feature.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "ThreadLocal context vs ScopedValue context",
+    "summary": "ThreadLocal must be removed manually (and leaks with virtual threads); ScopedValue binds immutably for a scope and auto-clears when the scope exits.",
+    "legacyOrBad": {
+      "label": "ThreadLocal without cleanup (leak)",
+      "snippet": "private static final ThreadLocal<String> USER = new ThreadLocal<>(); // ❌ OLD",
+      "fullFile": {
+        "filename": "ContextLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: ThreadLocal-based request context. Every virtual thread\n// (or pooled thread) that runs a request gets a ThreadLocalMap entry.\n// If the code forgets USER.remove(), the value (and everything it\n// references) is pinned for the lifetime of the thread — with millions\n// of short-lived virtual threads, this is a memory-leak factory.\npublic class ContextLegacy {\n  private static final ThreadLocal<String> USER = new ThreadLocal<>(); // ❌ OLD\n\n  public static void handle(Request req) {\n    USER.set(req.userId()); // ❌ OLD: mutable, per-thread storage\n    try {\n      doWork();\n    } finally {\n      // ❌ OLD: if this finally is forgotten, USER leaks; also the value\n      // is visible to OTHER code on this thread that shouldn't see it.\n      USER.remove();\n    }\n  }\n\n  static void doWork() {\n    String u = USER.get();\n    // ...\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "ScopedValue scoped binding",
+      "snippet": "private static final ScopedValue<String> USER = ScopedValue.newInstance(); // ✅ NEW",
+      "fullFile": {
+        "filename": "ContextModern.java",
+        "language": "java",
+        "code": "import java.util.concurrent.ScopedValue;\n\n// ✅ NEW: ScopedValue binds an immutable value for the duration of a\n// scope. No manual cleanup, no per-thread storage, safe across virtual\n// threads, and read-only (cannot be mutated mid-request).\npublic class ContextModern {\n  private static final ScopedValue<String> USER = ScopedValue.newInstance(); // ✅ NEW\n\n  public static void handle(Request req) {\n    // ✅ NEW: the binding is installed for the run() call only\n    ScopedValue.where(USER, req.userId()).run(() -> {\n      doWork(); // USER.get() works here and in anything it calls\n    });\n    // ✅ NEW: after run() returns, USER.get() throws NoSuchElementException\n  }\n\n  static void doWork() {\n    String u = USER.get(); // ✅ NEW: O(1) read of the current binding\n    // ...\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why are ThreadLocals especially problematic with virtual threads, and how do ScopedValues solve it?",
+      "contextIntro": "This is the Loom-era interview question — interviewers want the scale problem (millions of threads × per-thread maps) and the lifecycle guarantee that scoped values provide.",
+      "detailedAnswer": "ThreadLocal stores values in a per-thread ThreadLocalMap that persists for the thread's lifetime. With platform threads (a few hundred), forgetting remove() leaked a bounded amount. Virtual threads are designed to be created in the millions, so a ThreadLocal entry that isn't removed multiplies into unbounded memory retention — and each ThreadLocalMap is a nontrivial allocation per thread. Additionally, ThreadLocal.inheritable values copy into every child thread, compounding cost. ScopedValue removes both problems: bindings are immutable, live only for the dynamic scope (run()/call()), and are automatically discarded when the scope exits — no per-thread map, no manual cleanup, and the JVM can share bindings across virtual threads since they're captured in the execution context, not the thread identity.",
+      "trapWarning": "The naive answer is 'just remember to call remove()'. With virtual threads the failure mode is much worse (millions of leaked maps) and easy to miss in hot paths. Another trap: thinking ScopedValue is just an immutable ThreadLocal — its scope-based lifetime and lack of per-thread storage are fundamentally different, and it is read-only (no set()). Candidates who tie the design to virtual-thread economics show real understanding."
+    },
+    {
+      "question": "How do ScopedValues propagate into threads created inside the scope, and what happens if you read one outside the scope?",
+      "contextIntro": "This probes the propagation and lifetime semantics — interviewers want to know the behavior across thread boundaries and the failure mode when the scope is gone.",
+      "detailedAnswer": "ScopedValue bindings are captured in the execution context: a virtual thread or platform thread created inside a ScopedValue.where(...).run() scope inherits the bindings that were active at its creation, so child threads see the same value. This replaces ThreadLocal.inheritable with a cleaner, immutable propagation. The binding is valid only while the scope's callback is executing (plus the lifetime of threads created within it that captured the context). Outside the scope — after run() returns, or on a thread that never entered the scope — get() throws NoSuchElementException, which forces you to handle the 'no value' case explicitly instead of silently reading a stale ThreadLocal value. The immutability also means the value cannot be changed mid-flight, eliminating a whole class of cross-thread mutation bugs.",
+      "trapWarning": "The naive answer is 'ScopedValue behaves like an inherited ThreadLocal'. It is immutable and scope-bound; reading outside the scope throws rather than returning a default. Another trap: assuming a value set in the scope remains available after the scope exits or on unrelated threads — it does not, and code that relied on ThreadLocal's silent per-thread persistence must now handle the missing case. Candidates who describe context capture and the throw-on-missing behavior show real depth."
+    }
+  ]
+}

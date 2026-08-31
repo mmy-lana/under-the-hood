@@ -1,0 +1,69 @@
+{
+  "id": "java-memory-model-volatile-happens-before",
+  "title": "Java Memory Model (JMM): volatile, Memory Barriers & Happens-Before",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JSR-133 (JMM), JDK 21+",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "jmm",
+    "volatile",
+    "happens-before",
+    "memory-model",
+    "concurrency",
+    "memory-barriers"
+  ],
+  "prerequisites": [
+    "Java threads and synchronized basics",
+    "Understanding of CPU caches and memory visibility"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two chefs in a big kitchen each have their own notebook, but there's one shared whiteboard. When a chef writes on the whiteboard (a volatile write), the other chef is guaranteed to see it when they look at the whiteboard (a volatile read). But regular notes on their own notebooks are private — no guarantee that the other chef sees them, ever. The rulebook says: if chef A writes something THEN writes on the whiteboard, and chef B reads the whiteboard THEN reads the notes, B is guaranteed to see A's notes too — because the whiteboard created a bridge between them.",
+    "junior": "The Java Memory Model defines when one thread is guaranteed to see another thread's writes. The key rule: happens-before. If action A happens-before action B, then A's effects are visible to B. Rules that create happens-before: a volatile write happens-before a subsequent volatile read of the same variable; unlock happens-before a subsequent lock of the same monitor; thread.start() happens-before any action in the started thread; thread.join() happens-before everything after it; writing through a thread-safe queue (BlockingQueue) establishes happens-before. volatile gives visibility but not atomicity (use AtomicInteger or synchronized for compound ops).",
+    "senior": "Architecturally, the JMM (JSR-133) is a weak memory model based on happens-before and synchronization order, not on 'freshness' promises. It guarantees: visibility (via the happens-before edge), ordering (program order within a thread), and atomicity for reads/writes of primitives/references (except long/double non-volatile, which may tear). volatile reads/writes and monitor lock/unlock act as synchronization actions with total order. The model deliberately does NOT guarantee visibility for plain data races — unsynchronized shared access is undefined-ish (practically it reads some value, but no ordering guarantees). The JMM is what makes lock-free algorithms (via java.util.concurrent) sound.",
+    "underTheHood": "The JVM implements happens-before with memory barriers emitted by the JIT compiler at synchronization points. On x86 (TSO): volatile store → StoreLoad barrier (mfence or lock xchg), volatile load → no barrier needed for the load itself but compiler ordering constraints; on ARM/POWER (weak): load-acquire (dmb ishld) and store-release (dmb ish) are used. HotSpot emits barrier patterns (loadload/storestore/loadstore/storeload per the C++ memory model mapping). The JIT also avoids reordering volatile operations. JMM guarantees are compiled down to these CPU primitives, which is why volatile visibility works across cores: the barrier drains/orders the store buffers and invalidates/refreshes cache lines at the coherence protocol level."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM concurrency concern.",
+    "angular": "N/A — JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "Broken visibility with plain fields vs volatile flag",
+    "summary": "A plain boolean flag read by another thread has no visibility guarantee (may loop forever); volatile publishes the write via happens-before.",
+    "legacyOrBad": {
+      "label": "Plain boolean stop flag (no visibility)",
+      "snippet": "static boolean stop = false; // ❌ OLD: not volatile — worker may never see the write",
+      "fullFile": {
+        "filename": "StopFlag.java",
+        "language": "java",
+        "code": "// ❌ OLD: A plain field shared across threads. The writer thread sets\n// stop=true, but there is NO happens-before edge, so the JIT may hoist\n// the read out of the loop or the CPU cache may keep the stale value —\n// the worker can spin forever.\npublic class StopFlag {\n  static boolean stop = false; // ❌ OLD: no volatile, no happens-before\n\n  public static void main(String[] args) throws Exception {\n    Thread worker = new Thread(() -> {\n      long i = 0;\n      while (!stop) i++; // ❌ OLD: may read the cached false forever\n    });\n    worker.start();\n    Thread.sleep(100);\n    stop = true; // ❌ OLD: no guarantee the worker observes this\n    worker.join();\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "volatile flag with happens-before",
+      "snippet": "static volatile boolean stop = false; // ✅ NEW: write → read creates happens-before",
+      "fullFile": {
+        "filename": "StopFlag.java",
+        "language": "java",
+        "code": "// ✅ NEW: volatile establishes happens-before: the main thread's write\n// to stop happens-before the worker's read that observes it, so the\n// JIT cannot hoist the read and the cache coherence protocol propagates\n// the new value. The loop terminates reliably.\npublic class StopFlag {\n  static volatile boolean stop = false; // ✅ NEW: visibility guaranteed\n\n  public static void main(String[] args) throws Exception {\n    Thread worker = new Thread(() -> {\n      long i = 0;\n      while (!stop) i++; // ✅ NEW: sees the volatile write\n    });\n    worker.start();\n    Thread.sleep(100);\n    stop = true; // ✅ NEW: volatile write\n    worker.join();\n  }\n}\n\n// Note: volatile is visibility-only. For compound updates (i++), use\n// AtomicInteger or synchronized — volatile is NOT atomic."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does happens-before actually guarantee, and why isn't volatile enough for compound operations?",
+      "contextIntro": "This tests the core JMM semantics — interviewers want the visibility-vs-atomicity distinction and the precise meaning of the happens-before edge, not just 'volatile is for flags'.",
+      "detailedAnswer": "Happens-before is a partial order on actions: if action A happens-before action B, then A's writes are visible to B, and B observes A's ordering. It is NOT a statement about wall-clock time — it's a visibility/ordering contract that lets you reason about concurrent code. volatile creates happens-before between a write and a subsequent read of that variable; synchronized creates it between unlock and subsequent lock; thread start/join and thread-safe queue operations create it too. But volatile does not provide atomicity: count++ is read-modify-write, and two threads doing it concurrently can both read the same value and lose an increment. For atomic compound operations you need synchronized, atomic classes (AtomicInteger using CAS), or locks — which create their own happens-before edges on top of atomicity.",
+      "trapWarning": "The naive answer is 'volatile makes the variable thread-safe'. It guarantees visibility/ordering, not atomicity — volatile count++ is still racy. Another trap: thinking happens-before is transitive only within one synchronization chain — it is transitive, which is how the model composes (A→B and B→C implies A→C). Candidates who separate visibility from atomicity show real JMM understanding."
+    },
+    {
+      "question": "How does the JVM turn happens-before into actual memory barriers, and why does the cost differ across CPU architectures?",
+      "contextIntro": "This probes the hardware mapping — interviewers want the barrier types and the architectural difference (x86 TSO vs ARM/POWER weak memory) that explains why volatile costs vary.",
+      "detailedAnswer": "The JIT compiler emits CPU memory barrier instructions at synchronization points to implement the JMM. The barrier types are LoadLoad, StoreStore, LoadStore, and StoreLoad — each ordering specific pairs of memory operations. On x86 (a TSO — total store order — architecture), the CPU already orders most operations, so volatile reads are nearly free and only a StoreLoad barrier (e.g. mfence or a locked instruction) is needed after a volatile store to prevent store-load reordering. On weak-memory architectures like ARM and POWER, volatile maps to acquire/release semantics using dmb/dsb barriers on both loads and stores, which are more expensive. This is why a volatile-heavy codebase runs differently on different CPUs, and why lock-free code must be written against the JMM (portable) rather than a specific CPU's behavior.",
+      "trapWarning": "The naive answer is 'volatile flushes the CPU cache'. The model is about ordering and visibility guarantees implemented via barriers, not literal cache flushes (caches are coherent; the issue is store-buffer/load ordering). Another trap: writing lock-free code that happens to work on x86 and assuming it's correct everywhere — weak-memory CPUs expose missing barriers. Candidates who name the barrier types and the x86-vs-ARM asymmetry show real depth."
+    }
+  ]
+}

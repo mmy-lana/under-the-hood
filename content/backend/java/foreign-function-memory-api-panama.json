@@ -1,0 +1,69 @@
+{
+  "id": "foreign-function-memory-api-panama",
+  "title": "Project Panama: Foreign Function & Memory API vs Legacy JNI",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 22+ (Foreign Function & Memory API, JEP 454)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "panama",
+    "ffi",
+    "foreign-memory",
+    "jni",
+    "native",
+    "jep-454"
+  ],
+  "prerequisites": [
+    "Java basics and native interop concepts",
+    "Understanding of memory addresses and C ABI"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two countries that speak different languages need to trade. The old way: they hire a translator who must be retrained for every single product, and the translator writes long instruction manuals for each trade (JNI boilerplate). The new way: both countries agree on a single universal phrasebook, so any product can be traded by looking up the phrase (the FFM API). The phrasebook is also safer: it comes with a checker who makes sure nobody trades forbidden goods (safety guarantees).",
+    "junior": "The Foreign Function & Memory API (java.lang.foreign) replaces JNI with a safer, faster way to call native code and manage off-heap memory. Use Linker.nativeLinker() + MethodHandle to call C functions: the linker binds a native function to a MethodHandle you invoke from Java. Use MemorySegment for off-heap memory with Arena-based lifetimes: try (Arena arena = Arena.ofConfined()) { MemorySegment seg = arena.allocate(100); }. The API is type-safe, has a cleaner model (segments with bounds), and removes JNI's C header boilerplate. JNI is still supported but deprecated-ish in favor of FFM.",
+    "senior": "Architecturally, the FFM API provides: (1) a Linker that maps C ABI functions to MethodHandles (downcalls Java→native, upcalls native→Java), (2) MemorySegment with spatial and temporal bounds (SizedMemoryLayouts), (3) Arena-based lifecycle management (confined/shared/global) for deterministic allocation/free, and (4) ValueLayouts for primitive layout descriptions. Downcalls avoid JNI's per-call overhead by generating native stubs. Memory safety is enforced at the API level: out-of-bounds access throws, use-after-free is prevented by arena scoping (accessing a closed segment throws). This makes native interop significantly safer than raw JNI pointers.",
+    "underTheHood": "The Linker (foreign Linker) uses MethodHandle-as-variadic and generates a native stub via the VM's foreign function machinery: the JVM compiles a downcall stub that marshals Java arguments into the C ABI (System V AMD64, Windows x64, AArch64) and calls the native function. MemorySegment wraps a native address with a length and a scope (Arena); accesses are bounds-checked against the segment length, and the scope tracks liveness. Arena.ofConfined is single-thread access, ofShared is multi-thread, global lives forever. Closing an arena frees the memory and invalidates all segments in its scope. Upcalls (Java callbacks into native) use the same machinery in reverse with a function pointer. This removes the JNI native method registration and the reflective Class.getDeclaredMethod overhead."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM/native interop concern.",
+    "angular": "N/A — JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "JNI boilerplate vs FFM API",
+    "summary": "JNI requires C header tools, native method declarations, and manual memory management; the FFM API binds C functions to MethodHandles with arena-scoped memory.",
+    "legacyOrBad": {
+      "label": "JNI setup (verbose)",
+      "snippet": "native double sqrtNative(double x); // ❌ OLD: JNI declaration + javac -h + C file",
+      "fullFile": {
+        "filename": "MathJNI.java",
+        "language": "java",
+        "code": "// ❌ OLD: JNI requires a Java native method declaration, a generated C\n// header (javac -h), a C implementation that uses JNIEnv, a compiled\n// shared library, and System.loadLibrary — plus manual management of\n// native memory and no bounds checking.\npublic class MathJNI {\n  static {\n    System.loadLibrary(\"mathjni\"); // ❌ OLD: must build & ship a .so/.dll\n  }\n\n  // ❌ OLD: declared native, implemented in C:\n  // JNIEXPORT jdouble JNICALL Java_MathJNI_sqrtNative\n  //   (JNIEnv *env, jclass, jdouble x) { return sqrt(x); }\n  public static native double sqrtNative(double x);\n\n  public static void main(String[] args) {\n    System.out.println(sqrtNative(16.0)); // calls through JNI\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "FFM API downcall",
+      "snippet": "MethodHandle sqrt = linker.downcallHandle(\"sqrt\", ...); // ✅ NEW",
+      "fullFile": {
+        "filename": "MathFFM.java",
+        "language": "java",
+        "code": "import java.lang.foreign.*;\nimport java.lang.invoke.MethodHandle;\n\n// ✅ NEW: The FFM API binds the C library function directly to a\n// MethodHandle — no native method declaration, no C header, no\n// generated JNI glue.\npublic class MathFFM {\n  public static void main(String[] args) throws Throwable {\n    Linker linker = Linker.nativeLinker(); // ✅ NEW: ABI linker\n    SymbolLookup lookup = linker.defaultLookup();\n\n    // ✅ NEW: bind the C sqrt function to a MethodHandle\n    MethodHandle sqrt = linker.downcallHandle(\n        lookup.find(\"sqrt\").orElseThrow(),\n        FunctionDescriptor.of(ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE));\n\n    System.out.println(sqrt.invokeExact(16.0)); // ✅ NEW: call it directly\n\n    // Memory: try (Arena arena = Arena.ofConfined()) {\n    //   MemorySegment seg = arena.allocate(ValueLayout.JAVA_INT);\n    //   seg.set(ValueLayout.JAVA_INT, 0, 42); // bounds-checked\n    // } // arena close frees the memory deterministically\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the FFM API guarantee memory safety when JNI allowed raw pointers?",
+      "contextIntro": "This tests the safety model — interviewers want to know how segments/arenas prevent buffer overruns and use-after-free, which is the core value proposition over JNI.",
+      "detailedAnswer": "FFM replaces raw pointers with MemorySegment, which carries both spatial bounds (a length) and temporal bounds (a scope tied to an Arena). Every access is checked: reading/writing beyond the segment's length throws IndexOutOfBoundsException (spatial safety). The Arena owns the segment's lifetime: when the arena is closed, all segments in its scope become invalid and any later access throws IllegalStateException (temporal safety — preventing use-after-free). Arenas are confined (single-thread), shared (multi-thread with synchronization), or global (never closed). This eliminates the two classic JNI bugs — buffer overruns and dangling pointers — at the API level, while JNI left memory correctness entirely to the C programmer. Native code that misbehaves internally can still corrupt, but the Java-visible surface is guarded.",
+      "trapWarning": "The naive answer is 'FFM makes native code memory-safe'. It makes the Java↔native boundary safe (bounds/lifetime checks on segments); the native library's internal bugs can still corrupt. Another trap: holding a MemorySegment after closing its arena — it throws, but code that ignores the exception or caches segments across arena lifetimes creates dangling references. Candidates who name spatial vs temporal bounds and arena scoping show real understanding."
+    },
+    {
+      "question": "What is the performance advantage of FFM downcalls over JNI, and when is JNI still used?",
+      "contextIntro": "This probes the interop performance story — interviewers want to know where the overhead was and how the stub-based downcall removes it, plus the migration reality.",
+      "detailedAnswer": "JNI has per-call overhead: each call goes through JNIEnv marshalling, native method lookup, and signature handling, with a fixed cost per invocation that can dominate for small, frequent calls. FFM downcalls are compiled into native stubs: the Linker generates a stub that marshals arguments directly per the C ABI (no JNIEnv, no reflective lookup), so call overhead is drastically lower — close to a direct C function call. Upcalls (Java callbacks) are similarly efficient. JNI remains in use for legacy libraries and code that needs JNI-specific features, but the FFM API is the recommended path for new code (and java.base itself is migrating). The practical win is measured in throughput for high-frequency native interop (e.g. compression, crypto, simd libraries).",
+      "trapWarning": "The naive answer is 'FFM is faster because it skips the C layer'. It still calls C; the win is removing JNI's marshalling/registration overhead via generated stubs. Another trap: assuming the FFM API is fully mature everywhere — it's final in JDK 22, but ecosystem libraries still ship JNI bindings. Candidates who mention stub generation and the ABI marshalling difference show real depth."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "reflection-method-handles-invokedynamic",
+  "title": "MethodHandles, VarHandle, and invokedynamic Bytecode",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (MethodHandles, VarHandle, invokedynamic)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "methodhandles",
+    "varhandle",
+    "invokedynamic",
+    "reflection",
+    "bytecode"
+  ],
+  "prerequisites": [
+    "Java reflection basics",
+    "Understanding of the JVM bytecode and class files"
+  ],
+  "progressiveExplaining": {
+    "eli5": "An office has two ways to delegate a task. The first: a general-purpose errand boy (reflection) who must be told the task details every time, slowly checking the instructions (slow, but flexible). The second: a specialized instruction card (MethodHandle) that the boss prepares once, so any employee can execute it instantly without re-checking. And the building has a magic bulletin board (invokedynamic): the first time a task is posted, the board learns the best way to do it and records it, so every later request is fast. Same result, far less overhead.",
+    "junior": "MethodHandle is a typed, directly-invocable reference to a method (or field accessor/constructor): MethodHandles.lookup().findVirtual(String.class, \"length\", MethodType.methodType(int.class)). MethodHandles are faster than reflection for repeated calls and can be combined (asType, bindTo, filterArguments). VarHandle (java.lang.invoke) gives typed access to fields and array elements with atomic/volatile access modes (compareAndSet, getAndAdd). invokedynamic is a bytecode instruction (used by lambdas, string concat, and language runtimes) that lets the runtime bootstrap the call target lazily and cache it. Lambda expressions compile to invokedynamic.",
+    "senior": "Architecturally, MethodHandles decouple 'what to call' from 'how to call': a MethodHandle is a direct handle bound to a specific method with a specific MethodType, invocable via invokeExact (no argument conversion) or invoke (with adaptation). The JVM can inline MethodHandle call sites aggressively because the target is known. VarHandle generalizes the old sun.misc.Unsafe atomic operations with a safe, typed API covering field and array element access across memory access modes. invokedynamic is the instruction that makes this dynamic: the call site contains a bootstrap method (BSM); on first execution, the JVM invokes the BSM which returns a CallSite (usually a ConstantCallSite wrapping a MethodHandle); the call site is then linked and cached, and the JIT treats it as a direct call.",
+    "underTheHood": "MethodHandle constants are resolved via the constant pool (CONSTANT_MethodHandle). The MethodHandle machinery uses the JVM's method handle intrinsics (e.g. MethodHandle::invokeBasic) and can be 'fully unlinked' in the interpreter, then bound and inlined by C2 after profiling. VarHandle operations compile to the appropriate atomic CPU instructions (CAS, xchg) with the requested access mode and memory ordering (plain/opaque/acquire/release/volatile). invokedynamic in bytecode: invokedynamic #Bootstrap, #MethodName : MethodType. On first execution, the VM calls the BSM (a static method reference) which returns a CallSite; the call site's target MethodHandle is invoked, and the call site is linked for subsequent executions — this is how lambdas avoid per-call allocation in the common case (the lambda factory is cached)."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM bytecode feature.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "Reflection invoke vs MethodHandle invoke",
+    "summary": "Reflection resolves and checks every call; a MethodHandle is a pre-bound, typed, directly-callable reference that the JIT can inline.",
+    "legacyOrBad": {
+      "label": "Reflection for repeated calls",
+      "snippet": "Method m = Foo.class.getMethod(\"bar\", int.class); // ❌ OLD",
+      "fullFile": {
+        "filename": "InvokeLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: Reflection for repeated invocation. Every call goes through\n// Method.invoke, which performs access checks, argument boxing/\n// unboxing, and varargs handling — significant overhead per call, and\n// the JIT cannot easily inline the reflective dispatch.\nimport java.lang.reflect.Method;\n\npublic class InvokeLegacy {\n  public static void main(String[] args) throws Exception {\n    Method m = Foo.class.getMethod(\"bar\", int.class); // ❌ OLD: lookup\n\n    Foo foo = new Foo();\n    long t0 = System.nanoTime();\n    for (int i = 0; i < 1_000_000; i++) {\n      m.invoke(foo, i); // ❌ OLD: reflective call per iteration\n    }\n    System.out.println(\"reflection took \" + (System.nanoTime() - t0) / 1_000_000 + \"ms\");\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "MethodHandle invoke",
+      "snippet": "MethodHandle bar = lookup.findVirtual(Foo.class, \"bar\", MethodType.methodType(void.class, int.class)); // ✅ NEW",
+      "fullFile": {
+        "filename": "InvokeModern.java",
+        "language": "java",
+        "code": "import java.lang.invoke.*;\n\n// ✅ NEW: A MethodHandle is typed, pre-bound, and directly invocable.\n// invokeExact skips argument conversion; the JIT can inline the call\n// target, making hot loops much faster than reflection.\npublic class InvokeModern {\n  public static void main(String[] args) throws Throwable {\n    MethodHandles.Lookup lookup = MethodHandles.lookup();\n    // ✅ NEW: typed handle with exact MethodType\n    MethodHandle bar = lookup.findVirtual(\n        Foo.class, \"bar\", MethodType.methodType(void.class, int.class));\n\n    Foo foo = new Foo();\n    long t0 = System.nanoTime();\n    for (int i = 0; i < 1_000_000; i++) {\n      bar.invokeExact(foo, i); // ✅ NEW: direct, no reflection checks\n    }\n    System.out.println(\"methodhandle took \" + (System.nanoTime() - t0) / 1_000_000 + \"ms\");\n  }\n}\n\n// VarHandle for atomic field access:\n// VarHandle vh = MethodHandles.lookup().findVarHandle(Foo.class, \"count\", int.class);\n// vh.compareAndSet(foo, 0, 1); // atomic, no Unsafe"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does invokedynamic differ from invokestatic/invokevirtual, and why is it ideal for lambdas and dynamic languages?",
+      "contextIntro": "This tests the bytecode-level dynamic linking model — interviewers want the bootstrap/link/cache mechanism and why it enables lazily-decided, cached call targets.",
+      "detailedAnswer": "invokestatic/invokevirtual have a statically-known target (resolved at link time). invokedynamic defers the target decision to runtime: the call site names a bootstrap method (BSM); on first execution, the JVM calls the BSM, which returns a CallSite wrapping the target MethodHandle; the call site is then linked and cached, so subsequent executions are direct calls. This lets the runtime choose the implementation based on runtime conditions (e.g. which lambda factory, which string-concat strategy, which method in a dynamically-typed language) and lets the JIT treat the linked call as a normal direct/inlined call. For lambdas, the BSM returns a constant call site pointing to the generated lambda class's method, and the lambda instance (if stateless) can even be cached — eliminating per-creation allocation.",
+      "trapWarning": "The naive answer is 'invokedynamic is just reflection at bytecode level'. It's a lazy, cached linking mechanism, not per-call reflection — the bootstrap runs once and the call site is bound. Another trap: assuming every invokedynamic allocates on each call — stateless lambdas use a constant call site and cached instances. Candidates who describe the BSM → CallSite → cache flow show real understanding."
+    },
+    {
+      "question": "What are the access modes of VarHandle, and how do they map to the Java Memory Model?",
+      "contextIntro": "This probes the atomic/ordering semantics — interviewers want the distinction between plain/opaque/acquire/release/volatile modes and how they correspond to JMM guarantees.",
+      "detailedAnswer": "VarHandle access modes cover plain reads/writes and read-modify-write operations (compareAndSet, getAndAdd, getAndSet, etc.) each available in several memory-ordering flavors: PLAIN (no ordering guarantees, like a normal field access), OPAQUE (prevents reordering relative to itself but gives no visibility guarantee), ACQUIRE/RELEASE (one-way ordering: acquire prevents subsequent operations from moving before it; release prevents prior operations from moving after it), and VOLATILE (full happens-before semantics like a volatile field). These map directly to the JMM's synchronization actions: VOLATILE creates the happens-before edges of a volatile access; ACQUIRE/RELEASE give the one-way edges used in lock-free structures; OPAQUE is for atomicity without ordering. The JIT lowers each mode to the appropriate CPU barriers/instructions.",
+      "trapWarning": "The naive answer is 'VarHandle is just CAS'. It's a full matrix of access modes and ordering flavors beyond CAS. Another trap: using PLAIN for a flag read expecting visibility — PLAIN provides none; you need VOLATILE/ACQUIRE. Candidates who map modes to JMM edges show real concurrency depth."
+    }
+  ]
+}

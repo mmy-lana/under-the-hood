@@ -1,0 +1,68 @@
+{
+  "id": "cds-class-data-sharing-startup",
+  "title": "Class Data Sharing (CDS) Archives & AOT Startup Optimization",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (CDS + AppCDS, default archive)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "cds",
+    "class-data-sharing",
+    "appcds",
+    "startup",
+    "aot"
+  ],
+  "prerequisites": [
+    "JVM class loading basics",
+    "Understanding of JVM startup and heap"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A school has a library of standard textbooks that every classroom needs. Instead of every classroom photocopying the books each morning (re-reading and re-copying every lesson), the school keeps one master copy of the standard set in a vault, and each classroom just borrows it — instant, no copying. If a classroom also uses a special workbook, the school adds it to the vault once, and all future classrooms borrow that too. The vault is the shared archive: pre-loaded, shared, and ready.",
+    "junior": "Class Data Sharing (CDS) archives pre-loaded classes so the JVM can start faster and share memory. The JDK ships a default archive (classes.jsa) for core classes; enabling it with -XX:+UseCDSOnDemand or the default (Java 12+) reduces startup and footprint. AppCDS extends this to your application classes: run java -XX:ArchiveClassesAtExit=app.jsa -jar app.jar to create an archive, then java -XX:SharedArchiveFile=app.jsa -jar app.jar to use it. Benefits: faster startup (classes are loaded from the archive, not re-parsed) and lower memory (the archive is mapped, often shared across processes).",
+    "senior": "Architecturally, CDS works by dumping a snapshot of loaded classes (their Klass structures and constant pools) into an archive file at exit (or via a training run). At startup, the JVM memory-maps the archive, so classes are 'loaded' by mapping pre-built structures rather than parsing class files and allocating Klass objects — cutting startup time significantly and reducing memory fragmentation. The archive is mapped read-only and can be shared between JVM processes (OS-level page sharing), cutting resident memory for multiple instances. AppCDS (the Application CDS) includes your own classes and even lambda classes; dynamic archiving (JDK 13+) lets you create the archive at the end of a normal run.",
+    "underTheHood": "The archive format contains the class metadata (Klass, constant pool, Method structures) in a mapped region. At dump time, the JVM walks the loaded classes and writes their internal VM structures into the archive; at load time, it maps the archive into memory and 'loads' classes by pointing at the mapped structures (fast, no parsing). Class loading via CDS skips the verify/parse steps that normal class loading performs (verification results are cached in the archive). The heap also gets a shared region for archived objects (e.g. the String table interned strings). Compatibility checks (classpath/Java version) are done at archive load; a mismatch falls back to normal loading. Lambda classes and dynamically loaded classes can be archived with dynamic archiving."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM startup optimization.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "Cold JVM startup vs CDS-archived startup",
+    "summary": "Without CDS the JVM parses class files at every start; with an archive it memory-maps pre-built class metadata, cutting startup.",
+    "legacyOrBad": {
+      "label": "No CDS archive (re-parse every start)",
+      "snippet": "java -jar app.jar # ❌ OLD: every start re-loads and re-parses all classes",
+      "fullFile": {
+        "filename": "run.sh",
+        "language": "bash",
+        "code": "#!/bin/bash\n# ❌ OLD: A plain launch. Every JVM start must locate, read, and parse\n# every class file (JDK classes + app classes), verify, and allocate\n# Klass structures — startup cost scales with class count, and each\n# process holds its own private copy of that metadata.\njava -jar app.jar\n\n# With a large app (Spring Boot: thousands of classes), startup can\n# take seconds; N microservice instances each pay that cost and each\n# hold duplicate class metadata in memory."
+      }
+    },
+    "modernOrGood": {
+      "label": "AppCDS archive",
+      "snippet": "java -XX:ArchiveClassesAtExit=app.jsa -jar app.jar  # create\njava -XX:SharedArchiveFile=app.jsa -jar app.jar      # ✅ NEW: use",
+      "fullFile": {
+        "filename": "run.sh",
+        "language": "bash",
+        "code": "#!/bin/bash\n# ✅ NEW: Create an AppCDS archive from a normal run, then use it.\n\n# Step 1: generate the archive (training run, exits after loading classes)\njava -XX:ArchiveClassesAtExit=app.jsa -jar app.jar\n\n# Step 2: launch with the archive — classes are memory-mapped from it\n# instead of parsed, so startup is faster and metadata can be shared\n# across JVM processes (lower RSS for many instances).\njava -XX:SharedArchiveFile=app.jsa -jar app.jar\n\n# Combined with Spring Boot's CDS support and AOT, this is the\n# standard toolbox for cutting cold-start latency in serverless and\n# microservice deployments."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does CDS make startup faster, and why does the archive get shared across processes?",
+      "contextIntro": "This tests the mechanism — interviewers want the memory-mapping of pre-built class metadata and the OS page-sharing effect, not just 'it caches classes'.",
+      "detailedAnswer": "Normal class loading parses the class file, verifies it, and allocates VM structures (Klass, Method, constant pool) per process. CDS archives those structures at dump time and, at startup, memory-maps the archive file instead of re-parsing: the JVM points its class metadata at the mapped region, skipping parse/verify/allocation work. That removes a large chunk of startup CPU. Because the archive is a read-only mapped file with stable layout, the OS can share its physical pages across multiple JVM processes running the same archive — each process maps the same pages, so resident memory for class metadata is shared rather than duplicated. This is why CDS helps both single-process startup latency and multi-instance memory footprint.",
+      "trapWarning": "The naive answer is 'CDS caches classes in a file so they load from disk faster'. The win is skipping the parse/verify work and mapping pre-built structures, plus OS page sharing. Another trap: assuming any app benefits automatically — AppCDS requires creating the archive, and archives invalidate when the classpath or JDK changes (falls back to normal loading). Candidates who mention memory-mapping and page sharing show real understanding."
+    },
+    {
+      "question": "What is the difference between the default CDS archive and AppCDS, and how does dynamic archiving work?",
+      "contextIntro": "This probes the archive types and creation workflow — interviewers want to know what's covered by default, how app classes get archived, and the modern dynamic path.",
+      "detailedAnswer": "The default CDS archive (classes.jsa, shipped with the JDK) covers the JDK's own classes (java.base and the platform modules). AppCDS extends the archive to include application classes and library classes from the classpath, which is where the biggest startup win is for large apps. Dynamic archiving (JDK 13+) streamlines creation: instead of a separate -Xshare:dump training run, you add -XX:ArchiveClassesAtExit=app.jsa to a normal launch, and the JVM writes an archive at exit containing all classes loaded during that run (including lambdas and dynamically-loaded classes). Subsequent launches use -XX:SharedArchiveFile=app.jsa. The archive must match the classpath/JDK; mismatches cause a fallback to normal loading with a warning, so CI should regenerate archives when dependencies change.",
+      "trapWarning": "The naive answer is 'CDS archives all classes automatically at build time'. The default archive only covers JDK classes; app classes need AppCDS (explicit or dynamic). Another trap: using an archive from a different classpath or JDK version silently disables it — the JVM falls back, and startup returns to cold. Candidates who describe the default-vs-AppCDS split and the regeneration need show real deployment experience."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "fork-join-pool-work-stealing",
+  "title": "ForkJoinPool: Work-Stealing Deque Queues & Parallel Streams",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (ForkJoinPool, common pool)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "forkjoinpool",
+    "work-stealing",
+    "parallel-streams",
+    "concurrency",
+    "deque"
+  ],
+  "prerequisites": [
+    "Java threads and executor basics",
+    "Understanding of divide-and-conquer algorithms"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A warehouse has several workers, each with a personal pile of boxes at their station. When a worker finishes their pile, instead of standing idle, they walk to another worker's station and grab boxes from the BOTTOM of that person's pile (the oldest ones). This keeps everyone busy and minimizes arguments over the same box. The manager also has a rule: workers prefer their own newest boxes first. This clever borrowing system is work-stealing, and it keeps all workers (cores) productive.",
+    "junior": "ForkJoinPool is an executor designed for divide-and-conquer and parallelism. Use it directly: ForkJoinPool pool = new ForkJoinPool(); pool.invoke(new RecursiveTask...()); or use the common pool: IntStream.range(0, n).parallel().map(...).sum(). Parallel streams use the common ForkJoinPool (size = CPU cores - 1). Tasks fork (split work) and join (combine results); the pool uses work-stealing to balance load. Avoid blocking inside parallel stream tasks (a blocked task occupies a worker and can exhaust the pool). Use custom pools for blocking or heavy CPU work with controlled parallelism.",
+    "senior": "Architecturally, ForkJoinPool is a work-stealing scheduler: each worker thread owns a double-ended queue (deque) of tasks. A worker pushes new subtasks (fork) onto the head of its own deque and pops from the head (LIFO) — maximizing cache locality. When its deque is empty, it STEALS from the tail of another worker's deque (FIFO), which minimizes contention with the owner and steals the oldest/largest chunk of remaining work. Tasks are ForkJoinTask (RecursiveTask/RecursiveAction) or submitted Callables. The pool dynamically manages worker counts (compensating blocked workers via managedBlock) and maintains a global submission queue for external tasks.",
+    "underTheHood": "Each worker has a WorkQueue with a volatile base/top index into a task array (the deque). push (fork) does a volatile write of top; pop (LIFO) reads top; steal reads base from the tail. The steal operation uses a CAS to update base, ensuring only one thief wins per slot. The pool tracks active/inactive workers and spins or parks (via LockSupport) based on the work availability signal (a shared 'signal' field). join() blocks the worker and, while waiting, the worker runs other tasks (helpJoin), which is why ForkJoinTask.join is efficient: the worker never idles — it processes the deque and can even help complete the joined task's subtasks. Parallel streams' Spliterator splits the source and submits subtasks to the common pool's work queues."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM concurrency feature.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "Sequential recursive split vs ForkJoin work-stealing",
+    "summary": "A naive recursive split runs one thread; ForkJoin divides the task and steals work so all cores stay busy.",
+    "legacyOrBad": {
+      "label": "Sequential divide-and-conquer",
+      "snippet": "int sum(int[] a, int lo, int hi) {\n  if (hi - lo < 1000) { int s = 0; for (int i = lo; i < hi; i++) s += a[i]; return s; }\n  int mid = (lo + hi) / 2;\n  return sum(a, lo, mid) + sum(a, mid, hi); // ❌ OLD: single-threaded recursion\n}",
+      "fullFile": {
+        "filename": "SumLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: A divide-and-conquer sum that runs entirely on ONE thread.\n// The recursion splits the problem but does not use the other cores,\n// so on a 16-core machine 15 cores sit idle.\npublic class SumLegacy {\n  static int sum(int[] a, int lo, int hi) {\n    if (hi - lo < 1_000) {\n      int s = 0;\n      for (int i = lo; i < hi; i++) s += a[i];\n      return s;\n    }\n    int mid = (lo + hi) / 2;\n    // ❌ OLD: both halves run on this same thread, sequentially\n    return sum(a, lo, mid) + sum(a, mid, hi);\n  }\n\n  public static void main(String[] args) {\n    int[] a = new int[10_000_000];\n    System.out.println(sum(a, 0, a.length)); // ❌ OLD: one core busy\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Parallel stream (common ForkJoinPool)",
+      "snippet": "int total = IntStream.range(0, a.length).parallel().map(i -> a[i]).sum(); // ✅ NEW",
+      "fullFile": {
+        "filename": "SumModern.java",
+        "language": "java",
+        "code": "import java.util.stream.IntStream;\n\n// ✅ NEW: A parallel stream splits the work via Spliterator and submits\n// subtasks to the common ForkJoinPool, which balances load with\n// work-stealing across all cores.\npublic class SumModern {\n  public static void main(String[] args) {\n    int[] a = new int[10_000_000];\n\n    // ✅ NEW: parallel split + join on the common pool\n    int total = IntStream.range(0, a.length)\n        .parallel()\n        .map(i -> a[i])\n        .sum();\n\n    System.out.println(total);\n\n    // For custom parallel control, use an explicit pool:\n    // try (var pool = new ForkJoinPool(8)) {\n    //   pool.submit(() -> IntStream.range(0, n).parallel().sum()).join();\n    // }\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does work-stealing keep all workers busy, and why does each worker pop its own queue LIFO but steal FIFO?",
+      "contextIntro": "This tests the scheduler mechanics — interviewers want the deque design and the LIFO-vs-FIFO rationale (cache locality vs stealing the largest chunk) that makes the pool efficient.",
+      "detailedAnswer": "Each worker owns a deque: it pushes forked subtasks on its own head and pops from its head (LIFO). LIFO gives cache locality — the most recently forked task is likely the one with the most context in the cache — and keeps the deque small. When a worker's deque is empty, it steals from another worker's TAIL (FIFO): the tail holds the oldest tasks, which are typically the LARGEST remaining chunks of work, and stealing from the tail (opposite end from the owner's pop) minimizes contention — the owner pops the head while thieves take the tail, so they rarely race on the same slot. The steal uses a CAS on the base index so only one thief wins a slot. This asymmetry is the core of the pool's load-balancing efficiency.",
+      "trapWarning": "The naive answer is 'work-stealing just shares a global queue'. Each worker has a private deque and only steals when empty, which keeps the common case lock-free. Another trap: assuming join() idles the worker — it actively helps run other tasks while waiting (helpJoin), which is why join is efficient. Candidates who describe the LIFO/FIFO asymmetry and the CAS steal show real understanding."
+    },
+    {
+      "question": "What happens if a ForkJoinPool task blocks, and how does the common pool handle blocking tasks from parallel streams?",
+      "contextIntro": "This probes the blocking compensation model — interviewers want to know why blocking in parallel stream tasks is dangerous and how managedBlock compensates worker count.",
+      "detailedAnswer": "A ForkJoinTask that blocks (e.g. waiting on I/O or a lock) occupies a worker thread that can no longer run other tasks. Since the pool sizes its worker count to the CPU count, a few blocked workers can starve the pool of parallelism — and with parallel streams, the common pool can even deadlock under nested parallelism if all workers block on each other. ForkJoinPool mitigates this with compensation: ForkJoinTask.managedBlock (or the Pool's internal machinery) detects a blocking operation and temporarily spawns a replacement worker to maintain the parallelism target. The common pool (ForkJoinPool.commonPool()) has limited parallelism (cores - 1) and no control over custom blocking, so the guidance is: do NOT block inside parallel-stream tasks; use a custom pool or CompletableFuture/separate executor for blocking I/O.",
+      "trapWarning": "The naive answer is 'ForkJoinPool grows threads like a cached pool'. It targets CPU-bound parallelism with compensation as a mitigation, not a general-purpose blocking executor. Another trap: nesting parallel streams can exhaust the common pool and deadlock — the parallelism of the outer and inner streams is shared. Candidates who mention managedBlock and the common pool's limits show real depth."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "string-deduplication-compact-strings",
+  "title": "Compact Strings (byte[] + coder flag) & String Deduplication",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 9+ (compact strings), JDK 8u20+ (deduplication)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "compact-strings",
+    "string",
+    "deduplication",
+    "memory",
+    "gc"
+  ],
+  "prerequisites": [
+    "Java String basics",
+    "Understanding of JVM heap memory"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A form asks for a name. The old way: every name is written in big fancy letters, taking two boxes per letter (UTF-16). The new way: if the name only uses plain letters, it's written in one box per letter, saving half the paper. Additionally, the recycling team noticed many forms have the SAME name written many times — so the warehouse keeps just ONE copy and all the forms point to it. Both tricks cut the storage dramatically.",
+    "junior": "Before JDK 9, String stored char[] (2 bytes per char, UTF-16 always). Compact Strings (JDK 9+) store byte[] plus a coder flag (LATIN1 or UTF16): if all characters fit in Latin-1, the string uses 1 byte per char — halving memory for most strings. This is automatic; String.length() still returns the character count. String Deduplication (-XX:+UseStringDeduplication, G1) is a GC feature that identifies duplicate String objects (same content) and makes them share the same backing char[]/byte[], saving heap when many strings repeat (e.g. JSON keys, log fields).",
+    "senior": "Architecturally, compact strings are a memory layout optimization: the String object holds a byte[] value and a byte coder (0 = LATIN1, 1 = UTF16). All operations (charAt, substring, equals, hashCode) are coder-aware, dispatching on the flag. The JVM's string intrinsics (in C2) use the coder to select optimized paths. String Deduplication is a G1 GC feature (also in other collectors via plugins): during GC, the collector hashes the backing arrays of candidate strings, finds duplicates, and points the duplicate String to the same array (the source is marked for reuse). It's a GC-time optimization, off the application path, targeting heap-heavy apps with many equal strings.",
+    "underTheHood": "String layout: object header + byte[] reference + int hash + byte coder (compressed). The StringConcat and StringBuilder paths produce compact strings when possible. The coder flag is consulted by the compact strings intrinsics: indexOf/equals/hashCode have Latin-1 fast paths. Deduplication runs as a G1 concurrent phase (with a threshold, default age 3): it computes a hash of each candidate's value array, checks a dedup table, and if an identical array exists, swaps the String's value reference to it and returns the old array to the heap. The dedup table is a hash map keyed by the array hash + content equality; it's sized and periodically cleaned to bound overhead."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM runtime feature.",
+    "angular": "N/A — JVM feature.",
+    "vue": "N/A — JVM feature.",
+    "svelte": "N/A — JVM feature."
+  },
+  "codeComparison": {
+    "title": "char[]-based Strings vs compact byte[]+coder Strings",
+    "summary": "The old layout costs 2 bytes per char always; compact strings use 1 byte per char for Latin-1 content, halving memory for typical data.",
+    "legacyOrBad": {
+      "label": "Pre-JDK9 char[] String",
+      "snippet": "// ❌ OLD: String was backed by char[] — every char = 2 bytes, always",
+      "fullFile": {
+        "filename": "StringMemoryLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: Before JDK 9, String wrapped a char[]: every character cost\n// 2 bytes (UTF-16), even for pure-ASCII text. A 100-character ASCII\n// string consumed 200 bytes of backing storage plus object overhead.\npublic class StringMemoryLegacy {\n  // ❌ OLD: 'hello' stored as 5 x 2-byte chars = 10 bytes\n  String s = \"hello\";\n\n  // A JSON-heavy app with millions of short ASCII keys paid double the\n  // necessary memory, increasing heap pressure and GC frequency.\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Compact byte[]+coder String",
+      "snippet": "String s = \"hello\"; // ✅ NEW: byte[] with LATIN1 coder → 5 bytes",
+      "fullFile": {
+        "filename": "StringMemoryModern.java",
+        "language": "java",
+        "code": "// ✅ NEW: Compact Strings (JDK 9+) back ASCII/Latin-1 strings with a\n// byte[] and a coder flag (LATIN1 = 1 byte/char). 'hello' costs 5\n// bytes instead of 10. Multi-byte content uses UTF16 mode automatically.\npublic class StringMemoryModern {\n  String ascii = \"hello\"; // ✅ NEW: LATIN1 coder, 1 byte/char\n  String emoji = \"hello 🚀\"; // ✅ NEW: UTF16 coder, auto-detected\n\n  // Same public API — length() returns characters; the coder is an\n  // internal layout detail. JVM string intrinsics pick fast paths by\n  // coder. For GC-time savings on duplicate content, enable:\n  //   -XX:+UseStringDeduplication -XX:StringDeduplicationAgeThreshold=3\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do compact strings change the memory layout of String, and what operations are affected by the coder flag?",
+      "contextIntro": "This tests the layout knowledge — interviewers want the byte[]+coder design and how the JVM keeps the public API stable while optimizing internals.",
+      "detailedAnswer": "Compact strings store the characters in a byte[] (not char[]) plus a byte coder flag: LATIN1 (0) when every char fits in one byte, UTF16 (1) otherwise. The length() is computed from the byte[] length shifted by the coder (for LATIN1, /1; for UTF16, /2), so the public API is unchanged. Operations that depend on indexing — charAt, substring, indexOf, equals, hashCode, compareTo — consult the coder and use optimized Latin-1 paths (the C2 compiler emits intrinsics keyed on the coder). When a string transitions to UTF16 (a non-Latin char is appended), the array is expanded to 2 bytes/char. This halves memory for typical ASCII-heavy data and improves cache locality, with negligible complexity cost because the coder check is a single branch.",
+      "trapWarning": "The naive answer is 'compact strings always use one byte per char'. Only Latin-1-compatible strings do; non-Latin content flips to UTF16. Another trap: assuming charAt is now O(1) byte indexing — it must decode based on the coder, but remains O(1); code that assumed a char[] layout or used reflection into the value field breaks. Candidates who describe the coder-aware dispatch show real understanding."
+    },
+    {
+      "question": "What is String Deduplication, and why does it only help in specific workloads?",
+      "contextIntro": "This probes the GC-time optimization — interviewers want the dedup mechanism and the honest scope (only helps with many equal strings; has overhead).",
+      "detailedAnswer": "String Deduplication is a GC feature (G1, and some other collectors) that runs during collection: the GC hashes the backing value array of candidate String objects, looks up a dedup table, and if an identical array already exists, it re-points the duplicate String's value reference to the existing array, making the duplicate's array garbage. It only triggers on strings that survive past a young-gen age threshold (default 3), avoiding the cost of deduping short-lived strings. The win is workload-dependent: apps with many repeated strings (JSON keys, enum names, log messages, identifier-heavy data) can see significant heap savings; apps with mostly unique strings gain nothing and pay the hash/table overhead. It's disabled by default and tuned via -XX:StringDeduplicationAgeThreshold and the dedup table size.",
+      "trapWarning": "The naive answer is 'deduplication dedupes all equal strings automatically'. It is GC-time, age-thresholded, and opt-in; String interning (intern()) is a different, explicit mechanism. Another trap: assuming it saves memory for short-lived strings — dedup only considers older survivors. Candidates who mention the age threshold and the workload-dependence show real understanding."
+    }
+  ]
+}

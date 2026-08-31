@@ -1,0 +1,68 @@
+{
+  "id": "sealed-classes-pattern-matching",
+  "title": "Sealed Classes, Records, and Exhaustive Pattern Matching in switch",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (sealed classes JEP 409, pattern matching for switch JEP 441)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "sealed-classes",
+    "records",
+    "pattern-matching",
+    "switch",
+    "java-21"
+  ],
+  "prerequisites": [
+    "Java classes, interfaces, and inheritance",
+    "Understanding of switch statements"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A game uses a fixed set of game pieces: circle, square, and triangle — no other shapes are allowed, ever. The rules book lists exactly what to do for each shape and, because the set is closed, the book can say 'these are all the cases, nothing else can appear'. If the game later adds a hexagon, the rule book must be updated everywhere. A sealed shape system is that fixed set: the game's rule checker knows every possible piece, so it can check that your rules cover all of them — no 'unknown shape' surprises at play time.",
+    "junior": "sealed classes restrict which classes can extend/implement them: public sealed interface Shape permits Circle, Square, Triangle {}. The permitted subclasses must be in the same module/package (or declared nested). Combined with records (data carriers), you get algebraic-data-type style modeling. Pattern matching for switch lets you write: return switch (shape) { case Circle c -> area(c); case Square s -> area(s); case Triangle t -> area(t); };. The compiler checks exhaustiveness: if you cover all permitted types, no default is needed; if you miss one (or add a new permitted type), the code doesn't compile.",
+    "senior": "Architecturally, sealed classes make the type hierarchy closed and known at compile time, which enables two things: exhaustive pattern matching (the compiler verifies the switch covers all permitted subtypes) and precise type inference in pattern labels (the matched variable is narrowed to the specific subtype). This is Java's answer to algebraic data types: sealed interfaces + records + pattern matching give sum-type + product-type modeling. Sealed hierarchies improve API design (the author controls the extension surface) and enable the compiler to prove totality. The permitted list is enforced at compile time (and verified at runtime via the class file's PermittedSubclasses attribute).",
+    "underTheHood": "The compiler emits the PermittedSubclasses attribute in the sealed class's class file; the JVM verifies that each permitted subclass actually extends/seals the class. Pattern matching for switch is lowered by the compiler: type patterns become instanceof checks + casts (or, when the selector is a primitive/record, destructuring). For sealed types, the compiler can prove exhaustiveness from the permits list, so a switch without default compiles to a tableswitch/lookupswitch plus per-case type checks, and a 'no match' path throws MatchException (or falls to default). Record patterns (case Point(int x, int y)) are lowered to getter calls + nested pattern checks. Nested patterns compose recursively."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM language feature.",
+    "angular": "N/A — JVM language feature.",
+    "vue": "N/A — JVM language feature.",
+    "svelte": "N/A — JVM language feature."
+  },
+  "codeComparison": {
+    "title": "instanceof chains vs exhaustive sealed switch",
+    "summary": "Hand-rolled instanceof chains are unverifiable and need a default; pattern matching on a sealed hierarchy lets the compiler prove completeness.",
+    "legacyOrBad": {
+      "label": "instanceof chain with default",
+      "snippet": "if (s instanceof Circle c) return area(c);\nelse if (s instanceof Square sq) return area(sq); // ❌ OLD: no exhaustiveness check",
+      "fullFile": {
+        "filename": "AreaLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: instanceof chains have no exhaustiveness guarantee. If a\n// new Shape subtype is added, this method silently falls through to\n// the default (or returns a wrong value) — the compiler cannot tell\n// you that you missed a case.\npublic class AreaLegacy {\n  public double area(Shape s) {\n    // ❌ OLD: manual dispatch, unverifiable\n    if (s instanceof Circle c) return Math.PI * c.r() * c.r();\n    if (s instanceof Square sq) return sq.side() * sq.side();\n    // ❌ OLD: adding a Triangle silently reaches this fallback\n    throw new IllegalArgumentException(\"unknown shape\");\n  }\n}\n\n// With an unsealed interface, the compiler has no idea how many\n// subtypes exist, so there is no way to check completeness."
+      }
+    },
+    "modernOrGood": {
+      "label": "Exhaustive pattern-matching switch",
+      "snippet": "return switch (s) {\n  case Circle c -> Math.PI * c.r() * c.r();\n  case Square sq -> sq.side() * sq.side();\n  case Triangle t -> 0.5 * t.base() * t.height();\n}; // ✅ NEW: compiler-verified exhaustive",
+      "fullFile": {
+        "filename": "AreaModern.java",
+        "language": "java",
+        "code": "// ✅ NEW: sealed hierarchy + exhaustive switch. The compiler checks\n// that every permitted subtype is covered — no default needed, and\n// adding a new permitted type breaks the build until you handle it.\npublic sealed interface Shape permits Circle, Square, Triangle {}\n\n// ✅ NEW: records as data carriers\npublic record Circle(double r) implements Shape {}\npublic record Square(double side) implements Shape {}\npublic record Triangle(double base, double height) implements Shape {}\n\npublic class AreaModern {\n  public double area(Shape s) {\n    // ✅ NEW: exhaustive — the compiler proves completeness\n    return switch (s) {\n      case Circle c -> Math.PI * c.r() * c.r();\n      case Square sq -> sq.side() * sq.side();\n      case Triangle t -> 0.5 * t.base() * t.height();\n    }; // ✅ NEW: no default; adding a new Shape subtype = compile error\n  }\n}\n\n// Pattern matching also supports record destructuring:\n// case Point(int x, int y) -> Math.hypot(x, y);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does sealing a class actually guarantee, and how does it enable exhaustive switch?",
+      "contextIntro": "This tests the language-model understanding — interviewers want the closed-hierarchy property and how the compiler uses the permits list for totality, not just the syntax.",
+      "detailedAnswer": "A sealed class/interfaces declares a closed set of permitted direct subclasses (via the permits clause, or nested declaration). The compiler enforces that only those types can extend it (across the same module), and the JVM verifies it at runtime through the PermittedSubclasses attribute. Because the hierarchy is closed and known statically, the compiler can enumerate every possible runtime type of a sealed value, so a switch over it can be proven exhaustive: cover all permitted types and no default is needed; miss one, or add a new permitted type, and the code fails to compile. This turns 'forgot a case' runtime bugs into compile-time errors and enables the compiler to generate efficient dispatch without a catch-all.",
+      "trapWarning": "The naive answer is 'sealed just restricts inheritance'. The value is the closed-world totality proof it enables for pattern matching. Another trap: assuming permits is optional sugar — a sealed type without an explicit permits clause uses nested-declaration inference, but the rule that subclasses must be co-located (same package or module) still applies, and adding a subclass outside the permits list is a compile error. Candidates who connect sealing to exhaustiveness show real understanding."
+    },
+    {
+      "question": "How do record patterns work in switch, and what gets generated under the hood?",
+      "contextIntro": "This probes the destructuring mechanics — interviewers want to know how case Point(int x, int y) extracts components and how nested patterns lower to bytecode.",
+      "detailedAnswer": "A record pattern (case Point(int x, int y)) matches the selector against the record type and destructures its components: the compiler lowers it to an instanceof Point check, a cast, then reads the record's accessor methods (x() and y()), binding the results to pattern variables x and y. Nested patterns (case Line(Point a, Point b)) lower recursively: instanceof Line, then a destructured into a nested Point pattern check. The compiler also handles null safely (a pattern switch throws NPE if the selector is null, or you can add a case null). Type patterns and record patterns compose, and the exhaustiveness analysis treats record patterns as covering their record type when all components have patterns. The generated bytecode uses standard instanceof/cast chains plus the accessor invocations — no magic new bytecode.",
+      "trapWarning": "The naive answer is 'record patterns are magic destructuring'. They compile to instanceof + accessor calls. Another trap: forgetting that pattern variables are scoped to the case block and that a guarded pattern (case Point p when p.x() > 0) re-tests the guard — a guard that fails does NOT make the case match, and exhaustiveness must account for unguarded fallthrough. Candidates who describe the lowering and guard semantics show real depth."
+    }
+  ]
+}

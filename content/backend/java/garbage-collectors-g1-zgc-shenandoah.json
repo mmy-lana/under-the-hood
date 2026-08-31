@@ -1,0 +1,69 @@
+{
+  "id": "garbage-collectors-g1-zgc-shenandoah",
+  "title": "Garbage Collectors: Generational G1 vs ZGC Colored Pointers",
+  "category": "backend",
+  "subcategory": "java",
+  "versionContext": "JDK 21+ (G1, ZGC, Shenandoah)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "java",
+    "garbage-collection",
+    "g1",
+    "zgc",
+    "shenandoah",
+    "jvm",
+    "memory"
+  ],
+  "prerequisites": [
+    "JVM memory model basics (heap, regions)",
+    "Understanding of GC concepts (mark, sweep, compact)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A warehouse has a recycling team that clears out boxes no one needs anymore. The first team (G1) works like a careful organizer: they divide the warehouse into zones, and instead of cleaning everything at once, they tidy the zones that have the most junk first, working gradually so the warehouse never fully closes. The second team (ZGC) is even more clever: they put tiny labels on every box, and when they need to move a box, they just change the label — so the workers never have to stop and wait; the warehouse stays open the whole time, even with a huge amount of boxes.",
+    "junior": "G1 is the default GC since JDK 9: it divides the heap into regions and collects incrementally, prioritizing regions with the most garbage (garbage-first). Use -XX:+UseG1GC and tune with -XX:MaxGCPauseMillis. ZGC (-XX:+UseZGC) is a low-latency collector designed for very large heaps (up to terabytes): it keeps pause times under ~1ms regardless of heap size by doing most work concurrently with the application. Shenandoah (-XX:+UseShenandoahGC) is similar (OpenJDK, also in Red Hat builds). Choose G1 for general throughput, ZGC/Shenandoah for latency-critical services with large heaps.",
+    "senior": "Architecturally, G1 is a generational, region-based collector: the heap is split into equal regions, remembered sets track cross-region references, and collections are concurrent mark + incremental evacuation with a pause-time goal. ZGC is a region-based, non-generational (JDK 21 adds generational ZGC) concurrent collector using load barriers and colored pointers: the GC encodes heap-region state (color) in the unused bits of 64-bit object references, so reads are checked/adjusted via a barrier on pointer load, enabling concurrent relocation without stop-the-world compaction. Shenandoah uses a Brooks forwarding pointer (an indirection in the object header) instead of colored pointers. The trade-off: G1 has bounded pauses with higher throughput; ZGC/Shenandoah have near-zero pauses with more CPU/memory overhead.",
+    "underTheHood": "ZGC's colored pointers use the high bits of a 64-bit pointer to store 4 views of a region (marked0, marked1, remapped, finalizable); the load barrier checks the color bits on every object reference load and remaps if needed. Marking is concurrent (multi-mapped heap), relocation is concurrent: objects are copied to new regions and the old view is 'remapped' lazily via barriers. G1's evacuation copies live objects from source regions to destination regions, updating references via remembered sets and SATB (snapshot-at-the-beginning) barriers for concurrent marking. Shenandoah's Brooks pointer adds an indirection field in each object header pointing to its current copy, so updates go through the forwarding pointer. Pause time in ZGC is bounded by the number of roots, not heap size — the key property that makes it scale to TB heaps."
+  },
+  "rosettaStone": {
+    "react": "N/A — JVM runtime concern.",
+    "angular": "N/A — server-side JVM concern.",
+    "vue": "N/A — JVM concern.",
+    "svelte": "N/A — JVM concern."
+  },
+  "codeComparison": {
+    "title": "G1 default config vs ZGC low-latency config",
+    "summary": "G1 targets bounded pauses with default settings; ZGC trades CPU/memory for near-zero pauses on large heaps.",
+    "legacyOrBad": {
+      "label": "Untuned G1 for a latency-critical service",
+      "snippet": "java -Xms4g -Xmx4g -jar app.jar # ❌ OLD: default G1, pauses can spike on large heaps",
+      "fullFile": {
+        "filename": "run.sh",
+        "language": "bash",
+        "code": "#!/bin/bash\n# ❌ OLD: Default G1. For a latency-critical service with a large\n# heap, G1's evacuation pauses can reach tens or hundreds of ms,\n# causing latency spikes (p99) that violate SLOs.\njava -Xms4g -Xmx4g -jar app.jar\n\n# G1 pauses scale with the amount of live data being copied and the\n# remembered-set scan; on a busy 4-8GB heap, mixed collections can\n# produce multi-ms-to-hundreds-of-ms pauses."
+      }
+    },
+    "modernOrGood": {
+      "label": "ZGC for low-latency large heap",
+      "snippet": "java -XX:+UseZGC -Xms16g -Xmx16g -jar app.jar # ✅ NEW: sub-ms pauses at any heap size",
+      "fullFile": {
+        "filename": "run.sh",
+        "language": "bash",
+        "code": "#!/bin/bash\n# ✅ NEW: ZGC keeps pauses in the sub-millisecond range regardless of\n# heap size by doing marking/relocation concurrently with the app.\njava -XX:+UseZGC -Xms16g -Xmx16g -jar app.jar\n\n# ZGC trades extra CPU (load barriers on every reference load) and\n# memory (multi-mapped heap, forwarding structures) for bounded pause\n# times. Generational ZGC (-XX:+ZGenerational) adds young-gen\n# collection for lower overhead on typical workloads.\n\n# For OpenJDK builds with Shenandoah:\n# java -XX:+UseShenandoahGC -Xms16g -Xmx16g -jar app.jar"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What makes ZGC able to keep pauses sub-millisecond regardless of heap size, while G1 pauses grow?",
+      "contextIntro": "This separates candidates who understand the load-barrier/colored-pointer design from those who just know 'ZGC is low latency' — interviewers want the mechanism that removes heap-size dependency.",
+      "detailedAnswer": "ZGC's pause time is bounded by the number of GC roots (thread stacks, registers, JNI roots), not by heap size, because all the heap-wide work happens concurrently with the application. The mechanism is the load barrier + colored pointers: the GC encodes per-region state (marked0/marked1/remapped/finalizable) in the unused high bits of 64-bit object references. When application threads load an object reference, the load barrier checks the color bits and, if the region is being remapped/relocated, adjusts the pointer (or reads the forwarding address) on the spot. Marking and relocation are therefore incremental and concurrent — the app threads cooperate through barriers rather than stopping. G1, by contrast, performs evacuation with a stop-the-world pause whose duration grows with the live-set size being copied and the remembered-set scanning work.",
+      "trapWarning": "The naive answer is 'ZGC uses more CPU so it's faster'. The real distinction is the concurrency model: barrier-assisted concurrent relocation vs stop-the-world evacuation. Another trap: thinking ZGC works on any heap size for free — it needs enough memory for the multi-mapped/forwarding overhead, and generational ZGC is recommended for typical workloads to reduce allocation-rate overhead. Candidates who mention colored pointers and load barriers show real understanding."
+    },
+    {
+      "question": "How does G1 decide which regions to collect, and what is the role of remembered sets?",
+      "contextIntro": "This probes G1's incremental collection model — interviewers want the region-based garbage-first heuristic and the cross-region reference tracking that makes partial collections correct.",
+      "detailedAnswer": "G1 divides the heap into equal-sized regions and maintains a global marking (concurrent) that identifies live objects. The 'garbage-first' heuristic ranks regions by the ratio of garbage to live data and selects a set of regions (the collection set, CSet) for evacuation each cycle, aiming to reclaim the most memory within the pause-time goal (-XX:MaxGCPauseMillis). Remembered sets (RSets) track which regions contain references pointing INTO each region; when evacuating a region, G1 scans its RSet to find and update all incoming references from other regions. SATB (snapshot-at-the-beginning) barriers ensure concurrent marking captures a consistent snapshot. Young collections promote survivors; mixed collections evacuate old regions.",
+      "trapWarning": "The naive answer is 'G1 compacts the whole heap'. It evacuates a subset of regions per collection, so the heap is never fully compacted at once (fragmentation can still occur in old regions). Another trap: assuming RSets are free — they consume memory and update CPU, which is why humongous objects (larger than half a region) are allocated specially and can cause premature full GCs. Candidates who describe CSet selection, RSets, and SATB show real G1 understanding."
+    }
+  ]
+}
