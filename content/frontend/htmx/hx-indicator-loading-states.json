@@ -1,0 +1,58 @@
+{
+  "id": "hx-indicator-loading-states",
+  "title": "hx-indicator: Declarative Loading States via .htmx-request CSS Classes",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-indicator", "loading-states", "spinner", "css", "htmx-request"],
+  "prerequisites": ["CSS Opacity & Display transitions", "HTMX AJAX lifecycle"],
+  "progressiveExplaining": {
+    "eli5": "When you click a button to download a file, you want a spinning wheel to appear so you know the computer is working. `hx-indicator` points to any spinner or loading message. While the request is traveling across the internet, HTMX automatically shows the spinner and hides it as soon as the answer arrives.",
+    "junior": "`hx-indicator` points to an element that will be shown while an HTMX request is in flight: `<button hx-get=\"/data\" hx-indicator=\"#spinner\">Load</button>`. HTMX automatically adds the `.htmx-request` CSS class to the indicator element (and the triggering element) during the request, and removes it upon completion. The default HTMX stylesheet automatically hides `.htmx-indicator` (`opacity: 0`) and shows it when `.htmx-request` is added (`opacity: 1`).",
+    "senior": "Architecturally, `hx-indicator` provides zero-JavaScript loading state management. Instead of creating imperative boolean state variables (`isLoading = true`) and manual cleanup try/finally blocks, HTMX manages state directly in the DOM class list. You can target closest indicators (`hx-indicator=\"closest tr\"`), style buttons into disabled/busy states (`button.htmx-request { pointer-events: none; opacity: 0.6; }`), and create smooth CSS opacity transitions.",
+    "underTheHood": "When an AJAX request begins (`issueAjaxRequest`), HTMX resolves the indicator target element. It adds the `htmx-request` class to the indicator DOM token list. It tracks active requests in a request queue. When the request resolves (`xhr.onloadend` or `fetch.finally`), HTMX removes the `htmx-request` class from the indicator element and dispatches `htmx:afterRequest`."
+  },
+  "rosettaStone": {
+    "react": "`const [loading, setLoading] = useState(false); return <button disabled={loading}>...`.",
+    "angular": "`<button [disabled]=\"isLoading\"> <span *ngIf=\"isLoading\">...</span>`.",
+    "vue": "`<button :disabled=\"loading\"><Spinner v-if=\"loading\" />`.",
+    "htmx": "`<button hx-get=\"/api\" hx-indicator=\"#spinner\">`."
+  },
+  "codeComparison": {
+    "title": "Manual Loading State Boilerplate vs Declarative hx-indicator",
+    "summary": "Manual spinner toggling requires try/finally blocks in JS; `hx-indicator` coordinates loading visibility through CSS classes.",
+    "legacyOrBad": {
+      "label": "Manual JS Spinner Toggling",
+      "snippet": "spinner.style.display = 'block'; try { await fetch(); } finally { spinner.style.display = 'none'; } // ❌ Manual",
+      "fullFile": {
+        "filename": "spinner-manual.js",
+        "language": "js",
+        "code": "// ❌ OLD: Manually setting display properties and disabling buttons\n// across every single fetch event handler.\nconst btn = document.getElementById('save-btn');\nconst spinner = document.getElementById('spinner');\n\nbtn.addEventListener('click', async () => {\n  btn.disabled = true;\n  spinner.classList.remove('hidden');\n  try {\n    await fetch('/api/save', { method: 'POST' });\n  } finally {\n    btn.disabled = false;\n    spinner.classList.add('hidden');\n  }\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative hx-indicator with CSS",
+      "snippet": "<button hx-post=\"/save\" hx-indicator=\"#spinner\">Save</button> // ✅ NEW: Zero JS needed",
+      "fullFile": {
+        "filename": "indicator-modern.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: HTMX adds .htmx-request automatically while request is in flight -->\n<button hx-post=\"/api/save\" hx-indicator=\"#spinner\" class=\"btn\">\n  <span>Save Data</span>\n  <img id=\"spinner\" class=\"htmx-indicator\" src=\"/spinner.svg\" alt=\"Loading...\" />\n</button>\n\n<style>\n  /* Built-in HTMX indicator behavior */\n  .htmx-indicator {\n    opacity: 0;\n    transition: opacity 200ms ease-in;\n  }\n  .htmx-request .htmx-indicator, .htmx-request.htmx-indicator {\n    opacity: 1;\n  }\n  /* Disable button clicks while in flight */\n  button.htmx-request {\n    pointer-events: none;\n    opacity: 0.7;\n  }\n</style>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if an element has `class=\"htmx-indicator\"` but no `hx-indicator` attribute is defined on the button?",
+      "contextIntro": "Interviewers test your knowledge of default indicator scoping.",
+      "detailedAnswer": "If no `hx-indicator` attribute is explicitly provided on the triggering element, HTMX looks for any child element matching `.htmx-indicator` *inside* the triggering element and adds `.htmx-request` to the triggering element itself. If the indicator is located outside the element, `hx-indicator=\"#my-spinner\"` must be explicitly specified.",
+      "trapWarning": "Placing `.htmx-indicator` on a sibling element without specifying `hx-indicator` will result in the spinner never appearing."
+    },
+    {
+      "question": "Can `hx-indicator` use relative directional selectors like `closest`?",
+      "contextIntro": "Checks precision regarding relative selector resolution in indicator attributes.",
+      "detailedAnswer": "Yes. `hx-indicator` supports the same relative selectors as `hx-target`: `hx-indicator=\"closest tr\"`, `hx-indicator=\"find .spinner\"`, `hx-indicator=\"next .loading-bar\"`, or `hx-indicator=\"this\"`.",
+      "trapWarning": "Using `hx-indicator=\"closest .row\"` adds the `.htmx-request` class to the entire row, allowing you to dim the whole table row with CSS during updates."
+    }
+  ]
+}

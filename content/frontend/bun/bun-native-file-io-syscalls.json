@@ -1,0 +1,58 @@
+{
+  "id": "bun-native-file-io-syscalls",
+  "title": "Bun.file() & Bun.write(): Linux io_uring and Darwin kqueue Syscalls",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`Bun.file`, `Bun.write`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "file-io", "io_uring", "syscalls", "bun-file", "bun-write", "performance"],
+  "prerequisites": ["Node.js `fs/promises`", "Linux kernel syscalls (`read`, `write`, `io_uring`)"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, reading a file is like hiring a team of 4 workers (the libuv thread pool) to take turns reading from disk. In Bun, reading and writing files uses the newest high-speed express lanes built into the operating system kernel (`io_uring` on Linux), transferring file data directly to the network or memory with zero thread waiting.",
+    "junior": "`Bun.file(path)` creates a lazy `BunFile` reference extending the Web `Blob` standard. It does not read the file until you ask: `await file.text()`, `await file.json()`, `await file.arrayBuffer()`, or `file.stream()`. `Bun.write(destination, data)` writes strings, buffers, `Blob`s, or even pipes one `BunFile` directly into another with maximum speed.",
+    "senior": "Architecturally, `Bun.file()` and `Bun.write()` bypass the traditional `libuv` thread pool used by Node.js. On Linux, Bun utilizes native `io_uring` (asynchronous non-blocking kernel system calls) and `copy_file_range` for kernel-level zero-copy file cloning. On macOS/Darwin, it leverages `kqueue` and `clonefile`. This eliminates thread context switching and allows serving static files directly to HTTP sockets via `sendfile`.",
+    "underTheHood": "A `BunFile` is a descriptor holding a path or file descriptor without allocating memory upfront. When passing a `BunFile` to `new Response(Bun.file('image.png'))`, Bun bypasses JavaScript memory entirely: it uses the OS `sendfile()` or `splice()` syscall to pipe bytes directly from the file descriptor into the TCP socket buffer in the kernel, achieving true zero-copy static file delivery."
+  },
+  "rosettaStone": {
+    "node": "`import fs from 'node:fs/promises'; const text = await fs.readFile('file.txt', 'utf8');`",
+    "deno": "`const text = await Deno.readTextFile('file.txt');`",
+    "bun": "`const text = await Bun.file('file.txt').text();`",
+    "browser": "`const blob = new Blob([...]); await blob.text();`"
+  },
+  "codeComparison": {
+    "title": "Node.js fs.readFile vs Bun.file() Lazy Zero-Copy",
+    "summary": "Node reads entire buffers into V8 memory; `Bun.file()` creates lazy references and pipes directly to HTTP responses.",
+    "legacyOrBad": {
+      "label": "Node.js fs/promises (Thread Pool)",
+      "snippet": "const buffer = await fs.readFile(path); res.send(buffer); // ❌ Copies bytes into V8 heap",
+      "fullFile": {
+        "filename": "server-node.js",
+        "language": "js",
+        "code": "import fs from 'node:fs/promises';\nimport http from 'node:http';\n\n// ❌ OLD: Node reads bytes from disk into a libuv worker thread,\n// copies bytes into a V8 Buffer on the main thread, and writes to socket.\nhttp.createServer(async (req, res) => {\n  const data = await fs.readFile('./large-video.mp4');\n  res.setHeader('Content-Type', 'video/mp4');\n  res.end(data);\n}).listen(3000);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun.file() Kernel Zero-Copy",
+      "snippet": "return new Response(Bun.file('./large-video.mp4')); // ✅ NEW: Zero-copy kernel sendfile",
+      "fullFile": {
+        "filename": "server-bun.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Bun passes the file descriptor directly to the HTTP server.\n// Bytes are piped directly in the OS kernel via sendfile(2) with 0 JS memory overhead!\nBun.serve({\n  port: 3000,\n  fetch(req) {\n    return new Response(Bun.file('./large-video.mp4'));\n  }\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens when you execute `const file = Bun.file('test.txt')`?",
+      "contextIntro": "Interviewers test your knowledge of lazy evaluation in Bun's file system API.",
+      "detailedAnswer": "`Bun.file('test.txt')` is completely **lazy and synchronous**: it does *not* touch the disk, open a file descriptor, or read any bytes. It simply creates a lightweight `BunFile` object holding the path. The disk is only accessed when an explicit method like `.text()`, `.arrayBuffer()`, `.stream()`, or `Bun.write()` is called.",
+      "trapWarning": "Do not `await Bun.file('test.txt')`; `Bun.file` is not a Promise."
+    },
+    {
+      "question": "How does `Bun.write()` copy a file without loading it into RAM?",
+      "contextIntro": "Checks knowledge of OS-level file copy optimizations.",
+      "detailedAnswer": "When copying a file (`await Bun.write('dest.txt', Bun.file('src.txt'))`), Bun uses OS-level copy-on-write syscalls: **`copy_file_range`** on Linux (or `reflink` on Btrfs/XFS) and **`clonefile`** on macOS APFS. The filesystem creates a copy instantly without reading or writing data bytes through user-space memory.",
+      "trapWarning": "Copying files via `Bun.write(dest, Bun.file(src))` is instantaneous on APFS/CoW filesystems because it only copies filesystem metadata."
+    }
+  ]
+}

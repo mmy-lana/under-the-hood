@@ -1,0 +1,58 @@
+{
+  "id": "bun-package-manager-hardlinks",
+  "title": "bun install: Content-Addressable Global Cache & Linux clonefile/reflink",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`bun install`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "package-manager", "bun-install", "hardlinks", "clonefile", "reflink"],
+  "prerequisites": ["npm/yarn/pnpm package managers", "File system hardlinks vs symlinks"],
+  "progressiveExplaining": {
+    "eli5": "When npm installs packages, it downloads and unpacks thousands of duplicate files for every single project on your computer, filling up your disk and taking minutes. `bun install` downloads each package version once into a global vault. When your project needs it, it creates instant instant filesystem clones (`clonefile`/hardlinks) in milliseconds without copying bytes.",
+    "junior": "`bun install` is a drop-in replacement for `npm install` that is up to 25x faster. It uses a binary lockfile (`bun.lockb` or text `bun.lock` in Bun 1.2+) and a centralized global package cache located at `~/.bun/install/cache`. Instead of copying files, it uses the fastest available filesystem linking mechanism for your operating system.",
+    "senior": "Architecturally, `bun install` achieves speed via three vectors: (1) **Zig-native network pool**: HTTP requests, tarball decompression (using zlib/zstd), and package manifest parsing execute in parallel native threads. (2) **Content-addressable cache**: Tarball contents are unpacked into the global store once. (3) **Filesystem copy-on-write / Hardlinks**: On macOS (APFS), it uses `clonefile()` (instant copy-on-write pointer creation). On Linux, it uses `ioctl_ficlone` (reflink on Btrfs/XFS) or falls back to hardlinks, eliminating disk I/O.",
+    "underTheHood": "When resolving dependencies, Bun parses `package.json` with a custom SIMD-accelerated JSON parser. It queries the npm registry via a persistent HTTP/2 connection pool. Unpacking uses multi-threaded C bindings. When populating `node_modules`, Bun issues `clonefile(2)` syscalls from the cache directory directly to the project directory."
+  },
+  "rosettaStone": {
+    "npm": "`npm install` (copies full files into `node_modules` per project).",
+    "pnpm": "`pnpm install` (uses global content-addressable store with symlinks).",
+    "yarn": "`yarn install` (PnP or standard node_modules link).",
+    "bun": "`bun install` (uses global cache with native OS `clonefile` / `reflink` / hardlinks)."
+  },
+  "codeComparison": {
+    "title": "npm install vs bun install",
+    "summary": "`npm install` takes minutes downloading and copying duplicate node_modules; `bun install` links in milliseconds.",
+    "legacyOrBad": {
+      "label": "npm install (Slow I/O Copy)",
+      "snippet": "npm install // ❌ Takes 30-90s, duplicates gigabytes of files across projects",
+      "fullFile": {
+        "filename": "package.json",
+        "language": "json",
+        "code": "{\n  \"name\": \"legacy-project\",\n  \"dependencies\": {\n    \"react\": \"^19.0.0\",\n    \"lodash\": \"^4.17.21\"\n  }\n}\n// npm install executes JavaScript CLI, unpacks tarballs sequentially,\n// and copies physical duplicate files into node_modules."
+      }
+    },
+    "modernOrGood": {
+      "label": "bun install (Instant CoW Links)",
+      "snippet": "bun install // ✅ NEW: Executes in <500ms using native OS clonefile",
+      "fullFile": {
+        "filename": "package.json",
+        "language": "json",
+        "code": "{\n  \"name\": \"modern-project\",\n  \"dependencies\": {\n    \"react\": \"^19.0.0\",\n    \"lodash\": \"^4.17.21\"\n  }\n}\n// bun install uses native multi-threaded Zig engine + APFS clonefile / Linux reflink.\n// Node_modules populated in milliseconds."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is `bun.lockb` vs `bun.lock` in Bun?",
+      "contextIntro": "Interviewers test your knowledge of Bun's lockfile format and Git diffing.",
+      "detailedAnswer": "`bun.lockb` is Bun's original **binary lockfile** format, designed for instant parsing without JSON deserialization overhead (saving ~100ms on startup). In Bun 1.2+, Bun introduced a human-readable text lockfile **`bun.lock`** (similar to yarn/pnpm) to make Git merge conflict resolution and code review diffs easy while retaining high install speeds.",
+      "trapWarning": "You can inspect a binary `bun.lockb` in the terminal at any time by running `bun bun.lockb` or `bun lockfile`."
+    },
+    {
+      "question": "Why is `bun install` faster than `pnpm` even though both use a global cache?",
+      "contextIntro": "Checks understanding of native system implementation vs Node.js runtime overhead.",
+      "detailedAnswer": "While `pnpm` also uses a global store, it runs on Node.js and uses complex nested symlinks with JavaScript-level resolution. `bun install` is written entirely in compiled **Zig**, uses SIMD-accelerated JSON/lockfile parsing, executes concurrent network fetches in native C threads, and uses kernel-level Copy-on-Write (`clonefile`/`reflink`) directly.",
+      "trapWarning": "Bun creates a standard flat `node_modules` structure by default, avoiding the symlink phantom-dependency traps that can occur with pnpm."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "view-transitions-integration",
+  "title": "View Transitions Integration: hx-swap=\"transition:true\" Animation Coordination",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x (View Transitions API)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "view-transitions", "animation", "transition-true", "css", "morphing"],
+  "prerequisites": ["Browser View Transitions API (`document.startViewTransition`)", "HTMX hx-swap"],
+  "progressiveExplaining": {
+    "eli5": "When a page swaps content, it usually flickers or snaps abruptly. By adding `transition:true`, HTMX asks the browser to take a quick screenshot of the old content, swap the HTML smoothly in the background, and cross-fade or slide between the two screenshots like a native mobile app.",
+    "junior": "HTMX natively integrates with the browser's View Transitions API. By adding the `transition:true` modifier to `hx-swap` (e.g. `hx-swap=\"innerHTML transition:true\"`), HTMX wraps the DOM mutation inside `document.startViewTransition()`. You can then customize the animation using standard CSS pseudo-elements like `::view-transition-old(root)` and `::view-transition-new(root)`.",
+    "senior": "Architecturally, `transition:true` bridges server-rendered HTML partials with GPU-accelerated browser view transitions. When the HTTP response arrives, HTMX checks if `document.startViewTransition` is supported. If available, it captures the current layer snapshots, executes the swap inside the transition update callback, and lets the browser's compositor smoothly crossfade or morph elements sharing a `view-transition-name`.",
+    "underTheHood": "In the swap engine, if `swapStyle.transition` is true and `document.startViewTransition` exists, HTMX calls `document.startViewTransition(() => { performActualDOMSwap(); })`. If the browser does not support the API, HTMX gracefully falls back to executing `performActualDOMSwap()` immediately, ensuring zero breakage on older browsers."
+  },
+  "rosettaStone": {
+    "react": "`document.startViewTransition(() => flushSync(() => setTab('tab2')))`.",
+    "angular": "Angular Router `withViewTransitions()` enabled.",
+    "vue": "Vue Router `document.startViewTransition()` wrapper inside navigation guards.",
+    "htmx": "`<button hx-get=\"/next\" hx-swap=\"innerHTML transition:true\">`."
+  },
+  "codeComparison": {
+    "title": "Abrupt Content Snap vs Smooth View Transition Morph",
+    "summary": "Standard swaps snap instantly; `transition:true` utilizes browser GPU snapshots for seamless animated transitions.",
+    "legacyOrBad": {
+      "label": "Abrupt DOM Snap",
+      "snippet": "<div hx-get=\"/details\" hx-swap=\"innerHTML\"> // ❌ Snaps instantly without visual connection",
+      "fullFile": {
+        "filename": "gallery-snap.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: Clicking swaps the HTML instantly with a harsh visual snap,\n     giving no spatial context to the user. -->\n<div id=\"photo-card\">\n  <img src=\"/thumb.jpg\" class=\"photo\" />\n  <button hx-get=\"/photo/1/details\" hx-target=\"#photo-card\" hx-swap=\"outerHTML\">\n    Expand Photo\n  </button>\n</div>"
+      }
+    },
+    "modernOrGood": {
+      "label": "View Transition Coordination",
+      "snippet": "<button hx-get=\"/details\" hx-swap=\"outerHTML transition:true\"> // ✅ NEW: Smooth morphing animation",
+      "fullFile": {
+        "filename": "gallery-transition.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: transition:true triggers native View Transitions API -->\n<div id=\"photo-card\">\n  <img src=\"/thumb.jpg\" class=\"photo\" style=\"view-transition-name: active-photo;\" />\n  <button \n    hx-get=\"/photo/1/details\"\n    hx-target=\"#photo-card\"\n    hx-swap=\"outerHTML transition:true\"\n  >\n    Expand Photo\n  </button>\n</div>\n\n<style>\n  /* Smoothly morphs image size and position from thumbnail to full-size */\n  ::view-transition-old(active-photo),\n  ::view-transition-new(active-photo) {\n    animation-duration: 300ms;\n    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);\n  }\n</style>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you enable View Transitions globally for all HTMX swaps without writing `transition:true` on every element?",
+      "contextIntro": "Interviewers test your knowledge of HTMX global configuration flags.",
+      "detailedAnswer": "Set the global configuration flag in JavaScript: **`htmx.config.globalViewTransitions = true;`**. This automatically wraps every `hx-swap` operation across the entire application in `document.startViewTransition()` whenever supported by the client browser.",
+      "trapWarning": "If using `globalViewTransitions = true`, ensure your CSS doesn't accidentally assign duplicate `view-transition-name` properties to multiple elements simultaneously, or the transition will fail."
+    },
+    {
+      "question": "What happens if an element with a `view-transition-name` exists in multiple places on the screen during a swap?",
+      "contextIntro": "Checks knowledge of browser View Transitions API constraints.",
+      "detailedAnswer": "The W3C View Transitions spec strictly requires that **`view-transition-name` values must be unique on the page at any given moment**. If two active elements share the same `view-transition-name` (e.g. `view-transition-name: card`), the browser aborts the view transition entirely and performs an instant non-animated DOM swap.",
+      "trapWarning": "Never assign static `view-transition-name: item` to items in a list loop; dynamically assign unique names (e.g. `style=\"view-transition-name: item-101\"`)."
+    }
+  ]
+}

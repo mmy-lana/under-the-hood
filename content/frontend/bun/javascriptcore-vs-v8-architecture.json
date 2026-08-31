@@ -1,0 +1,58 @@
+{
+  "id": "javascriptcore-vs-v8-architecture",
+  "title": "JavaScriptCore (JSC) vs V8 Architecture: FTL JIT, Tiering, and Memory Footprint",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (WebKit JavaScriptCore)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "javascriptcore", "v8", "jit", "engine", "performance", "memory"],
+  "prerequisites": ["V8 Engine architecture (Ignition/TurboFan)", "JIT compilation basics"],
+  "progressiveExplaining": {
+    "eli5": "Node.js runs on Google's engine (V8, built for Chrome), which uses a 2-tier compiler that warms up slowly. Bun runs on Apple's engine (JavaScriptCore, built for Safari), which uses a 4-tier compiler (LLInt -> Baseline -> DFG -> FTL). JSC starts up much faster and uses less RAM, which makes Bun boot in milliseconds.",
+    "junior": "Bun uses WebKit's JavaScriptCore (JSC) instead of Google's V8 (used by Node.js and Deno). JSC features a 4-tier JIT compilation pipeline: LLInt (Low-Level Interpreter), Baseline JIT, DFG (Data Flow Graph) JIT, and FTL (Faster Than Light) JIT. This multi-tiered approach prioritizes fast startup time and low memory consumption.",
+    "senior": "Architecturally, JSC's tiering strategy optimizes for short-lived and serverless execution. V8 uses a 2-tier architecture (Ignition bytecode interpreter + TurboFan optimizing compiler, with Sparkplug baseline), which trades initial memory and startup latency for peak long-running throughput. JSC's LLInt starts execution instantly with minimal memory allocation, while FTL utilizes LLVM / B3 (Bare Bones Backend) to produce highly optimized machine code for hot paths.",
+    "underTheHood": "JSC's FTL compiler uses the B3 intermediate representation. Objects in JSC use Structure IDs (similar to V8 Hidden Classes) but store pointers in a compact global Structure Table, reducing 64-bit pointer overhead. Garbage collection in JSC is managed by the Riptide GC (a generational, concurrent, and compacting collector) tuned for low memory footprint."
+  },
+  "rosettaStone": {
+    "node": "Node.js running on V8 (Ignition interpreter + TurboFan JIT).",
+    "deno": "Deno running on V8 with Rust/Tokio bindings.",
+    "bun": "Bun running on WebKit JavaScriptCore (LLInt + DFG + FTL JIT) with Zig bindings.",
+    "browser": "Safari running JavaScriptCore; Chrome running V8; Firefox running SpiderMonkey."
+  },
+  "codeComparison": {
+    "title": "Cold Boot Memory & Execution Latency",
+    "summary": "JSC in Bun boots in single-digit milliseconds with low memory; V8 in Node requires more initial allocation.",
+    "legacyOrBad": {
+      "label": "Node.js V8 Cold Boot",
+      "snippet": "node script.js // ~30-50ms startup time, ~30MB base RSS memory",
+      "fullFile": {
+        "filename": "bench.js",
+        "language": "js",
+        "code": "// V8 Engine initialization (Node.js):\n// - Allocates Isolate, Context, and Ignition bytecode tables\n// - Base memory footprint: ~30MB\n// - Cold startup time: ~30-50ms\nconsole.log('Hello from Node on V8');"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun JSC Cold Boot",
+      "snippet": "bun script.js // ~3-5ms startup time, ~10MB base RSS memory",
+      "fullFile": {
+        "filename": "bench.js",
+        "language": "js",
+        "code": "// JavaScriptCore Engine initialization (Bun):\n// - LLInt boots instantly with zero JIT compilation overhead\n// - Base memory footprint: ~10MB\n// - Cold startup time: ~3-5ms\nconsole.log('Hello from Bun on JSC');"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why did the creator of Bun choose JavaScriptCore (JSC) over Google's V8?",
+      "contextIntro": "Interviewers test your knowledge of runtime design trade-offs.",
+      "detailedAnswer": "JSC was chosen for three primary reasons: (1) **Faster startup time**: JSC's LLInt interpreter starts executing code in single-digit milliseconds, critical for CLI tools and serverless cold starts. (2) **Lower memory usage**: JSC's compact structure tables and generational collector use 2-3x less base memory than V8. (3) **C/C++ API ergonomics**: JSC has clean C API bindings that made integration with Zig straightforward.",
+      "trapWarning": "Do not claim that JSC has higher peak arithmetic throughput in all workloads; V8's TurboFan can match or outperform FTL in long-running continuous benchmarks, but JSC wins on startup and memory."
+    },
+    {
+      "question": "What is the B3 compiler inside JavaScriptCore?",
+      "contextIntro": "Checks deep engine-level compiler knowledge.",
+      "detailedAnswer": "**B3 (Bare Bones Backend)** is the custom backend optimizing compiler used by JSC's FTL (Faster Than Light) JIT tier. It replaced LLVM to provide extremely fast compilation times while generating machine code nearly identical in quality to LLVM for hot JavaScript functions.",
+      "trapWarning": "B3 is part of JavaScriptCore, not a third-party C library."
+    }
+  ]
+}

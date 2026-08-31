@@ -1,0 +1,58 @@
+{
+  "id": "response-status-handling-hx-retarget",
+  "title": "Handling 4xx/5xx HTTP Statuses with HX-Retarget and HX-Reswap",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "status-codes", "hx-retarget", "hx-reswap", "error-handling", "headers"],
+  "prerequisites": ["HTTP Status Codes (200, 422, 500)", "HTMX response headers"],
+  "progressiveExplaining": {
+    "eli5": "By default, if the server returns an error like '422 Invalid Password', HTMX thinks the request failed and refuses to update the page. With `HX-Retarget` and `HX-Reswap`, the server can say: 'Hey, this was an error, but take this error message and deliver it to `#error-box` instead of the main area.'",
+    "junior": "By default, HTMX **only swaps content on 2xx successful HTTP status codes**. If the server returns a 4xx (e.g. `400 Bad Request`, `422 Unprocessable Entity`) or 5xx error, HTMX triggers `htmx:responseError` and skips swapping. The server can override this behavior by returning the `HX-Retarget: #error-div` and `HX-Reswap: innerHTML` headers alongside the error status code to render validation errors.",
+    "senior": "Architecturally, this reinforces REST semantics: rather than returning HTTP 200 for validation failures (a classic SPA anti-pattern), the server emits semantically correct HTTP status codes (`422 Unprocessable Entity` for form validation, `403 Forbidden` for auth). By utilizing response control headers (`HX-Retarget`, `HX-Reswap`, `HX-Trigger`), the backend dynamically changes the client swap destination based on the business outcome without client-side error parsing.",
+    "underTheHood": "In HTMX's response pipeline, `handleErrorFlag` checks `responseInfo.xhr.status`. If status is outside the 200-399 range, HTMX checks for `response-targets` extension or custom event overrides (`htmx:beforeOnLoad`). If the response contains `HX-Retarget`, HTMX updates `target = document.querySelector(headerValue)`. If `HX-Reswap` is present, it overrides the swap strategy and proceeds to swap the error payload."
+  },
+  "rosettaStone": {
+    "react": "`catch (err) { setError(err.response.data.message); }` inside form submit.",
+    "angular": "HTTP Interceptor catching `HttpErrorResponse` and mapping to form errors.",
+    "vue": "Axios / `$fetch` `onError` handler setting component error ref.",
+    "htmx": "Server returns HTTP 422 with `HX-Retarget: #errors` and HTML error partial."
+  },
+  "codeComparison": {
+    "title": "Anti-Pattern HTTP 200 Fake Errors vs Semantic HTTP 422 + HX-Retarget",
+    "summary": "Returning HTTP 200 for errors violates HTTP standards; HTTP 422 with `HX-Retarget` preserves semantics and redirects errors cleanly.",
+    "legacyOrBad": {
+      "label": "Fake HTTP 200 Error Payload",
+      "snippet": "res.status(200).send('<div class=\"error\">Invalid</div>'); // ❌ Confuses monitoring & caching",
+      "fullFile": {
+        "filename": "server-bad.js",
+        "language": "js",
+        "code": "// ❌ OLD ANTI-PATTERN: Returning HTTP 200 OK just to make HTMX swap the error.\n// APM tools, logging, and HTTP caches believe the operation succeeded!\napp.post('/login', (req, res) => {\n  if (!isValid(req.body)) {\n    return res.status(200).send('<p class=\"error\">Invalid Credentials</p>');\n  }\n  res.send('<div>Welcome back!</div>');\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Semantic HTTP 422 with HX-Retarget",
+      "snippet": "res.set('HX-Retarget', '#error-box').status(422).send('<p>Invalid</p>'); // ✅ NEW",
+      "fullFile": {
+        "filename": "server-good.js",
+        "language": "js",
+        "code": "// ✅ NEW: Return true HTTP 422 status. HX-Retarget tells HTMX to route\n// the error partial into #error-box instead of the main form target.\napp.post('/login', (req, res) => {\n  if (!isValid(req.body)) {\n    res.set({\n      'HX-Retarget': '#error-box',\n      'HX-Reswap': 'innerHTML'\n    });\n    return res.status(422).send('<p class=\"alert alert-danger\">Invalid credentials</p>');\n  }\n  res.send('<div>Welcome back!</div>');\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How can you configure HTMX to swap content on 4xx/5xx status codes globally without using server headers?",
+      "contextIntro": "Interviewers test your knowledge of HTMX global configuration and the `response-targets` extension.",
+      "detailedAnswer": "You can use the official **`response-targets` extension** (`hx-ext=\"response-targets\"`) and declarative attributes like `hx-target-422=\"#validation-errors\"` or `hx-target-500=\"#server-error\"`. Alternatively, intercept `htmx:beforeOnLoad` in JS: `document.body.addEventListener('htmx:beforeOnLoad', (evt) => { if (evt.detail.xhr.status === 422) evt.detail.shouldSwap = true; });`.",
+      "trapWarning": "Without either `response-targets`, `HX-Retarget` headers, or `htmx:beforeOnLoad`, HTMX will completely ignore 4xx/5xx response bodies."
+    },
+    {
+      "question": "What is the difference between `HX-Retarget` and `HX-Reselect`?",
+      "contextIntro": "Checks precision regarding target location vs source fragment extraction.",
+      "detailedAnswer": "`HX-Retarget: #some-id` changes the **destination element in the active DOM** where the response will be swapped. `HX-Reselect: #some-id` changes which **portion of the incoming HTML response** will be extracted and swapped into the target (equivalent to `hx-select`).",
+      "trapWarning": "Do not confuse source selection (`HX-Reselect`) with destination target redirection (`HX-Retarget`)."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "bun-http-server-native-c-threads",
+  "title": "Bun.serve(): uWebSockets C++ Engine & Zero-Copy HTTP Routing",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`Bun.serve`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "http-server", "bun-serve", "uwebsockets", "networking", "performance"],
+  "prerequisites": ["Node.js `http.createServer`", "Fetch API `Request`/`Response`"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, when a web request arrives, the server wraps it in many layers of JavaScript objects before your code can read it. `Bun.serve()` uses a world-record-fast C++ networking engine (`uWebSockets`) that reads and routes HTTP requests directly in native code, handling over 100,000 requests per second on a single machine.",
+    "junior": "`Bun.serve()` is Bun's built-in HTTP and WebSocket server: `Bun.serve({ port: 3000, fetch(req) { return new Response('Hello'); } })`. It uses standard Web `Request` and `Response` objects. It includes built-in static file routing, TLS/HTTPS support, Server-Sent Events (SSE), and native WebSocket handling with zero npm dependencies.",
+    "senior": "Architecturally, `Bun.serve()` is built on top of a customized fork of **uWebSockets** implemented in C++ and Zig. Rather than wrapping Node's event-emitter stream abstractions, `Bun.serve` parses HTTP headers directly in native memory and lazily instantiates the JavaScriptCore `Request` object only when properties are accessed. It manages connection pooling, TLS handshakes, and TCP socket buffering directly in C++.",
+    "underTheHood": "`Bun.serve()` utilizes non-blocking `epoll` (Linux) or `kqueue` (macOS). When incoming TCP packets arrive, the C++ HTTP parser (picohttpparser / uWebSockets) parses the HTTP method and path in place inside the socket buffer. When returning a `Response`, Bun writes bytes directly into the socket descriptor, avoiding intermediate string copies."
+  },
+  "rosettaStone": {
+    "node": "`http.createServer((req, res) => res.end('Hello')).listen(3000);`",
+    "deno": "`Deno.serve({ port: 3000 }, (req) => new Response('Hello'));`",
+    "bun": "`Bun.serve({ port: 3000, fetch(req) { return new Response('Hello'); } });`",
+    "go": "`http.HandleFunc(\"/\", handler); http.ListenAndServe(\":3000\", nil)`"
+  },
+  "codeComparison": {
+    "title": "Node.js http.createServer vs Bun.serve Native Server",
+    "summary": "Node requires manual stream and socket wrapping; `Bun.serve` uses Web Standards with high-performance C++ networking.",
+    "legacyOrBad": {
+      "label": "Node.js http.createServer",
+      "snippet": "http.createServer((req, res) => { res.writeHead(200); res.end('OK'); }).listen(3000); // ❌ Node stream API",
+      "fullFile": {
+        "filename": "server-node.js",
+        "language": "js",
+        "code": "const http = require('node:http');\n\n// ❌ OLD: Node's legacy (req, res) stream API\nconst server = http.createServer((req, res) => {\n  if (req.url === '/api/health') {\n    res.writeHead(200, { 'Content-Type': 'application/json' });\n    res.end(JSON.stringify({ status: 'healthy' }));\n    return;\n  }\n  res.writeHead(404);\n  res.end('Not Found');\n});\n\nserver.listen(3000, () => console.log('Listening on 3000'));"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun.serve() Web Standard API",
+      "snippet": "Bun.serve({ port: 3000, fetch(req) { return Response.json({ status: 'healthy' }); } }); // ✅ NEW",
+      "fullFile": {
+        "filename": "server-bun.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Clean Web Standard Request/Response API backed by uWebSockets C++ engine\nBun.serve({\n  port: 3000,\n  fetch(req) {\n    const url = new URL(req.url);\n    if (url.pathname === '/api/health') {\n      return Response.json({ status: 'healthy' });\n    }\n    return new Response('Not Found', { status: 404 });\n  },\n  error(error) {\n    return new Response(`<pre>${error.stack}</pre>`, {\n      headers: { 'Content-Type': 'text/html' },\n      status: 500\n    });\n  }\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does `Bun.serve` handle WebSockets without third-party libraries like `ws` or `socket.io`?",
+      "contextIntro": "Interviewers test your knowledge of Bun's native WebSocket server integration.",
+      "detailedAnswer": "`Bun.serve()` includes built-in WebSocket support using the `websocket` configuration object: `Bun.serve({ fetch(req, server) { if (server.upgrade(req)) return; return new Response('HTTP'); }, websocket: { open(ws) {}, message(ws, msg) {}, close(ws) {} } })`. The upgrade from HTTP to WebSocket happens in native C++ with zero npm dependencies.",
+      "trapWarning": "You do not need to install `npm install ws` in Bun; use `server.upgrade(req)` directly."
+    },
+    {
+      "question": "Can `Bun.serve` automatically serve static files directly from disk?",
+      "contextIntro": "Checks knowledge of zero-copy static asset serving.",
+      "detailedAnswer": "Yes. If `fetch()` returns a `new Response(Bun.file('public/index.html'))`, Bun detects the `BunFile` and uses OS `sendfile` syscalls to pipe the file directly from disk into the TCP socket, bypassing JavaScript memory allocation.",
+      "trapWarning": "Do not read the file into a string with `await file.text()` before returning it; returning `new Response(Bun.file(...))` directly is required for zero-copy."
+    }
+  ]
+}

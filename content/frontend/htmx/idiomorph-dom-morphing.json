@@ -1,0 +1,58 @@
+{
+  "id": "idiomorph-dom-morphing",
+  "title": "IdioMorph Algorithm: Preserving Focus, Scroll, and Audio State During Swaps",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x (Idiomorph extension)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "idiomorph", "dom-morphing", "morph", "focus-preservation", "swap"],
+  "prerequisites": ["HTMX hx-swap strategies", "DOM tree mutation algorithms"],
+  "progressiveExplaining": {
+    "eli5": "If you are typing in an input box and the page suddenly replaces the whole box with a new one, your cursor disappears, your typing stops, and any playing video resets. Idiomorph is a smart surgeon: instead of tearing down the old box and throwing it away, it compares the old and new elements and only edits the changed text and attributes, keeping your cursor, focus, and playing audio completely uninterrupted.",
+    "junior": "Idiomorph is a DOM morphing algorithm used in HTMX via `hx-swap=\"morph\"` or `hx-ext=\"morph\"`. Unlike standard `innerHTML`/`outerHTML` (which tears down and re-creates DOM nodes, resetting input focus, active text selection, and playing video/audio), morphing diffs the live DOM tree against the incoming HTML and mutates only changed attributes and text nodes in place.",
+    "senior": "Architecturally, Idiomorph implements a customized top-down DOM morphing algorithm specifically optimized for HTML partials rather than Virtual DOM abstractions. It preserves transient browser state: input focus (`document.activeElement`), cursor selection ranges (`selectionStart`/`selectionEnd`), scroll positions of intermediate containers, CSS transition states, and un-submitted form dirty state while transforming the live DOM to match the server response.",
+    "underTheHood": "Idiomorph parses the incoming HTML string into an offscreen DOM fragment. It matches elements between the old and new trees using an ID-first heuristic, followed by tag/class matching. Instead of replacing elements, it updates existing node attributes via `setAttribute`/`removeAttribute`, synchronizes property values (like `input.value`), and patches child nodes using minimal `insertBefore`/`removeChild` operations."
+  },
+  "rosettaStone": {
+    "react": "React Virtual DOM reconciliation preserving focused input instances across renders.",
+    "angular": "Angular `@for` track-by DOM node reuse during list re-evaluations.",
+    "vue": "Vue 3 Virtual DOM patch algorithm reusing existing DOM elements.",
+    "htmx": "`hx-swap=\"morph\"` with `idiomorph` extension."
+  },
+  "codeComparison": {
+    "title": "Destructive outerHTML Swap vs Non-Destructive Idiomorph Morph",
+    "summary": "Standard `outerHTML` resets cursor position and destroys focus; `morph` preserves active typing state during live server updates.",
+    "legacyOrBad": {
+      "label": "Destructive outerHTML Swap",
+      "snippet": "<div hx-get=\"/search\" hx-swap=\"outerHTML\"> // ❌ Destroys input element and drops focus",
+      "fullFile": {
+        "filename": "search-destructive.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: Standard outerHTML swap tears down the entire <form> and <input>,\n     causing the user's cursor to vanish and focus to be lost mid-typing. -->\n<form id=\"search-box\" hx-get=\"/api/search\" hx-trigger=\"keyup delay:200ms\" hx-swap=\"outerHTML\">\n  <input type=\"text\" name=\"q\" value=\"test\" />\n  <ul>\n    <li>Result 1</li>\n  </ul>\n</form>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Idiomorph Non-Destructive Morph",
+      "snippet": "<form hx-ext=\"morph\" hx-swap=\"morph:outerHTML\"> // ✅ NEW: Focus and cursor preserved",
+      "fullFile": {
+        "filename": "search-morph.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Idiomorph diffs and patches the live DOM in place.\n     The <input> remains focused and active cursor position is retained. -->\n<form \n  id=\"search-box\"\n  hx-ext=\"morph\"\n  hx-get=\"/api/search\"\n  hx-trigger=\"keyup delay:200ms\"\n  hx-swap=\"morph:outerHTML\"\n>\n  <input type=\"text\" name=\"q\" placeholder=\"Search...\" />\n  <ul>\n    <li>Result 1</li>\n    <li>Result 2</li>\n  </ul>\n</form>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Idiomorph preferred over older morphing libraries like `morphdom` in HTMX?",
+      "contextIntro": "Interviewers test your knowledge of DOM morphing algorithm evolution.",
+      "detailedAnswer": "Idiomorph was created specifically for HTMX to address edge cases in `morphdom`. `morphdom` struggled with morphing disconnected subtrees, multiple top-level sibling nodes, and morphing between different tag types (e.g. `<div>` to `<section>`). Idiomorph handles multi-root fragments, morphing into `body` or `head`, and explicitly preserves custom web component shadow roots and form control states.",
+      "trapWarning": "Do not assume `morph` is as fast as a raw `innerHTML` replacement; morphing adds a small CPU diffing pass, so only use it where preserving client focus/state is necessary."
+    },
+    {
+      "question": "What role do `id` attributes play in the Idiomorph algorithm?",
+      "contextIntro": "Checks understanding of element pairing heuristics during DOM diffing.",
+      "detailedAnswer": "Idiomorph uses **ID matching as its primary anchor**. If an element in the incoming HTML has an `id` matching an element in the existing live DOM, Idiomorph pairs them together and morphs them in place, even if their position or parent container in the DOM hierarchy has moved. Elements without IDs fall back to soft structural matching (tag name and class matching).",
+      "trapWarning": "Duplicate IDs in the same document will confuse the morphing algorithm and cause elements to jump to the wrong positions."
+    }
+  ]
+}

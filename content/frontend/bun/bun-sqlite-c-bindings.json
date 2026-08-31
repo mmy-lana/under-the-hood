@@ -1,0 +1,58 @@
+{
+  "id": "bun-sqlite-c-bindings",
+  "title": "bun:sqlite: In-Process C SQLite Bindings vs node-sqlite3 IPC Latency",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`bun:sqlite`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "sqlite", "database", "ffi", "c-bindings", "performance"],
+  "prerequisites": ["SQL and SQLite basics", "Node.js native addons (N-API) vs built-in runtime bindings"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, talking to SQLite is like sending a letter through a postal service with forms and wrappers. In Bun, SQLite is built directly into the engine's brain in fast C code: your JavaScript function reaches straight into SQLite memory with zero middleman, running millions of queries in a second.",
+    "junior": "`bun:sqlite` is Bun's built-in, zero-dependency SQLite3 driver: `import { Database } from 'bun:sqlite'`. It provides synchronous, ultra-fast query execution: `const db = new Database('mydb.sqlite')`, `const query = db.query('SELECT * FROM users WHERE id = ?')`, `query.get(1)`. It is 3-6x faster than `better-sqlite3` and `node-sqlite3`.",
+    "senior": "Architecturally, `bun:sqlite` is statically compiled directly into the Bun binary using native Zig and C bindings, eliminating N-API / V8 wrapper bridging overhead. It operates synchronously in-process, bypassing event-loop queue hopping and thread context switching. It supports prepared statement caching, transactions (`db.transaction()`), WAL mode, and direct memory buffer zero-copy transfers.",
+    "underTheHood": "`bun:sqlite` compiles SQLite source directly into the Zig executable. When `query.all()` runs, Bun reads raw SQLite row pointers directly and instantiates JavaScriptCore objects without intermediate string serialization or generic N-API handles, maximizing CPU cache locality."
+  },
+  "rosettaStone": {
+    "node": "`import Database from 'better-sqlite3'; const db = new Database('db.sqlite');`",
+    "deno": "`import { DB } from 'https://deno.land/x/sqlite/mod.ts';`",
+    "bun": "`import { Database } from 'bun:sqlite'; const db = new Database('db.sqlite');`",
+    "browser": "SQL.js (WASM SQLite compiled to WebAssembly)."
+  },
+  "codeComparison": {
+    "title": "Node.js better-sqlite3 vs Bun Native bun:sqlite",
+    "summary": "External npm SQLite packages require compilation tools (`node-gyp`); `bun:sqlite` is built-in and significantly faster.",
+    "legacyOrBad": {
+      "label": "Node.js better-sqlite3 (N-API Dependency)",
+      "snippet": "const Database = require('better-sqlite3'); // ❌ Requires native compile step (node-gyp)",
+      "fullFile": {
+        "filename": "db-node.js",
+        "language": "js",
+        "code": "// ❌ Requires npm install better-sqlite3 with C++ build tools (python, make, gcc).\nconst Database = require('better-sqlite3');\n\nconst db = new Database('app.db');\nconst stmt = db.prepare('SELECT id, name FROM users WHERE age > ?');\nconst users = stmt.all(21);\nconsole.log(users);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Built-in bun:sqlite",
+      "snippet": "import { Database } from 'bun:sqlite'; // ✅ NEW: Built-in, zero external dependencies",
+      "fullFile": {
+        "filename": "db-bun.ts",
+        "language": "ts",
+        "code": "import { Database } from 'bun:sqlite';\n\n// ✅ Built-in: Zero npm dependencies, pre-compiled with WAL mode support\nconst db = new Database('app.db', { create: true });\n\n// Run migrations or pragmas:\ndb.run('PRAGMA journal_mode = WAL;');\n\nconst query = db.query('SELECT id, name FROM users WHERE age > $age');\nconst users = query.all({ $age: 21 });\nconsole.log(users);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Is `bun:sqlite` synchronous or asynchronous?",
+      "contextIntro": "Interviewers test your understanding of in-memory / local disk database performance.",
+      "detailedAnswer": "`bun:sqlite` is **synchronous**. Because SQLite is an in-process, disk/memory database, running queries synchronously in C avoids the overhead of Promise allocations, microtask queue scheduling, and thread context switching. For local SQLite, synchronous execution is significantly faster than asynchronous overhead.",
+      "trapWarning": "Do not `await` queries in `bun:sqlite` (`query.get()`, `query.all()` are synchronous methods)."
+    },
+    {
+      "question": "How do you run atomic transactions in `bun:sqlite`?",
+      "contextIntro": "Checks knowledge of transaction boundaries in Bun's database driver.",
+      "detailedAnswer": "Use `db.transaction()`: `const insertMany = db.transaction((users) => { for (const u of users) insertQuery.run(u); }); insertMany(userList);`. `db.transaction()` returns a wrapped function that automatically executes `BEGIN` and `COMMIT`, and automatically executes `ROLLBACK` if an exception is thrown inside the callback.",
+      "trapWarning": "Manual `db.run('BEGIN')` strings are error-prone; always use the `db.transaction()` wrapper for automatic rollback safety."
+    }
+  ]
+}

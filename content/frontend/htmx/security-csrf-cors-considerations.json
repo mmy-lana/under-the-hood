@@ -1,0 +1,58 @@
+{
+  "id": "security-csrf-cors-considerations",
+  "title": "HTMX Security: CSRF Token Headers and Untrusted HTML Sanitization",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "security", "csrf", "xss", "sanitization", "cors"],
+  "prerequisites": ["Cross-Site Request Forgery (CSRF)", "Cross-Site Scripting (XSS)"],
+  "progressiveExplaining": {
+    "eli5": "Because HTMX swaps real HTML sent from the server directly onto the screen, you must protect two doors: (1) Make sure an attacker website cannot secretly trigger actions on your server by attaching a secret security badge (`X-CSRF-Token`), and (2) Make sure malicious user comments cannot inject stolen `<script>` tags into your page (XSS).",
+    "junior": "To protect against CSRF attacks in HTMX, attach your server's CSRF token to all outgoing requests using `hx-headers`: `<body hx-headers='{\"X-CSRF-Token\": \"...\"}'>`. For XSS protection, always sanitize or escape user-generated content on the server (using server template auto-escaping) before returning HTML partials, because HTMX will execute `<script>` tags present in swapped HTML.",
+    "senior": "Architecturally, HTMX shifts security responsibilities to the backend. Because HTMX parses response text into live DOM nodes, returning unsanitized user content in HTML partials leads directly to Stored XSS. HTMX supports configuration options like `htmx.config.selfRequestsOnly = true` to restrict requests to the same origin, and integrates with `htmx:configRequest` event listeners to inject CSRF tokens dynamically from cookies or meta tags.",
+    "underTheHood": "Before sending an XHR request, HTMX parses `hx-headers` and dispatches `htmx:configRequest`. This allows middleware scripts to inspect and append `evt.detail.headers['X-CSRF-Token'] = getCsrfToken()`. Upon receiving a response, if the HTML partial contains `<script>` tags, HTMX's internal insertion engine evaluates scripts by default (unless `htmx.config.allowScriptTags = false`), making server-side contextual output encoding mandatory."
+  },
+  "rosettaStone": {
+    "react": "React escapes JSX strings by default to prevent XSS; manual `dangerouslySetInnerHTML` is guarded.",
+    "angular": "Angular `DomSanitizer` automatically sanitizing template bindings.",
+    "vue": "Vue auto-escapes `{{ mustache }}` bindings; `v-html` requires manual sanitization.",
+    "htmx": "Server-side template auto-escaping + `hx-headers='{\"X-CSRF-Token\": \"...\"}'`."
+  },
+  "codeComparison": {
+    "title": "Vulnerable Plain Request vs Secure CSRF Header Injection",
+    "summary": "Plain requests without CSRF tokens are vulnerable to cross-site forgery; `htmx:configRequest` injects security tokens automatically.",
+    "legacyOrBad": {
+      "label": "Missing CSRF Protection",
+      "snippet": "<button hx-post=\"/delete-account\">Delete</button> // ❌ Vulnerable to CSRF attacks",
+      "fullFile": {
+        "filename": "vulnerable.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: Form actions without CSRF tokens allow third-party sites\n     to forge POST requests if the user has an active session cookie. -->\n<form hx-post=\"/api/account/delete\">\n  <button type=\"submit\">Delete Account</button>\n</form>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Automated CSRF Token Injection",
+      "snippet": "document.body.addEventListener('htmx:configRequest', (e) => e.detail.headers['X-CSRF-Token'] = token); // ✅ NEW",
+      "fullFile": {
+        "filename": "secure.html",
+        "language": "html",
+        "code": "<head>\n  <meta name=\"csrf-token\" content=\"d8a9f3b2c1e4...\" />\n</head>\n<body hx-headers='js:{\"X-CSRF-Token\": document.querySelector(\"meta[name=csrf-token]\").content}'>\n  \n  <!-- ✅ Every HTMX request automatically includes the CSRF header -->\n  <form hx-post=\"/api/account/delete\">\n    <button type=\"submit\">Delete Account</button>\n  </form>\n\n  <script>\n    // Or dynamically via global event listener:\n    document.body.addEventListener('htmx:configRequest', (evt) => {\n      evt.detail.headers['X-CSRF-Token'] = document.querySelector('meta[name=csrf-token]').content;\n    });\n  </script>\n</body>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Does HTMX automatically execute `<script>` tags contained inside an HTML response partial?",
+      "contextIntro": "Interviewers test your knowledge of HTMX script execution behavior and XSS vectors.",
+      "detailedAnswer": "Yes. By default, **HTMX evaluates `<script>` tags** present in swapped HTML responses. If a backend endpoint reflects unsanitized user input (e.g. `<script>stealCookie()</script>`), HTMX will execute it. To disable script execution across the entire application, set `htmx.config.allowScriptTags = false`.",
+      "trapWarning": "Never rely on the browser's default `innerHTML` script-blocking behavior when using HTMX; HTMX explicitly extracts and runs script tags unless disabled."
+    },
+    {
+      "question": "How do you prevent HTMX from sending requests to unauthorized third-party cross-origin URLs?",
+      "contextIntro": "Checks knowledge of cross-origin security configurations.",
+      "detailedAnswer": "Enable the **`selfRequestsOnly`** security configuration: `htmx.config.selfRequestsOnly = true` (default in HTMX 2.x). This restricts HTMX to only dispatching AJAX requests to the exact same origin as the host page, blocking accidental or malicious cross-origin data exfiltration.",
+      "trapWarning": "If you legitimately need cross-origin API calls with HTMX, you must configure CORS headers on the remote server and set `selfRequestsOnly = false`."
+    }
+  ]
+}
