@@ -1,0 +1,58 @@
+{
+  "id": "reactivity-ref-vs-reactive",
+  "title": "ref() .value Box Wrapper vs reactive() Proxy Unwrap",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "reactivity", "ref", "reactive", "proxy", "composition-api"],
+  "prerequisites": ["Vue 3 Composition API", "JavaScript Proxy fundamentals"],
+  "progressiveExplaining": {
+    "eli5": "`ref` is like putting your toy in a clear plastic box with a handle labeled `.value`. Even if the toy is a simple number or string, you can always pass the box around without losing track of it. `reactive` is like wrapping a toy chest in magic glass: it only works on big chests (objects), and if you pull a single toy out by hand, the magic connection is broken.",
+    "junior": "`ref()` wraps any value (primitives like `0`, `'hello'`, or objects) in a `{ value: T }` object. In `<template>`, refs are unwrapped automatically (use `count`), but in `<script>` you must use `count.value`. `reactive()` only accepts objects/arrays and returns a deep Proxy: `state.count`. Destructuring a `reactive()` object (`const { count } = state`) breaks reactivity; use `toRefs(state)` to fix it.",
+    "senior": "Architecturally, `ref()` and `reactive()` represent two different approaches to reactivity. `reactive()` wraps objects in a deep JavaScript `Proxy` that intercepts property reads (`get` trap -> `track()`) and writes (`set` trap -> `trigger()`). Because JavaScript primitives cannot be proxied, `ref()` wraps values in a `RefImpl` class instance using getter/setter accessors on `.value`. In modern Vue 3, `ref()` is the community standard recommendation because it avoids destructuring pitfalls and provides clear type boundaries.",
+    "underTheHood": "`RefImpl` has `_value`, `_rawValue`, and `dep` (a `Set<ReactiveEffect>`). Reading `.value` invokes `trackRefValue(this)`. Writing `.value` checks `hasChanged(newVal, this._rawValue)`, updates `_value` (converting objects via `toReactive()`), and calls `triggerRefValue(this)`. In templates, the compiler wraps root expressions in `unref()` or uses compiler binding flags to eliminate manual `.value` access."
+  },
+  "rosettaStone": {
+    "react": "`const [count, setCount] = useState(0)` (immutable state values).",
+    "angular": "`const count = signal(0)` (read via `count()`, update via `count.set()`).",
+    "vue": "`const count = ref(0)` (read/write via `count.value`).",
+    "svelte": "`let count = $state(0)` (direct assignment via Svelte 5 runes)."
+  },
+  "codeComparison": {
+    "title": "Destructuring reactive() (Broken) vs toRefs / ref() (Safe)",
+    "summary": "Destructuring a `reactive()` object strips Proxy tracking; `ref()` and `toRefs()` preserve live reactivity.",
+    "legacyOrBad": {
+      "label": "Destructuring reactive() breaks tracking",
+      "snippet": "const { count } = state; // ❌ Reactivity permanently lost!",
+      "fullFile": {
+        "filename": "BrokenCounter.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { reactive } from 'vue';\n\nconst state = reactive({ count: 0 });\n\n// ❌ Destructuring extracts the raw number value (0);\n// 'count' is no longer connected to the reactive Proxy!\nconst { count } = state;\n\nfunction increment() {\n  state.count++; // 'count' variable will NOT update!\n}\n</script>\n\n<template>\n  <button @click=\"increment\">Count: {{ count }}</button>\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Using ref() or toRefs()",
+      "snippet": "const count = ref(0); // ✅ NEW: Safe to pass and destructure",
+      "fullFile": {
+        "filename": "SafeCounter.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref } from 'vue';\n\n// ✅ NEW: ref() maintains the .value box container;\n// Reactivity is never lost when passing count around.\nconst count = ref(0);\n\nfunction increment() {\n  count.value++; // Explicit .value in script\n}\n</script>\n\n<template>\n  <!-- Automatically unwrapped in template: -->\n  <button @click=\"increment\">Count: {{ count }}</button>\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does destructuring a `reactive()` object lose reactivity, while destructuring `toRefs(reactiveObj)` preserves it?",
+      "contextIntro": "This tests JavaScript reference vs primitive value passing and Vue's reactivity mechanics.",
+      "detailedAnswer": "`reactive()` relies on JavaScript `Proxy` traps (`get` and `set`) on the root object. When you destructure `const { count } = reactive({ count: 0 })`, you are copying the primitive value `0` into a standalone local variable. Plain variables have no getters or setters, so Vue cannot track reads or writes. `toRefs()` converts every property of the reactive object into a separate `ref` whose `.value` getter points back to the original reactive object's property.",
+      "trapWarning": "Never use ES6 destructuring directly on a `reactive()` object unless you wrap it with `toRefs()` or `toRef()`."
+    },
+    {
+      "question": "What happens when you assign a `ref` inside a `reactive` object: `const state = reactive({ count: ref(0) })`?",
+      "contextIntro": "Checks understanding of automatic ref unwrapping in nested reactive objects.",
+      "detailedAnswer": "When a `ref` is nested as a property of a `reactive()` object, Vue **automatically unwraps it**. You can read and write `state.count` directly without using `.value`: `state.count = 1`. However, this automatic unwrapping does *not* apply when the ref is an element of a reactive Array (e.g. `const arr = reactive([ref(0)]); arr[0].value`).",
+      "trapWarning": "Refs inside reactive arrays or native collections (`Map`, `Set`) do NOT auto-unwrap; `.value` is still required."
+    }
+  ]
+}

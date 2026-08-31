@@ -1,0 +1,58 @@
+{
+  "id": "server-streaming-hydration",
+  "title": "Solid Progressive Streaming SSR & Async Chunk Script Insertion",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x (solid-js/web)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "ssr", "streaming", "hydration", "suspense", "async"],
+  "prerequisites": ["SolidJS createResource", "SolidJS Suspense", "HTML Streaming basics"],
+  "progressiveExplaining": {
+    "eli5": "Instead of keeping the user staring at a blank screen while the server waits for slow data, Solid sends the page shell immediately with placeholder markers. When the slow data finally finishes on the server, it streams the HTML and a tiny script tag that swaps the placeholder with the real content directly in the browser.",
+    "junior": "Solid supports out-of-order streaming SSR using `renderToStream` from `solid-js/web`. When components suspend on `createResource`, Solid outputs the `<Suspense>` fallback HTML immediately. Once the backend resource resolves on the server, it streams the resolved HTML chunk followed by an inline `<script>` tag that replaces the fallback DOM node on the client without waiting for full page completion.",
+    "senior": "Architecturally, Solid's streaming SSR coordinates server-side resource resolution with client-side progressive hydration. Because Solid has no Virtual DOM, hydration does not walk a component tree to diff VNodes; it attaches reactive signal listeners directly to existing SSR DOM nodes via marker comments (`<!--#-->`). Hydration keys link the streamed chunk data payload to the client's `createResource` cache, preventing client-side re-fetching.",
+    "underTheHood": "During `renderToStream`, Solid creates a `Resource` registry on the server. When an async boundary is encountered, it emits `<template id=\"N\">` with the fallback and writes to the HTTP response stream. As promises resolve, Solid pushes the rendered HTML inside `<div hidden id=\"N-content\">` and an inline JS snippet `_$HY.r('N')` that swaps the template contents into place. On the client, `hydrate()` parses `_$HY` markers and binds signals directly to text nodes and attributes."
+  },
+  "rosettaStone": {
+    "react": "React 18 `renderToPipeableStream` with progressive Suspense HTML injection.",
+    "angular": "Angular 17+ SSR with non-destructive hydration and `@defer` blocks.",
+    "vue": "Nuxt 3 / Vue SSR streaming with `<Suspense>`.",
+    "svelte": "SvelteKit streaming responses with `{#await}` blocks."
+  },
+  "codeComparison": {
+    "title": "Blocking SSR vs Progressive Streaming SSR in SolidJS",
+    "summary": "Blocking SSR waits for all database queries before sending any HTML; streaming SSR delivers the shell instantly and pipes async fragments.",
+    "legacyOrBad": {
+      "label": "Blocking renderToString",
+      "snippet": "const html = await renderToString(() => <App />); // ❌ Blocks TTFB on slowest query",
+      "fullFile": {
+        "filename": "server-blocking.js",
+        "language": "js",
+        "code": "// ❌ OLD: renderToString waits for all createResource calls to finish.\n// If a slow API takes 2 seconds, the user sees a blank white screen for 2s.\nimport { renderToString } from 'solid-js/web';\nimport App from './App';\n\napp.get('*', async (req, res) => {\n  const html = await renderToString(() => <App url={req.url} />);\n  res.send(`<!DOCTYPE html><html><body>${html}</body></html>`);\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Progressive renderToStream",
+      "snippet": "const { pipe } = renderToStream(() => <App />); pipe(res); // ✅ NEW: Instant TTFB + HTML chunk piping",
+      "fullFile": {
+        "filename": "server-streaming.js",
+        "language": "js",
+        "code": "// ✅ NEW: renderToStream emits the initial HTML shell immediately (instant TTFB)\n// and pipes resolved Suspense chunks over the HTTP stream as they finish.\nimport { renderToStream } from 'solid-js/web';\nimport App from './App';\n\napp.get('*', (req, res) => {\n  res.setHeader('Content-Type', 'text/html; charset=utf-8');\n  const { pipe } = renderToStream(() => <App url={req.url} />);\n  pipe(res); // Streams chunks directly to client socket\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does SolidJS prevent client-side hydration from re-fetching data already fetched on the server during streaming SSR?",
+      "contextIntro": "Interviewers test your knowledge of SSR serialization and state transfer.",
+      "detailedAnswer": "SolidJS serializes the resolved server resource data into an inline script payload (via the `_$HY` hydration script registry) sent alongside the HTML stream. When the client-side `createResource` initializes during hydration, it checks `_$HY.resources` for an existing serialized payload matching the resource ID. If found, it hydrates synchronously using that data without initiating a client network fetch.",
+      "trapWarning": "Failing to wrap your application in `<HydrationScript />` in your root HTML template will cause the client to lose server data and trigger duplicate client fetches."
+    },
+    {
+      "question": "What is the difference between `renderToStream` and `renderToStringAsync` in SolidJS?",
+      "contextIntro": "Checks precision regarding streaming HTTP vs buffered asynchronous SSR.",
+      "detailedAnswer": "`renderToStringAsync` waits for all resources to resolve on the server and returns the final HTML string as a single complete response (buffered). `renderToStream` immediately sends the HTML shell with Suspense fallbacks and streams chunks as responses over HTTP chunked transfer encoding (streaming).",
+      "trapWarning": "`renderToStringAsync` does not improve TTFB; it only guarantees the completed HTML is rendered before sending."
+    }
+  ]
+}

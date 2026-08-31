@@ -1,0 +1,58 @@
+{
+  "id": "error-boundary-owner-trapping",
+  "title": "<ErrorBoundary>: Reactive Owner Scope Error Capture and Fallback Swaps",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "error-boundary", "errors", "owner-tree", "catchError", "reactivity"],
+  "prerequisites": ["SolidJS Owner Hierarchy", "SolidJS Components Run Once"],
+  "progressiveExplaining": {
+    "eli5": "If a fuse blows in the kitchen, you don't want the entire city's power to shut down. An `<ErrorBoundary>` is a localized circuit breaker: if any component inside it crashes with an error, the breaker trips, keeps the rest of the application running smoothly, and displays a friendly 'Something went wrong' message.",
+    "junior": "`<ErrorBoundary fallback={(err, reset) => <ErrorUI error={err} retry={reset} />}>` is a built-in Solid component that catches JavaScript errors thrown in its child component hierarchy. When an error occurs in a child computation, render block, or resource, the error boundary catches it, prevents the app from crashing, and renders the fallback function with a `reset()` callback to retry.",
+    "senior": "Architecturally, `<ErrorBoundary>` uses Solid's low-level `catchError(fn, errorHandler)` primitive built into the reactive **Owner Tree**. When a computation, effect, or resource throws during initialization or update, the reactive engine traverses upward through `Owner._parent` pointers until it finds an `errorHandler` registered on an Owner. This handles both render-phase crashes and asynchronous reactive graph errors uniformly.",
+    "underTheHood": "In the reactive runtime, when `catchError` executes, it sets an internal `errorHandler` handler on the current `Owner`. If an exception is thrown inside `runComputation`, Solid catches the error and executes `handleError(err)`. `handleError` walks up the `Owner` hierarchy, finds the nearest `errorHandler`, updates the ErrorBoundary's internal error signal, unmounts the crashed children's DOM, and renders the fallback."
+  },
+  "rosettaStone": {
+    "react": "React Class Component with `componentDidCatch` and `getDerivedStateFromError`.",
+    "angular": "Angular `ErrorHandler` global provider or custom error boundary directives.",
+    "vue": "`onErrorCaptured()` component lifecycle hook.",
+    "svelte": "SvelteKit `+error.svelte` boundary or custom try/catch snippet wrappers."
+  },
+  "codeComparison": {
+    "title": "Uncaught Application Crash vs <ErrorBoundary> Isolation",
+    "summary": "Uncaught errors in child components break the whole page; `<ErrorBoundary>` isolates failures and offers retry mechanisms.",
+    "legacyOrBad": {
+      "label": "Unprotected Component Tree",
+      "snippet": "<BuggyWidget /> // ❌ An error here crashes the entire application view",
+      "fullFile": {
+        "filename": "AppUnprotected.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: If BuggyWidget throws during initialization or signal updates,\n// the entire web app crashes to a blank screen.\nexport default function App() {\n  return (\n    <div>\n      <nav>Navbar</nav>\n      <main>\n        <BuggyWidget /> {/* ❌ Uncaught error unmounts entire page */}\n      </main>\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Solid <ErrorBoundary>",
+      "snippet": "<ErrorBoundary fallback={(err, reset) => <Fallback error={err} onReset={reset} />}><BuggyWidget /></ErrorBoundary> // ✅ NEW",
+      "fullFile": {
+        "filename": "AppProtected.jsx",
+        "language": "jsx",
+        "code": "import { ErrorBoundary } from 'solid-js';\n\n// ✅ NEW: <ErrorBoundary> isolates the error to the widget area.\n// The rest of the application (navbar, sidebar) stays completely interactive.\nexport default function App() {\n  return (\n    <div>\n      <nav>Navbar</nav>\n      <main>\n        <ErrorBoundary\n          fallback={(err, reset) => (\n            <div className=\"error-card\">\n              <p>Widget crashed: {err.message}</p>\n              <button onClick={reset}>Try Again</button>\n            </div>\n          )}\n        >\n          <BuggyWidget />\n        </ErrorBoundary>\n      </main>\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can `<ErrorBoundary>` catch asynchronous errors thrown inside `createResource`?",
+      "contextIntro": "Interviewers test your knowledge of how async errors propagate through the reactive graph.",
+      "detailedAnswer": "Yes. When a `createResource` fetcher promise rejects, the error is stored in `data.error`. When the resource is read inside an `<ErrorBoundary>` under `<Suspense>`, the error is thrown directly to the nearest `catchError` owner, triggering the `<ErrorBoundary fallback={...}>`.",
+      "trapWarning": "Errors thrown inside un-tracked detached asynchronous callbacks (like a raw `setTimeout(() => { throw new Error(); })`) cannot be caught by `<ErrorBoundary>` because they execute outside the Owner tracking scope."
+    },
+    {
+      "question": "How does the `reset()` function in `<ErrorBoundary>` fallback work?",
+      "contextIntro": "Checks understanding of error boundary state recovery.",
+      "detailedAnswer": "The `reset()` function clears the internal error signal on the ErrorBoundary Owner and attempts to re-create and re-mount the child component hierarchy. If the underlying condition causing the crash (e.g. invalid server data) has been corrected, the child mounts successfully.",
+      "trapWarning": "If the error condition is still present when calling `reset()`, the child will throw again immediately and the error boundary will catch it again."
+    }
+  ]
+}

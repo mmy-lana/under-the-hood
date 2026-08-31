@@ -1,0 +1,58 @@
+{
+  "id": "dynamic-component-resolution",
+  "title": "<Dynamic component={...}>: Element Switching Without Full Re-Creation",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "Dynamic", "components", "polymorphism", "rendering", "control-flow"],
+  "prerequisites": ["SolidJS Components Run Once", "SolidJS JSX"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a picture frame on the wall where you can swap the photo inside. Instead of tearing down the entire wall and rebuilding it every time you want a new photo, the `<Dynamic>` tag keeps the frame mounted and cleanly swaps the component or tag inside.",
+    "junior": "`<Dynamic component={componentAccessor()}>` renders a component or HTML tag dynamically based on a reactive signal or prop. `import { Dynamic } from 'solid-js/web';`. You can pass either component functions (`<Dynamic component={MyComponent} />`) or HTML tag string names (`<Dynamic component=\"h1\" />`). When the `component` signal updates, Solid swaps only the dynamic element.",
+    "senior": "Architecturally, `<Dynamic>` is a built-in control flow component implemented as a memoized factory. Because Solid components do not re-render, rendering dynamic elements conditionally via ternary expressions (`{type() === 'a' ? <A /> : <B />}`) creates and destroys reactive scopes repeatedly. `<Dynamic>` optimizes this by creating a single memoized root that evaluates `createComponent()` or `createElement()` only when the component constructor reference changes, passing reactive props through transparently.",
+    "underTheHood": "Under the hood, `<Dynamic>` is defined as `createComponent(createMemo(() => { const c = props.component; if (typeof c === 'string') return createElement(c, props); return createComponent(c, props); }))`. It wraps the tag selection in a `createMemo`. When `props.component` changes from `'button'` to `'a'`, the memo re-evaluates, disposes the previous child Owner scope, and instantiates the new tag."
+  },
+  "rosettaStone": {
+    "react": "`const Tag = tagSignal; return <Tag {...props} />;` inside render.",
+    "angular": "`<ng-container *ngComponentOutlet=\"componentType\"></ng-container>`.",
+    "vue": "`<component :is=\"currentComponent\" />`.",
+    "svelte": "`<svelte:component this={currentComponent} />`."
+  },
+  "codeComparison": {
+    "title": "Nested Ternary Component Switching vs <Dynamic>",
+    "summary": "Ternary trees for dynamic tags become unreadable; `<Dynamic>` cleanly maps runtime tags and components.",
+    "legacyOrBad": {
+      "label": "Clunky Ternary Tree",
+      "snippet": "{tag() === 'h1' ? <h1>{text}</h1> : tag() === 'h2' ? <h2>{text}</h2> : <p>{text}</p>} // ❌ Repetitive",
+      "fullFile": {
+        "filename": "HeadingLegacy.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Manually switching tags with nested ternaries is verbose\n// and forces code duplication for shared attributes/children.\nimport { createSignal } from 'solid-js';\n\nexport default function HeadingLegacy({ level, children }) {\n  return (\n    <div>\n      {level() === 'h1' ? (\n        <h1 class=\"title\">{children}</h1>\n      ) : level() === 'h2' ? (\n        <h2 class=\"title\">{children}</h2>\n      ) : (\n        <h3 class=\"title\">{children}</h3>\n      )}\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Solid <Dynamic> Component",
+      "snippet": "<Dynamic component={level()} class=\"title\">{children}</Dynamic> // ✅ NEW: Clean & polymorphic",
+      "fullFile": {
+        "filename": "HeadingModern.jsx",
+        "language": "jsx",
+        "code": "import { Dynamic } from 'solid-js/web';\n\n// ✅ NEW: <Dynamic> cleanly switches between string tags ('h1', 'h2')\n// or component functions without repeating props or children markup.\nexport default function HeadingModern({ level, children }) {\n  return (\n    <Dynamic component={level()} class=\"title\">\n      {children}\n    </Dynamic>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can `<Dynamic>` accept both string HTML tag names and custom SolidJS component functions?",
+      "contextIntro": "Tests knowledge of polymorphic component capabilities.",
+      "detailedAnswer": "Yes. If `component` is passed a string (e.g. `'div'`, `'button'`, `'svg'`), `<Dynamic>` creates a native DOM element with the provided props. If `component` is passed a component function reference (e.g. `MyCustomButton`), it invokes `createComponent(component, props)`.",
+      "trapWarning": "Passing an invalid value like `null` or `undefined` to `component` will result in `<Dynamic>` rendering nothing (an empty text node)."
+    },
+    {
+      "question": "How are props passed to `<Dynamic>` evaluated when the component changes?",
+      "contextIntro": "Checks understanding of prop forwarding in Solid control flow.",
+      "detailedAnswer": "Props passed to `<Dynamic component={tag()} {...otherProps} />` are wrapped in a reactive proxy. When `tag()` changes, the previous component instance and its reactive scope are disposed, and the new component is instantiated with the same reactive `otherProps` proxy without requiring re-binding.",
+      "trapWarning": "Do not destructure props before passing them into `<Dynamic>`, as destructuring breaks prop reactivity."
+    }
+  ]
+}

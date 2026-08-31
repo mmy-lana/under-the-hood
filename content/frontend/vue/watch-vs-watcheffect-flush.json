@@ -1,0 +1,58 @@
+{
+  "id": "watch-vs-watcheffect-flush",
+  "title": "watch() Lazy Source vs watchEffect() Flush Timing (pre, post, sync)",
+  "category": "frontend",
+  "subcategory": "vue",
+  "versionContext": "Vue 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["vue", "watch", "watchEffect", "flush", "reactivity", "lifecycle"],
+  "prerequisites": ["Vue 3 Composition API", "Vue ref() and reactive()"],
+  "progressiveExplaining": {
+    "eli5": "`watch` is like a detective assigned to follow one specific suspect (e.g. only watch `userId`). It does nothing until that suspect moves, and it tells you both their old and new locations. `watchEffect` is a security guard in a room who watches everything happening right now, runs immediately on day one, and re-runs whenever anything in the room changes.",
+    "junior": "`watch(source, callback)` is lazy by default: it tracks explicit dependencies, provides `(newValue, oldValue)`, and only runs when the source changes. `watchEffect(callback)` runs immediately on initialization, automatically tracks any reactive dependencies read inside its body, but does not provide the previous value. The `flush` option (`'pre'`, `'post'`, `'sync'`) controls when the watcher callback executes relative to DOM updates.",
+    "senior": "Architecturally, `watch` and `watchEffect` are wrappers over `ReactiveEffect`. `flush: 'pre'` (default) runs watcher callbacks *before* component DOM updates; `flush: 'post'` (or `watchPostEffect`) runs callbacks *after* component DOM updates (essential for reading updated template refs or DOM geometry); `flush: 'sync'` (or `watchSyncEffect`) executes synchronously on every mutation, bypassing the scheduler microtask batch.",
+    "underTheHood": "When a signal/ref mutates, `trigger()` schedules the effect in the scheduler queue (`queueJob`). If `flush: 'pre'`, the job is placed in the pre-flush queue evaluated before the component update effect. If `flush: 'post'`, the job is placed in the post-flush queue evaluated after `patch()`. If `flush: 'sync'`, the effect's `scheduler` simply calls `effect.run()` immediately within the mutating call stack."
+  },
+  "rosettaStone": {
+    "react": "`useEffect` with dependency array (similar to post-flush watcher).",
+    "angular": "Angular `effect()` (similar to watchEffect) and `toObservable()`.",
+    "vue": "`watch()` and `watchEffect()` with `flush: 'pre' | 'post' | 'sync'`.",
+    "svelte": "Svelte 5 `$effect()` (runs on microtask post-flush) and `$derived()`."
+  },
+  "codeComparison": {
+    "title": "Explicit watch() vs Automatic watchEffect() with Post-DOM Flush",
+    "summary": "`watch` requires explicit sources and previous values; `watchEffect` auto-tracks and can wait for DOM updates with `flush: 'post'`.",
+    "legacyOrBad": {
+      "label": "Accidental Pre-Flush DOM Read",
+      "snippet": "watchEffect(() => { readDom(el.value); }); // ❌ Reads stale DOM before render",
+      "fullFile": {
+        "filename": "StaleDom.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref, watchEffect } from 'vue';\n\nconst count = ref(0);\nconst buttonRef = ref(null);\n\n// ❌ OLD: Default flush is 'pre' (runs BEFORE DOM updates),\n// so buttonRef.value.textContent returns the STALE count value!\nwatchEffect(() => {\n  if (buttonRef.value) {\n    console.log('DOM Text:', buttonRef.value.textContent); // Stale!\n  }\n  console.log('Count:', count.value);\n});\n</script>\n\n<template>\n  <button ref=\"buttonRef\" @click=\"count++\">{{ count }}</button>\n</template>"
+      }
+    },
+    "modernOrGood": {
+      "label": "watchPostEffect for Fresh DOM Access",
+      "snippet": "watchPostEffect(() => { readDom(buttonRef.value); }); // ✅ NEW: Guaranteed updated DOM",
+      "fullFile": {
+        "filename": "FreshDom.vue",
+        "language": "vue",
+        "code": "<script setup>\nimport { ref, watchPostEffect, watch } from 'vue';\n\nconst count = ref(0);\nconst buttonRef = ref(null);\n\n// ✅ NEW: watchPostEffect (flush: 'post') runs AFTER the DOM has updated.\nwatchPostEffect(() => {\n  if (buttonRef.value) {\n    console.log('Updated DOM Text:', buttonRef.value.textContent); // Fresh!\n  }\n});\n\n// ✅ Use watch() when you need both (newVal, oldVal) or lazy execution:\nwatch(count, (newVal, oldVal) => {\n  console.log(`Count changed from ${oldVal} to ${newVal}`);\n});\n</script>\n\n<template>\n  <button ref=\"buttonRef\" @click=\"count++\">{{ count }}</button>\n</template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `flush: 'pre'`, `flush: 'post'`, and `flush: 'sync'`?",
+      "contextIntro": "Interviewers test your knowledge of Vue's render queue and DOM synchronization lifecycle.",
+      "detailedAnswer": "- **`flush: 'pre'` (Default)**: Watcher callback runs before the component's DOM patch phase. Multiple state updates are batched into a single pre-render run.\n- **`flush: 'post'` (`watchPostEffect`)**: Watcher callback runs *after* the component's DOM patch phase. Use this whenever reading template refs or measuring DOM dimensions.\n- **`flush: 'sync'` (`watchSyncEffect`)**: Watcher runs immediately and synchronously the instant the ref/reactive property mutates, bypassing batching (use with caution as it can cause performance bottlenecks).",
+      "trapWarning": "Accessing template refs inside a default `watchEffect` on initial run will yield `null` because the component has not mounted yet."
+    },
+    {
+      "question": "How do you watch a nested property of a `reactive()` object using `watch()`?",
+      "contextIntro": "Checks knowledge of getter source functions in `watch()`.",
+      "detailedAnswer": "You **must pass a getter function**: `watch(() => state.user.name, (newName, oldName) => { ... })`. Passing the property directly (`watch(state.user.name, ...)` ) passes a static string or primitive, which Vue cannot track.",
+      "trapWarning": "Passing `state.property` directly into `watch` throws a runtime warning and will never trigger the callback."
+    }
+  ]
+}
