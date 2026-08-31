@@ -1,0 +1,68 @@
+{
+  "id": "ng-optimized-image-lcp",
+  "title": "NgOptimizedImage: Priority Preloading & Layout Shifting",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 15+ (NgOptimizedImage, image directive)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "images",
+    "lcp",
+    "ngoptimizedimage",
+    "performance",
+    "lazy-loading"
+  ],
+  "prerequisites": [
+    "Angular directives and template basics",
+    "Understanding of Core Web Vitals (LCP)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A newspaper has two kinds of photos: the headline photo that must appear instantly (because it's the first thing readers see), and the filler photos deep in the article that can load later as the reader scrolls. The clever printer marks the headline photo with a 'load me now' stamp so the press prioritizes it, and it also reserves the exact space the photo will occupy — so the page doesn't jump around when the photo finally arrives. That stamp and reserved space are what this image tool does automatically.",
+    "junior": "NgOptimizedImage is Angular's image directive (import { NgOptimizedImage } from '@angular/common'). Add priority to the LCP image: <img ngSrc=\"/hero.png\" width=\"800\" height=\"400\" priority>. It sets fetchpriority=high, preloads the image, and lazy-loads non-priority images (loading=lazy). You must provide width/height (or fill) — this prevents layout shift by reserving space. Use ngSrc instead of src to get automatic srcset/optimization via the configured image loader. Include it in standalone imports: imports: [NgOptimizedImage].",
+    "senior": "Architecturally, NgOptimizedImage automates LCP best practices: the priority attribute generates a <link rel=\"preload\" as=\"image\"> hint (so the browser starts fetching before it parses the img) plus fetchpriority=high, and marks the image to skip lazy loading. Non-priority images get loading=lazy with an explicit width/height, which eliminates Cumulative Layout Shift because the browser reserves the aspect-ratio box. The directive also emits a configurable srcset based on the image loader (e.g. Cloudinary/Imgix) for responsive densities. It enforces required dimensions at build time via a lint rule (NGD001) to prevent missing-dimension layout shift.",
+    "underTheHood": "The directive's renderer, during the render phase, writes the ngSrc URL through the configured ImageLoader (a function returning a URL given src + width) to produce a srcset with standard breakpoints, sets width/height attributes (or the CSS aspect-ratio for fill mode), and manages preload: for priority images it appends a <link rel=\"preload\" as=\"image\" imagesrcset=...> to the document head and sets fetchpriority. Lazy images get loading=lazy decoding=async. The width/height attributes give the browser the intrinsic ratio so it can compute the reserved box before the image loads, preventing CLS. The NGD001 lint rule (in @angular-eslint) fails builds when dimensions or priority semantics are wrong."
+  },
+  "rosettaStone": {
+    "react": "next/image and React's img loading hints cover the same LCP/CLS ground.",
+    "angular": "NgOptimizedImage — the current topic.",
+    "vue": "Nuxt's <NuxtImg> and vite-plugin-image-optimizer provide analogous handling.",
+    "svelte": "SvelteKit's Image component (and enhance:img) implement the same priority/CLS logic."
+  },
+  "codeComparison": {
+    "title": "Plain img with manual attributes vs NgOptimizedImage",
+    "summary": "Hand-optimizing images requires many manual attributes and is easy to get wrong; NgOptimizedImage encodes the LCP/CLS rules and enforces dimensions.",
+    "legacyOrBad": {
+      "label": "Plain img with manual attrs",
+      "snippet": "<img src=\"/hero.png\"> <!-- ❌ OLD: no dimensions, no preload, no lazy → CLS + slow LCP -->",
+      "fullFile": {
+        "filename": "app.component.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: A plain img. Without width/height the browser does not\n     reserve space → the page jumps when the image loads (CLS). Without\n     priority/fetchpriority, the LCP image competes with other resources. -->\n<img src=\"/hero.png\"> <!-- ❌ OLD: no dimensions, no priority hint -->\n\n<!-- Below-the-fold images load eagerly too, wasting bandwidth: -->\n<img src=\"/gallery/1.png\">\n<img src=\"/gallery/2.png\"> <!-- ❌ OLD: all loaded eagerly, no lazy -->\n\n<!-- Manually adding loading=lazy + width/height everywhere is\n     repetitive and easy to forget, and srcset/responsive handling is\n     entirely manual. -->"
+      }
+    },
+    "modernOrGood": {
+      "label": "NgOptimizedImage",
+      "snippet": "<img ngSrc=\"/hero.png\" width=\"800\" height=\"400\" priority> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "app.component.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: NgOptimizedImage encodes the rules. The LCP image gets\n     priority (preload + fetchpriority=high) and explicit dimensions\n     (reserved space → no CLS). Below-fold images lazy-load. -->\n<img\n  ngSrc=\"/hero.png\"\n  width=\"800\"\n  height=\"400\"\n  priority\n/> <!-- ✅ NEW: preload hint + high fetch priority -->\n\n<img ngSrc=\"/gallery/1.png\" width=\"400\" height=\"300\" loading=\"lazy\" />\n<!-- ✅ NEW: lazy by default for non-priority images -->\n\n<!-- srcset is generated automatically from the configured image\n     loader; the NGD001 lint rule enforces dimensions at build time. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does NgOptimizedImage require width and height, and how does that prevent layout shift?",
+      "contextIntro": "This tests the CLS mechanism — interviewers want the reserved-space rationale and the aspect-ratio behavior, not just 'it's a lint rule'.",
+      "detailedAnswer": "Browsers do not know an image's intrinsic size until it downloads. Without width/height, the image occupies 0 height initially; when it loads, the layout reflows to fit it, pushing content down — Cumulative Layout Shift. Providing width and height lets the browser compute the aspect ratio and reserve the box before the image arrives, so no reflow occurs. NgOptimizedImage enforces this (and the fill mode, which uses CSS aspect-ratio positioning) precisely to eliminate CLS. The lint rule NGD001 fails the build if an ngSrc image lacks dimensions, catching the mistake at compile time rather than letting it degrade Core Web Vitals in production.",
+      "trapWarning": "The naive answer is 'dimensions are just for accessibility'. They are the CLS prevention mechanism. Another trap: thinking width/height must match the displayed CSS size exactly — they only need to encode the correct aspect ratio; CSS (max-width: 100%; height: auto) scales responsively from the ratio. Candidates who explain the aspect-ratio box reservation demonstrate real CLS knowledge."
+    },
+    {
+      "question": "How does the priority attribute actually speed up LCP, and what is the trade-off of using it on many images?",
+      "contextIntro": "This probes the resource-hint mechanics — preload + fetchpriority — and the discipline of applying priority sparingly, a classic performance-interview topic.",
+      "detailedAnswer": "priority causes the directive to emit a <link rel=\"preload\" as=\"image\"> hint for the image's srcset, so the browser starts the fetch during HTML parsing (before it encounters the img tag), plus fetchpriority=high to boost its network priority. This directly reduces LCP time for the above-the-fold hero. The trade-off: preload hints consume bandwidth and compete with other critical resources — using priority on many images (or below-fold images) can starve other fetches and worsen LCP. The guidance is to apply priority only to the single LCP image per page and let everything else lazy-load. The directive also integrates with the image loader to preload the correct responsive source.",
+      "trapWarning": "The naive answer is 'priority just marks the image important'. It emits real preload links and fetch-priority hints that change network scheduling. Another trap: putting priority on several images 'just in case' — over-preloading degrades performance. Candidates who mention the preload link emission and the one-LCP-image rule show real LCP optimization experience."
+    }
+  ]
+}

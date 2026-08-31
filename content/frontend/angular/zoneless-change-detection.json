@@ -1,0 +1,61 @@
+{
+  "id": "zoneless-change-detection",
+  "title": "Zoneless Angular: provideExperimentalZonelessChangeDetection()",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 18+ (zoneless, signal-based CD)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["angular", "zoneless", "change-detection", "signals", "zonejs", "reactivity"],
+  "prerequisites": [
+    "Angular change detection basics (OnPush, Default)",
+    "Understanding of signals and Zone.js"
+  ],
+  "progressiveExplaining": {
+    "eli5": "An office building has a very diligent manager who walks through every room and checks every desk, every time anything anywhere in the building changes — even if it's just a light turning on in the basement. That's the old way. A new manager instead gets a notification from each desk that subscribes to a shared message board: only the desks that actually use the board get checked, and only when the board changes. The new manager does far less walking and the office feels faster, because rooms that don't care about the change are never disturbed.",
+    "junior": "Angular traditionally uses Zone.js: it monkey-patches browser APIs (setTimeout, addEventListener, Promise) so any async activity triggers change detection over the whole component tree. Zoneless mode removes Zone.js entirely: provideExperimentalZonelessChangeDetection() tells Angular to detect changes only when signal-based state (or explicit markForCheck) actually changes. With zoneless, your app no longer loads zone.js, async operations don't cause full-tree checks, and OnPush components refresh only when their inputs or read signals change. In Angular 18+ you can also use provideZonelessChangeDetection(); the API stabilized in later versions.",
+    "senior": "Architecturally, Zone.js-based CD is 'check everything after any async task'. Zoneless CD is pull-based and notification-driven: the framework tracks which views read which signals, and when a signal's version changes, only the views that read it (and their ancestors up to an OnPush root) are marked dirty. This eliminates whole-tree traversal and the scheduling overhead of zone patching, and improves performance in large apps. It changes the mental model: you cannot rely on 'any timer will refresh the view' — you must use signals, markForCheck(), or the async pipe. Observable subscriptions still work via the async pipe's internal change detection, but the signal path is now the first-class citizen.",
+    "underTheHood": "In zoneless mode, Angular's change detection scheduler is driven by a signal-based notification graph rather than zone hooks. Each view has a list of bindings that read signals; a signal write bumps the signal's version and marks subscribing views dirty. The scheduler then runs change detection for the dirty views (a targeted traversal), not the full tree. Angular also tracks notification sources: setTimeout/setInterval/fetch/events are no longer automatically tracked, so code that mutates state outside signals must call ChangeDetectorRef.markForCheck() or use the signal primitives. The framework internally uses NotificationSource and a dirty-flags mechanism; the template compiler lowers template bindings to signal reads where possible, so {{ count() }} participates directly in the graph."
+  },
+  "rosettaStone": {
+    "react": "React's granular re-renders are similar in spirit; Angular's zoneless CD is closer to Solid's fine-grained invalidation.",
+    "angular": "provideExperimentalZonelessChangeDetection() — the current topic.",
+    "vue": "Vue's effect-driven component updates mirror the signal-notification model of zoneless Angular.",
+    "svelte": "Svelte 5 runes compile to signal-driven updates; Angular zoneless is the same idea via runtime signals."
+  },
+  "codeComparison": {
+    "title": "Zone.js full-tree CD vs zoneless signal-driven CD",
+    "summary": "With Zone.js, any async task checks the whole tree; with zoneless, only views reading changed signals are refreshed.",
+    "legacyOrBad": {
+      "label": "Zone.js + full-tree CD",
+      "snippet": "@Component(...)\nexport class App {\n  count = 0;\n  ngOnInit() {\n    setInterval(() => this.count++, 1000); // ❌ OLD: zone patches → full-tree CD every tick\n  }\n}",
+      "fullFile": {
+        "filename": "app.component.ts",
+        "language": "typescript",
+        "code": "import { Component, OnInit } from '@angular/core';\n\n// ❌ OLD: Zone.js patches setInterval, so every tick triggers change\n// detection across the ENTIRE component tree — even components that\n// read nothing related to `count`.\n@Component({\n  selector: 'app-root',\n  template: `\n    <p>Count: {{ count }}</p>\n    <big-tree /> <!-- ❌ OLD: re-checked every second, for nothing -->\n  `,\n})\nexport class AppComponent implements OnInit {\n  count = 0;\n\n  ngOnInit() {\n    // ❌ OLD: zone notifies Angular → full-tree CD on every interval\n    setInterval(() => this.count++, 1000);\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Zoneless + signal-driven CD",
+      "snippet": "count = signal(0); // ✅ NEW: only views reading count() refresh\nconstructor() {\n  setInterval(() => this.count.update(c => c + 1), 1000);\n}",
+      "fullFile": {
+        "filename": "app.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal } from '@angular/core';\nimport { bootstrapApplication } from '@angular/platform-browser';\nimport { provideExperimentalZonelessChangeDetection } from '@angular/core';\n\n// ✅ NEW: Zoneless CD. Signal writes notify only the views that read\n// them; the rest of the tree is untouched — no zone, no full traversal.\nbootstrapApplication(AppComponent, {\n  providers: [provideExperimentalZonelessChangeDetection()], // ✅ NEW\n});\n\n@Component({\n  selector: 'app-root',\n  template: `\n    <p>Count: {{ count() }}</p> <!-- ✅ NEW: this binding subscribes to the signal -->\n    <big-tree /> <!-- ✅ NEW: not re-checked unless it reads signals -->\n  `,\n})\nexport class AppComponent {\n  count = signal(0); // ✅ NEW: signal-driven state\n\n  constructor() {\n    setInterval(() => this.count.update((c) => c + 1), 1000); // ✅ NEW\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What breaks when you switch to zoneless change detection, and how do you fix it?",
+      "contextIntro": "Interviewers ask this to check whether you understand the implicit contract Zone.js provided — that ANY async activity refreshed the view — and what must become explicit without it.",
+      "detailedAnswer": "Under Zone.js, setTimeout, Promise callbacks, DOM events, and HTTP responses all automatically mark the tree for CD. Zoneless removes that blanket trigger: if you mutate plain (non-signal) component state inside a setTimeout or a Promise callback without any signal involvement, the view will NOT refresh automatically. The fixes are: model state with signals (signal(), computed(), input()), use the async pipe for observables (which calls markForCheck internally on emission), or explicitly call ChangeDetectorRef.markForCheck()/detectChanges(). Also, code that relied on zone's error handling or that triggers CD from non-angular contexts (e.g. a standalone utility that mutates state) must now route through signal primitives. The build also drops zone.js, changing bundle size and polyfill assumptions.",
+      "trapWarning": "The naive answer is 'nothing breaks, it's just faster'. The real trap is stale views: any async mutation of non-signal state silently stops updating the UI. Another trap: assuming the async pipe stops working — it works, but through its own notification path, not through zone. Candidates who enumerate the explicit notification paths (signals, async pipe, markForCheck) demonstrate real migration experience."
+    },
+    {
+      "question": "How does the scheduler know which components to check in zoneless mode?",
+      "contextIntro": "This tests the pull-based notification graph — interviewers want the mechanics of how dirty views are identified and why OnPush-style thinking is now the default.",
+      "detailedAnswer": "The template compiler and runtime track which views read which signals. When a signal is written, it bumps its version and notifies registered consumers — including the template bindings/effects that read it. Angular's scheduler maintains a dirty-views set; views that read changed signals are marked dirty, and change detection runs only for those views (plus ancestors up to an OnPush boundary to satisfy input propagation). This is essentially the OnPush model applied globally: a view is checked when an input changes, a signal it reads changes, an async pipe emits, or markForCheck is called. The key detail is that the signal→view edge is registered at render time, so the graph is exact, not an approximation.",
+      "trapWarning": "The naive answer is 'zoneless checks the same tree but less often'. It checks a different SET — only views with signal edges to changed state. Another trap: assuming ancestor components with Default strategy always re-run — they only re-run if they themselves read a changed signal or receive changed inputs; otherwise they are skipped entirely. Candidates who describe the dirty-view set and signal-consumer edges show real understanding."
+    }
+  ]
+}

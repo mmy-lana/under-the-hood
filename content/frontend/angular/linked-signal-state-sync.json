@@ -1,0 +1,68 @@
+{
+  "id": "linked-signal-state-sync",
+  "title": "linkedSignal(): Dependent Mutable State Synchronization",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 19+ (linkedSignal)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "signals",
+    "linkedSignal",
+    "state",
+    "synchronization",
+    "reactivity"
+  ],
+  "prerequisites": [
+    "Angular signals (signal, computed)",
+    "Understanding of derived vs mutable state"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A form has a 'country' drop-down and a 'city' drop-down. The list of cities always depends on the chosen country, but the visitor is allowed to pick a specific city within that list. If the visitor changes the country, the city resets to a sensible default because the old city no longer belongs to the new country. linkedSignal is that two-field logic: the city value follows the country (its source), but it is also independently changeable by the user — until the country changes, at which point the city snaps back to follow.",
+    "junior": "A computed() is derived and read-only; a signal() is writable but independent. linkedSignal() is both: it derives its value from a source (a signal or computed) AND allows explicit writes — until the source changes, at which point it re-syncs to the source. const selectedId = linkedSignal(() => this.items()[0].id);. Reading selectedId() gives the current selection; selectedId.set(otherId) overrides it locally; when items() changes (source recomputed to a different first id), selectedId automatically resets to the new source value. Use it for 'selection that follows a list, but the user can override until the list changes'.",
+    "senior": "Architecturally, linkedSignal sits between computed (pure, derived, read-only) and signal (mutable, independent). It holds an internal state that is re-initialized from the source whenever the source's value changes; a manual write sets the internal state and suppresses re-sync until the next source change. This solves the classic 'two-way derived state' problem that otherwise requires an effect writing back into a signal. The source is a computation (tracking dependencies), so any dependency change recomputes the source and triggers a re-link. This makes UI state like selected items, pagination cursors, and filter values that 'reset when the data changes' declarative.",
+    "underTheHood": "linkedSignal creates an internal mutable signal plus a source computation. The source is evaluated lazily; when it changes, the internal value is overwritten with the new source result (the 'link' step). A write (set/update) marks the internal state as dirty/manual — the value is updated but the link is re-established on the next source change, not immediately. Implemented as a specialized signal node, it participates in the same consumer graph: reads register consumers, writes notify consumers, and the source re-link bumps the version. The equality check on the source determines whether re-link actually fires. This avoids the classic effect-that-writes-a-signal anti-pattern by making the re-sync a first-class signal behavior."
+  },
+  "rosettaStone": {
+    "react": "The 'derived state reset' pattern in React (key-based remount or useEffect sync) is the analogue.",
+    "angular": "linkedSignal() — the current topic.",
+    "vue": "Vue's watch + ref reset is the manual analogue; no first-class linked ref.",
+    "svelte": "Svelte 5 $derived + manual reset in an effect mirrors the same pattern."
+  },
+  "codeComparison": {
+    "title": "Effect-based state reset vs linkedSignal",
+    "summary": "Syncing mutable state from a source via an effect is error-prone (loops, ordering); linkedSignal makes the re-sync declarative and atomic.",
+    "legacyOrBad": {
+      "label": "Effect + signal manual sync",
+      "snippet": "selectedId = signal(''); // ❌ OLD\nconstructor() {\n  effect(() => this.selectedId.set(this.items()[0]?.id ?? '')); // ❌ OLD: effect writes signal",
+      "fullFile": {
+        "filename": "selector.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal, effect } from '@angular/core';\n\n// ❌ OLD: An effect reads the source and writes the selection signal.\n// This works but is fragile: the effect runs on ANY dependency change\n// (including the user's own selection write, if the effect reads it),\n// can clobber a manual selection, and ordering/loop bugs are easy.\n@Component({\n  selector: 'app-selector',\n  template: `<p>Selected: {{ selectedId() }}</p>`,\n})\nexport class SelectorComponent {\n  items = signal([{ id: 'a' }, { id: 'b' }]);\n  selectedId = signal(''); // ❌ OLD: independent signal\n\n  constructor() {\n    // ❌ OLD: manual re-sync — if the effect also reads selectedId(), it\n    // can loop; if it runs after a manual set, it overrides the user.\n    effect(() => this.selectedId.set(this.items()[0]?.id ?? ''));\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "linkedSignal declarative sync",
+      "snippet": "selectedId = linkedSignal(() => this.items()[0]?.id ?? ''); // ✅ NEW",
+      "fullFile": {
+        "filename": "selector.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal, linkedSignal } from '@angular/core';\n\n// ✅ NEW: linkedSignal derives the selection from the source (first\n// item id) and lets the user override it with set(). When the source\n// changes (items() recomputes to a different first id), the selection\n// re-syncs automatically — no effect, no loops, no clobbering.\n@Component({\n  selector: 'app-selector',\n  template: `<p>Selected: {{ selectedId() }}</p>`,\n})\nexport class SelectorComponent {\n  items = signal([{ id: 'a' }, { id: 'b' }]);\n  // ✅ NEW: source-linked mutable state\n  selectedId = linkedSignal(() => this.items()[0]?.id ?? '');\n\n  pick(id: string) {\n    this.selectedId.set(id); // ✅ NEW: user override, respected until source changes\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between linkedSignal and computed, and when would you choose linkedSignal over computed?",
+      "contextIntro": "This tests whether you understand the derived-vs-mutable distinction and the exact use case linkedSignal fills — interviewers want a precise line between the two primitives.",
+      "detailedAnswer": "computed() is a pure, derived, read-only value: it recomputes from its dependencies and cannot be written. linkedSignal() is derived AND writable: it initializes from a source computation, but the user can call set()/update() to override the value locally. The override lasts until the source changes, at which point the value re-syncs to the new source output. Use computed() when the value is fully a function of other state (formatted text, filtered lists). Use linkedSignal() when you need a mutable piece of state that should reset to follow a changing source — selections, pagination page, expanded item ids, draft defaults. If you tried to use computed() for these, you could never let the user deviate; if you used a plain signal, you'd need an effect to reset it.",
+      "trapWarning": "The naive answer is 'linkedSignal is a writable computed'. It is, but the write semantics matter: a write overrides until the source changes, then re-links. Another trap: assuming every source change resets the value — only source value changes (per equality) trigger re-link, and a manual set suppresses re-sync until the next source change. Candidates who articulate the reset-on-source-change semantics show real understanding."
+    },
+    {
+      "question": "How does linkedSignal avoid the effect-that-writes-a-signal anti-pattern, and what problems did that pattern cause?",
+      "contextIntro": "This probes the design rationale — why linkedSignal exists as a primitive rather than being composed from effect + signal, which is exactly what naive developers would build.",
+      "detailedAnswer": "The naive pattern is an effect that reads a source and writes a signal: effect(() => sel.set(source())). This has several failure modes: if the effect also reads sel (to avoid overwriting), it creates a circular dependency; if it doesn't, it overwrites any manual user selection whenever the source recomputes. Effects also run asynchronously (microtask), so there's a window where the state is stale, and they re-run on every dependency change, causing redundant writes. linkedSignal bakes the re-sync into the signal primitive: the link is recomputed at read/update time with the correct ordering, the manual-override is respected, and there is no separate effect scheduling or circular dependency risk. This is a case of the framework formalizing a common correct pattern to eliminate the subtle bugs.",
+      "trapWarning": "The naive answer is 'an effect doing the same thing is fine'. The effect version has ordering, override-clobbering, and circular-dependency bugs that linkedSignal eliminates. Another trap: thinking linkedSignal still runs an effect internally — the re-link is part of the signal's own computation, not a scheduled effect, so reads are always consistent. Candidates who can explain the anti-pattern and its failure modes demonstrate real senior-level understanding."
+    }
+  ]
+}

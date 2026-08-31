@@ -1,0 +1,68 @@
+{
+  "id": "intercepting-routes-modals",
+  "title": "Intercepting Routes: (..)photo URL Soft-Navigation Modals",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ (App Router)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nextjs",
+    "intercepting-routes",
+    "modals",
+    "app-router",
+    "navigation",
+    "soft-navigation"
+  ],
+  "prerequisites": [
+    "Next.js App Router basics",
+    "Understanding of parallel routes and dynamic segments"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A photo gallery has a big wall where the full-size photos hang. If you click a small photo, a special viewing room slides open over the wall without moving you to a different part of the building — the address in your hand (the URL) still says 'gallery', but you're looking at the viewing room. If you refresh the page, however, the building takes you directly to the photo's own room, because the special overlay only exists during the walk from the wall. Intercepting routes are that overlay: same URL behavior, different context depending on how you arrived.",
+    "junior": "Intercepting routes let you render a route in a different context when navigated to from a specific place. The syntax uses a folder with parentheses and dots: (.)same-level, (..)one-level-up, (..)(..)two-levels-up, (...)root. Example: app/feed/(..)photo/[id]/page.tsx intercepts /photo/1 when navigated to from /feed, rendering a modal over the feed, while the real /photo/1 route still exists. Combined with parallel routes, this is the canonical pattern for modals that update the URL: the modal content intercepts the navigation and renders in a @modal slot.",
+    "senior": "Architecturally, interception is a route-tree feature: when you navigate to a URL that matches both an intercepting route (in the current tree's context) and a normal route, the router uses the intercepting match based on the navigation origin. It is a client-side soft-navigation concern — a full page reload (hard navigation) resolves the URL normally and shows the real page, not the modal. This is why intercepting routes are great for modals-with-URLs: deep-linkable, refreshable, and shareable, while still giving the overlay UX when navigating in-app.",
+    "underTheHood": "The App Router's client navigation computes, for the target URL, the matched route tree starting from the current tree. Intercepting segments introduce an alternative match: the router checks whether the target segment pattern exists relative to the current active segment (one level up via (..), etc.). If the intercepting match exists and the navigation is client-side, the router prefers it and renders the intercepted page tree (often into a parallel slot). On hard navigation (refresh or direct link), the router resolves the URL from the root, so the non-intercepted route wins. The flight (RSC) payload for the intercepted subtree is fetched and rendered into the slot."
+  },
+  "rosettaStone": {
+    "react": "React Router's nested-outlet modals and route masking approximate interception.",
+    "angular": "Angular auxiliary routes (named outlets) give similar overlay-with-URL behavior.",
+    "vue": "Vue Router's nested routes + dynamic components mimic intercepting modals.",
+    "svelte": "SvelteKit modal patterns use the same slot approach without a built-in interception primitive."
+  },
+  "codeComparison": {
+    "title": "Modal without URL sync vs intercepting route modal",
+    "summary": "A plain modal doesn't update the URL (not shareable/deep-linkable); intercepting routes give modal UX with real URL semantics.",
+    "legacyOrBad": {
+      "label": "Modal with no URL",
+      "snippet": "const [open, setOpen] = useState(false); // ❌ OLD: modal state only in the client",
+      "fullFile": {
+        "filename": "app/feed/page.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: A client-side modal with local state. Clicking a photo opens\n// an overlay, but the URL does not change: no deep link, no share,\n// refresh loses the modal, and back-button doesn't close it.\n'use client';\nimport { useState } from 'react';\nimport { PhotoModal } from '@/components/photo-modal';\n\nexport default function FeedPage({ photos }: { photos: { id: string }[] }) {\n  const [activeId, setActiveId] = useState<string | null>(null); // ❌ OLD\n\n  return (\n    <div>\n      {photos.map((p) => (\n        <button key={p.id} onClick={() => setActiveId(p.id)}>Photo {p.id}</button>\n      ))}\n      {activeId && <PhotoModal id={activeId} onClose={() => setActiveId(null)} />}\n      {/* ❌ OLD: URL stays /feed — modal is invisible to the URL */}\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Intercepting route modal",
+      "snippet": "app/feed/(..)photo/[id]/page.tsx + @modal parallel slot → URL /photo/1 with modal UX",
+      "fullFile": {
+        "filename": "app/feed/(..)photo/[id]/page.tsx",
+        "language": "tsx",
+        "code": "// ✅ NEW: The intercepting route renders the photo as a modal when\n// navigated to from /feed, while the URL becomes /photo/1 (deep\n// linkable, refreshable). A hard refresh shows the real photo page.\nimport PhotoView from '@/components/photo-view';\n\nexport default async function InterceptedPhoto({\n  params,\n}: {\n  params: Promise<{ id: string }>;\n}) {\n  const { id } = await params;\n  return (\n    // ✅ NEW: rendered inside the @modal parallel slot in the layout\n    <div className=\"modal\">\n      <PhotoView id={id} />\n    </div>\n  );\n}\n\n// Layout (app/layout.tsx):\n//   <main>{children}</main>\n//   {modal}  // ✅ NEW: intercepted photo renders here as an overlay\n// The real route app/photo/[id]/page.tsx still exists for hard\n// navigation and direct visits."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does refreshing a page on an intercepted route show the real page instead of the modal, and is that a bug?",
+      "contextIntro": "This is the defining behavioral question about interception — interviewers want the soft-vs-hard navigation distinction to confirm you understand when interception applies.",
+      "detailedAnswer": "Interception applies to client-side soft navigation: when the Next.js router navigates within the app, it can match the target URL against an intercepting segment relative to the current tree and choose the intercepted render. A hard navigation (browser refresh, direct URL entry, or opening a link in a new tab) resolves the URL from the document root, so only the real (non-intercepted) route matches — the modal context is lost and the full photo page renders. This is intentional, not a bug: it means the URL always has a canonical real page, and the modal is an enhanced in-app experience. The same URL (/photo/1) serves both, with the presentation depending on navigation type.",
+      "trapWarning": "The naive answer is 'interception is broken after refresh'. It's the designed fallback: the real page exists precisely so deep links and refreshes work. Another trap: assuming interception works on hard navigation — it does not, by design. Candidates who explain the soft-vs-hard resolution and the dual-route model show real understanding."
+    },
+    {
+      "question": "How do the (.)/(..)/... folder prefixes map to route segments, and why does the matching depend on the current tree?",
+      "contextIntro": "This probes the segment-relative matching model — interviewers want to confirm you understand that interception is relative to the active route, not absolute, and what each prefix means.",
+      "detailedAnswer": "The prefix indicates how many levels up from the current segment the intercepted target should be matched: (.) matches a sibling at the same level, (..) matches one level up, (..)(..) two levels up, and (...) matches from the app root. The match is computed relative to the currently active segment in the route tree at the time of navigation. For example, app/feed/(..)photo/[id] intercepts /photo/[id] when the user is at /feed/... because photo is one level above feed. The relative nature is what makes the same intercepting folder behave correctly from different contexts — the router resolves the target pattern against the current path depth.",
+      "trapWarning": "The naive answer is 'the dots are just visual sugar'. They are relative path depth markers used by the router's tree matching. Another trap: assuming (..) always means 'parent directory in the filesystem' — it means one segment up from the CURRENT match context, which can differ from the literal folder path. Candidates who describe the current-tree-relative resolution show real App Router depth."
+    }
+  ]
+}

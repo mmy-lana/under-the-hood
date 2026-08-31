@@ -1,0 +1,68 @@
+{
+  "id": "signal-inputs-and-outputs",
+  "title": "input(), output(), and model() Signal Primitives",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17.1+ (input/output), 17.2+ (model)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "signals",
+    "input",
+    "output",
+    "model",
+    "component-api"
+  ],
+  "prerequisites": [
+    "Angular component basics (@Input/@Output)",
+    "Understanding of Angular signals"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A form you hand to a visitor has two kinds of fields: read-only fields filled in by the office (the input) and a place where the visitor writes a reply that the office collects (the output). The new system also adds a 'two-way scratch pad': the office writes a starting value, the visitor can change it, and the office automatically sees the changed value without extra steps. It's the same form, but now the office always knows exactly what the visitor wrote, with no copying back and forth.",
+    "junior": "Angular components traditionally declare inputs with @Input() and outputs with @Output() + EventEmitter. The signal-based API replaces them: count = input(0); gives a signal input (read count() in templates/code), and changed = output<number>(); emits like an EventEmitter (this.changed.emit(5)). For two-way binding, value = model(0); creates a model input that also emits updates when you set it — [(value)] works with zero boilerplate. Signal inputs are read-only from the child's perspective (you cannot assign to count(); you can only read it). This API is the modern, type-safe replacement for decorator-based bindings.",
+    "senior": "Architecturally, signal inputs are reactive: the child's template bindings that read input() are consumers, so changing an input value from the parent re-runs only the bindings that read it (zoneless-friendly). Unlike @Input, signal inputs are change-detection-aware and work with the signal graph directly. output() creates an OutputEmitterRef, functionally equivalent to EventEmitter but tree-shakable and signal-adjacent. model() is a two-way signal binding: it's an input signal AND an output — reading it gives the current value, and assigning it (this.value.set(...)) updates the parent via an implicit output (modelChange). The compiler tracks these as public API metadata, enabling better type-checking and editor support.",
+    "underTheHood": "The Angular compiler lowers input()/output()/model() into component definition metadata (inputs/outputs maps) alongside legacy @Input/@Output. A signal input is backed by an InputSignal node whose value is set during the parent's update bindings phase (when the parent re-renders, it writes the new value into the input signal, bumping its version and marking child consumers dirty). output() returns an OutputEmitterRef that wraps a Subject-like emitter; model() is implemented as an InputSignal plus a synchronous output emitter that fires when the model's set/update is called (the compiler wires [(model)] to both the input write and the modelChange output). These primitives make component APIs reactive end-to-end."
+  },
+  "rosettaStone": {
+    "react": "Props are inputs; model() resembles a controlled value + onChange pair bundled together.",
+    "angular": "input()/output()/model() — the current topic.",
+    "vue": "defineProps + defineEmits in <script setup>; defineModel() is Vue's analogue of Angular model().",
+    "svelte": "Svelte 5 $props and $bindable mirror the same one-way input + two-way binding split."
+  },
+  "codeComparison": {
+    "title": "Decorator @Input/@Output vs signal input()/output()/model()",
+    "summary": "Decorators are strings (class-field based) with EventEmitter boilerplate; signal primitives are typed, reactive, and model() removes the emit boilerplate for two-way bindings.",
+    "legacyOrBad": {
+      "label": "Decorator inputs/outputs",
+      "snippet": "@Input() count = 0; // ❌ OLD: string-keyed, non-reactive field\n@Output() changed = new EventEmitter<number>();\n@Output() countChange = new EventEmitter<number>(); // ❌ OLD: manual model plumbing",
+      "fullFile": {
+        "filename": "counter.component.ts",
+        "language": "typescript",
+        "code": "import { Component, Input, Output, EventEmitter } from '@angular/core';\n\n// ❌ OLD: Decorator-based API. Inputs are plain fields (not reactive),\n// outputs need EventEmitter, and two-way binding requires a manual\n// [x] + (xChange) pair with hand-written emit calls.\n@Component({\n  selector: 'app-counter',\n  template: `\n    <button (click)=\"inc()\">+1</button>\n    <p>Value: {{ count }}</p>\n  `,\n})\nexport class CounterComponent {\n  @Input() count = 0; // ❌ OLD: plain field, not a signal\n  @Output() changed = new EventEmitter<number>();\n  // ❌ OLD: manual two-way plumbing requires a matching Change output\n  @Output() countChange = new EventEmitter<number>();\n\n  inc() {\n    this.count++;\n    this.changed.emit(this.count); // ❌ OLD: two emits to keep both in sync\n    this.countChange.emit(this.count);\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Signal inputs/outputs/model",
+      "snippet": "count = input(0); // ✅ NEW: typed, reactive, read-only input\nchanged = output<number>();\ncountModel = model(0); // ✅ NEW: two-way binding in one primitive",
+      "fullFile": {
+        "filename": "counter.component.ts",
+        "language": "typescript",
+        "code": "import { Component, input, output, model } from '@angular/core';\n\n// ✅ NEW: Signal-based API. Inputs are reactive signals (bindings that\n// read them update granularly), outputs are typed emitter refs, and\n// model() gives two-way binding with zero manual plumbing.\n@Component({\n  selector: 'app-counter',\n  template: `\n    <button (click)=\"inc()\">+1</button>\n    <p>Value: {{ count() }}</p> <!-- ✅ NEW: reactive read -->\n  `,\n})\nexport class CounterComponent {\n  count = input(0); // ✅ NEW: read-only input signal\n  changed = output<number>(); // ✅ NEW: typed output emitter\n  countModel = model(0); // ✅ NEW: [(countModel)] two-way binding\n\n  inc() {\n    this.changed.emit(this.count() + 1); // ✅ NEW: emit once\n    this.countModel.update((v) => v + 1); // ✅ NEW: parent sees the change\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why are signal inputs considered better than @Input() for change detection, and what can't you do with them?",
+      "contextIntro": "This tests whether you understand the reactivity model shift — that inputs as signals create granular dependencies rather than whole-component input-change triggers.",
+      "detailedAnswer": "An @Input() is a plain field; when it changes, the framework marks the component dirty and re-checks it (and its template) as a unit. A signal input is a reactive node: template bindings that read count() register as consumers, so when the parent writes a new value, only those specific bindings re-evaluate — aligned with zoneless, granular change detection. Signal inputs are also read-only from the child: you cannot assign to an input() signal (the compiler enforces this), which prevents the anti-pattern of mutating inputs locally. The trade-off: you cannot use signal inputs with template reference variables the same way, and the value must be read with () or used inside reactive contexts; also, non-signal consumption (e.g. in ngOnInit) requires reading once and storing, losing reactivity.",
+      "trapWarning": "The naive answer is 'signal inputs are just typed @Input'. They change the invalidation granularity and add read-only semantics. Another trap: trying to assign to an input signal inside the child or expecting changes to reflect when you read the value once and store it in a plain variable — you must read it in a reactive context (template, computed, effect). Candidates who mention consumer registration and read-only enforcement show real understanding."
+    },
+    {
+      "question": "How does model() implement two-way binding, and what is the emitted event called?",
+      "contextIntro": "This probes the mechanical details of model() — the implicit change output and how [(x)] sugar compiles — a favorite area for interviewers probing signal familiarity.",
+      "detailedAnswer": "model() creates a two-way binding primitive that is both an input signal and an output. In the parent template, [(value)]=\"x\" desugars to [value]=\"x\" plus (valueChange)=\"x = $event\". The model() call registers the input side (value) and automatically creates the output side (valueChange) — so when the child calls this.value.set(newVal) or this.value.update(fn), the component emits the valueChange event synchronously with the new value, and the parent's expression updates x. This removes the manual [x] + (xChange) + EventEmitter boilerplate. The compiler knows the model's name to generate the Change output name. Models also support required models (model.required()) and work with signals in both directions.",
+      "trapWarning": "The naive answer is 'model() is just an input that can be written'. The write path emits valueChange, and if the parent is not using [(value)] syntax, the child's set has no effect on the parent. Another trap: assuming model() and input()+output() are interchangeable — model() carries the two-way contract and emits the Change event on every set; a plain input is read-only and a separate output requires manual emit wiring. Candidates who can state the valueChange event name and the [(x)] desugaring demonstrate precise knowledge."
+    }
+  ]
+}

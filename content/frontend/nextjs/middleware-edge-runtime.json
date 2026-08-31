@@ -1,0 +1,68 @@
+{
+  "id": "middleware-edge-runtime",
+  "title": "Edge Middleware: V8 Isolate Execution & Cookie Header Rewrite",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ (Middleware / proxy.ts)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nextjs",
+    "middleware",
+    "edge-runtime",
+    "v8-isolate",
+    "cookies",
+    "proxy"
+  ],
+  "prerequisites": [
+    "Next.js App Router and request lifecycle",
+    "Understanding of HTTP headers and cookies"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A doorman at the building entrance checks every visitor's ID card before they enter any office. The doorman works from a tiny kiosk in the lobby — he can't run the building's full computer systems, but he has a small notebook with the rules: 'VIPs go to the penthouse, others go to the lobby'. He can also stamp a badge before letting someone in. Because his kiosk is tiny and fast, every visitor is checked without slowing down the whole building. That guard at the entrance is the whole idea.",
+    "junior": "Middleware in Next.js runs before a request reaches a route. export function middleware(request: NextRequest) { return NextResponse.redirect(new URL('/login', request.url)); }. Use it for auth checks, redirects, rewrites, and header/cookie manipulation. It runs on the Edge Runtime (or Node.js in Next.js 15.2+ with proxy.ts). Configure which paths run it via the matcher config: export const config = { matcher: ['/dashboard/:path*'] }. Middleware runs on every matching request — before the page, API routes, and static files (per matcher).",
+    "senior": "Architecturally, middleware is a request-layer hook that runs before routing. On the Edge Runtime it executes inside a V8 isolate (a lightweight, sandboxed JS environment distributed to edge nodes), so it has strict API limits: no Node.js APIs (fs, process), only Web-standard APIs (Request/Response, fetch, crypto, URL), and a CPU/time budget. This is deliberate: edge middleware must be fast and start quickly. In Next.js 15.2+, proxy.ts runs middleware on Node.js by default with full runtime APIs. Common uses: A/B testing, geolocation redirects, auth gating, and cookie-based theming — all before the page renders.",
+    "underTheHood": "Next.js compiles middleware to a standalone entry that runs in the Edge Runtime. The runtime is V8-based: the middleware function is bundled and executed in an isolate with a polyfilled subset of Web APIs (via the edge-runtime package). The NextRequest/NextResponse wrappers expose helpers (cookies, nextUrl) that map to the underlying Fetch API. The matcher config compiles to a route pattern that the server uses to decide whether to invoke middleware for a request; matching happens against the URL path. Rewrites/redirects produced by middleware alter the routing decision before the App Router builds the page. The Node.js runtime (proxy.ts) instead runs in a normal Node context with full API access but slower cold starts."
+  },
+  "rosettaStone": {
+    "react": "Middleware is a server-side concern; React alone has no equivalent — it is framework-level (Next/Remix loaders).",
+    "angular": "Angular Universal/NestJS guards approximate middleware on the server.",
+    "vue": "Nuxt's route middleware + Nitro server routes play the same role.",
+    "svelte": "SvelteKit's hooks.server.ts handle() is the direct analogue."
+  },
+  "codeComparison": {
+    "title": "Per-page auth checks vs a single middleware gate",
+    "summary": "Repeating auth checks in every page/route is error-prone; middleware centralizes the gate before any route code runs.",
+    "legacyOrBad": {
+      "label": "Auth check in every page",
+      "snippet": "// ❌ OLD: repeated in every protected page\nconst session = await getSession();\nif (!session) redirect('/login');",
+      "fullFile": {
+        "filename": "app/dashboard/page.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: Every protected page must remember to check auth itself.\n// Forgetting one page leaks it, and the check runs after the page\n// starts rendering.\nimport { getSession } from '@/lib/session';\nimport { redirect } from 'next/navigation';\n\nexport default async function DashboardPage() {\n  // ❌ OLD: per-page guard — easy to forget on the next page\n  const session = await getSession();\n  if (!session) redirect('/login');\n\n  return <main>Dashboard for {session.user.name}</main>;\n}\n\n// SettingsPage, AdminPage, ProfilePage... each needs the same copy."
+      }
+    },
+    "modernOrGood": {
+      "label": "Centralized middleware gate",
+      "snippet": "export function middleware(req: NextRequest) {\n  const session = req.cookies.get('session'); // ✅ NEW: check once, before routes\n  if (!session) return NextResponse.redirect(new URL('/login', req.url));\n}",
+      "fullFile": {
+        "filename": "middleware.ts",
+        "language": "typescript",
+        "code": "import { NextRequest, NextResponse } from 'next/server';\n\n// ✅ NEW: One guard for all protected routes, running before any page\n// or API route executes.\nexport function middleware(request: NextRequest) {\n  const session = request.cookies.get('session'); // ✅ NEW: cookie check\n  if (!session) {\n    return NextResponse.redirect(new URL('/login', request.url)); // ✅ NEW\n  }\n\n  // ✅ NEW: rewrite the response to stamp a header (e.g. geolocation)\n  const response = NextResponse.next();\n  response.headers.set('x-request-id', crypto.randomUUID());\n  return response;\n}\n\nexport const config = {\n  matcher: ['/dashboard/:path*', '/settings/:path*'], // ✅ NEW: scoped paths\n};"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What APIs are unavailable in Edge middleware, and why does that constraint exist?",
+      "contextIntro": "This tests whether you understand the runtime model — interviewers want the V8-isolate constraint rationale, not just a list of forbidden APIs.",
+      "detailedAnswer": "Edge middleware runs in a V8 isolate: a minimal, sandboxed runtime with Web-standard APIs only (Request/Response, fetch, URL, crypto, TextEncoder) and no Node.js globals (fs, process, Buffer is limited, require is unavailable). This exists because the Edge Runtime is designed to start in milliseconds on distributed edge nodes and run with a bounded CPU/memory budget; bundling Node APIs would make startup heavy and defeat the purpose. Code that needs Node APIs (reading files, using process.env beyond what's inlined) must either use the Node.js runtime (proxy.ts in Next.js 15.2+, which runs middleware in Node) or move that logic into route handlers/server actions. The constraint is a deliberate trade-off: speed and distribution vs full Node capability.",
+      "trapWarning": "The naive answer is 'middleware is just a function that runs on the server'. On the Edge runtime it is a restricted sandbox, not full Node. Another trap: using process.env inside middleware expecting arbitrary env access — only inlined build-time env vars work; runtime secrets need the Node runtime or route handlers. Candidates who explain the V8-isolate sandbox and the proxy.ts alternative show real deployment knowledge."
+    },
+    {
+      "question": "How do middleware rewrites/redirects differ, and when should you use one over the other?",
+      "contextIntro": "This probes the routing mechanics — redirect tells the browser a new URL, rewrite serves different content under the same URL — and the practical consequences for SEO, auth, and A/B testing.",
+      "detailedAnswer": "A redirect (NextResponse.redirect) returns a 3xx status: the browser navigates to the new URL, which changes the address bar and is a full client-side navigation (for soft nav) or HTTP redirect (for hard nav). A rewrite (NextResponse.rewrite) internally serves content from a different route WITHOUT changing the URL — the browser keeps the original URL while the server renders the target. Use redirects for auth gates and moved content (canonical URL changes). Use rewrites for A/B testing (serve /variant-b at the /original URL), locale prefixes, and preserving URLs for SEO. Middleware rewrites are also used to map a request to a different route handler before the App Router renders.",
+      "trapWarning": "The naive answer is 'they're basically the same'. Redirects change the URL (and can cause redirect loops if misconfigured); rewrites mask the URL (which can confuse analytics if not handled). Another trap: using a rewrite where a redirect is semantically required (e.g. after login) leaves the URL wrong. Candidates who map each to its use case (SEO, A/B, auth) show real understanding."
+    }
+  ]
+}

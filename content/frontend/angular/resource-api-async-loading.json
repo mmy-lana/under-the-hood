@@ -1,0 +1,69 @@
+{
+  "id": "resource-api-async-loading",
+  "title": "resource() / rxResource(): Signal-Based HTTP Loading",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 19+ (resource, rxResource)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "resource",
+    "rxResource",
+    "async",
+    "signals",
+    "http",
+    "loading"
+  ],
+  "prerequisites": [
+    "Angular signals and computed",
+    "Understanding of HTTP requests and observables (for rxResource)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A library has a stand with a small sign for each asked-for book: 'searching…', 'available', or 'not found'. When a visitor asks for a book, the librarian puts up the 'searching' sign, goes to the stacks, and when he returns he flips the sign to the result. If the visitor asks for a different book, the librarian updates the sign and starts a new search. The stand is the resource: it always shows the current state of the latest ask, and it automatically forgets results from older asks.",
+    "junior": "resource() is a signal-based wrapper for async loading. const user = resource({ request: () => this.userId(), loader: ({ request }) => fetch(`/users/${request}`).then(r => r.json()) });. Reading user.value() gives the data, user.isLoading(), user.error(), user.status(). When the request signal changes, the loader re-runs automatically. It also supports streaming (ArrayBuffer/ReadableStream) and state transitions. rxResource() is the RxJS-flavored version: the loader returns an Observable, which it subscribes to (with cancellation). These replace the manual pattern of writing an effect that sets a loading/data/error signal trio.",
+    "senior": "Architecturally, resource() ties async loading into the signal graph: the request is a computation (tracking dependencies), and the loader is re-invoked whenever the request's value changes (debounced by default through the same scheduling). It manages the full lifecycle: loading state, error state, value, and revalidation. The value is exposed as a linked signal-like output; reads are reactive. rxResource takes an Observable-producing loader and subscribes with proper cancellation on request change (unsubscribing the previous). This removes whole classes of boilerplate: no manual effect, no race-condition guards (stale responses are discarded because the latest request wins), and no duplicated loading/error signals.",
+    "underTheHood": "resource() creates an internal state machine with statuses (idle, loading, error, success) and a value slot. When the request computation re-evaluates to a new value, the resource schedules a loader run (respecting the microtask scheduler), sets status to loading, executes the loader (a promise-returning function), and on resolution stores the value and sets success (or error + stores the error). Concurrent requests are handled by generation/abort tokens: each loader invocation is tagged, and when a new request starts, the old invocation is invalidated so its result cannot overwrite the newer one (guarding races). rxResource subscribes to the observable, cancels on request change via the subscription, and pushes emissions into the value signal. Both integrate with the injector for DI (the loader can call inject())."
+  },
+  "rosettaStone": {
+    "react": "React 19's use() with Suspense and TanStack Query's useQuery are the analogues.",
+    "angular": "resource()/rxResource() — the current topic.",
+    "vue": "VueUse's useAsyncState and Nuxt's useAsyncData mirror the request-tracking pattern.",
+    "svelte": "SvelteKit's load functions and $effect-based fetching are the Svelte-side analogue."
+  },
+  "codeComparison": {
+    "title": "Manual effect + signals trio vs resource()",
+    "summary": "Hand-writing an effect that sets loading/data/error signals is boilerplate and race-prone; resource() handles lifecycle, races, and cancellation declaratively.",
+    "legacyOrBad": {
+      "label": "Manual async state trio",
+      "snippet": "data = signal<User | null>(null);\nloading = signal(false);\nerror = signal<Error | null>(null); // ❌ OLD: three signals + effect",
+      "fullFile": {
+        "filename": "user.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal, effect } from '@angular/core';\n\n// ❌ OLD: The manual pattern — a loading/data/error signal trio updated\n// from an effect. Verbose, and prone to races (a slow first request\n// can overwrite a fast second one).\n@Component({\n  selector: 'app-user',\n  template: `{{ loading() ? 'Loading…' : data()?.name }}`,\n})\nexport class UserComponent {\n  userId = signal(1);\n  data = signal<User | null>(null); // ❌ OLD\n  loading = signal(false); // ❌ OLD\n  error = signal<Error | null>(null); // ❌ OLD\n\n  constructor() {\n    effect(async () => {\n      const id = this.userId();\n      this.loading.set(true);\n      try {\n        this.data.set(await fetch(`/users/${id}`).then((r) => r.json()));\n      } catch (e) {\n        this.error.set(e as Error); // ❌ OLD: race — stale response can win\n      } finally {\n        this.loading.set(false);\n      }\n    });\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "resource() declarative loading",
+      "snippet": "user = resource({\n  request: () => this.userId(),\n  loader: ({ request }) => fetch(`/users/${request}`).then((r) => r.json()),\n}); // ✅ NEW",
+      "fullFile": {
+        "filename": "user.component.ts",
+        "language": "typescript",
+        "code": "import { Component, signal, resource } from '@angular/core';\n\n// ✅ NEW: resource() manages the whole lifecycle — request tracking,\n// loading/error/value state, and race protection (stale responses are\n// discarded). No effect, no signal trio.\n@Component({\n  selector: 'app-user',\n  template: `\n    @if (user.isLoading()) { <p>Loading…</p> }\n    @else { <p>{{ user.value()?.name }}</p> }\n  `,\n})\nexport class UserComponent {\n  userId = signal(1);\n\n  // ✅ NEW: request is a computation; loader re-runs when it changes\n  user = resource({\n    request: () => this.userId(),\n    loader: ({ request }) => fetch(`/users/${request}`).then((r) => r.json()),\n  });\n\n  // Access: user.value(), user.isLoading(), user.error(), user.status()\n}\n\n// For RxJS-based loading use rxResource:\n// user = rxResource({ request: () => this.userId(),\n//   loader: ({ request }) => this.http.get<User>(`/users/${request}`) });"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does resource() prevent stale responses from overwriting newer ones when the request changes quickly?",
+      "contextIntro": "This tests the race-condition handling — a core reason to use resource() — interviewers want the generation/abort mechanics, not just 'it handles it'.",
+      "detailedAnswer": "Each loader invocation is associated with the request generation at the time it started. When the request computation changes, the resource bumps the generation and starts a new loader run; the previous invocation is marked stale, and its eventual resolution is ignored — it cannot write into the value slot. Depending on the loader, the old work may also be aborted (for fetch-based loaders, an AbortController is passed; for rxResource, the subscription is cancelled). This guarantees the value signal always reflects the latest request, eliminating the classic 'out-of-order response' bug that manual effect-based code suffers from. The framework also coalesces rapid request changes through the scheduler so you don't fire N parallel loaders for N quick input changes.",
+      "trapWarning": "The naive answer is 'it just does the requests in order'. Ordering alone doesn't prevent slow-first/fast-second races; the generation guard is what discards stale results. Another trap: assuming the loader is called synchronously on every request change — it is scheduled, and intermediate request changes are coalesced. Candidates who mention generation tokens/abort and scheduler coalescing show real understanding."
+    },
+    {
+      "question": "What is the difference between resource() and rxResource(), and when would you use each?",
+      "contextIntro": "This probes the promise-based vs observable-based loader distinction and the integration points (HttpClient vs fetch) — a practical decision interviewers test.",
+      "detailedAnswer": "resource() takes a loader that returns a Promise (or a streaming value like ArrayBuffer); it is the generic, framework-agnostic option — works with fetch, async/await, and any promise-based client. rxResource() takes a loader that returns an Observable, which the resource subscribes to; it is for code already in the RxJS world, especially when using HttpClient (which returns Observables) or when you need operators (debounce, switchMap, retry) inside the loader. Both provide the same value/loading/error/status surface and both cancel the previous request on change. The choice is essentially: promise/fetch codebase → resource(); RxJS/HttpClient codebase → rxResource(). You can also mix, since both integrate with signals.",
+      "trapWarning": "The naive answer is 'rxResource is just the reactive version, always prefer it'. If you're not using RxJS, adding it just for rxResource is wrong — resource() is lighter and works with fetch. Another trap: assuming the loader runs inside an injection context automatically — it does for both (you can call inject() in the loader), but forgetting this when moving code from a service can cause NG0203 if called outside. Candidates who can match the primitive to the data layer show practical judgment."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "parallel-routes-slots",
+  "title": "Parallel Routes: @slot Layout Rendering & Conditional Routing",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ (App Router)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nextjs",
+    "parallel-routes",
+    "slots",
+    "app-router",
+    "layouts",
+    "conditional-routing"
+  ],
+  "prerequisites": [
+    "Next.js App Router basics (layouts, pages)",
+    "Understanding of the file-system routing model"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A dashboard page is like a room with several fixed windows: the weather window, the news window, and the calendar window. Normally, changing the room's address changes everything in the room. Parallel routes are separate window frames that keep their own content: you can change what's shown in the weather window without rebuilding the whole room, and each window can even show a completely different view depending on the address — like a window that shows a special notice only at a certain address.",
+    "junior": "Parallel routes let you render multiple pages in the same layout simultaneously using named slots. Create folder(s) with @ prefix: app/@feed/page.tsx and app/@analytics/page.tsx, then in app/layout.tsx render them: {children} and {feed} and {analytics} (the slot names are passed as props to the layout). Each slot renders independently, and navigating updates each slot separately. The default.tsx file provides a fallback for a slot when the current URL has no matching page. This is ideal for dashboards with independent sections.",
+    "senior": "Architecturally, parallel routes are the App Router's mechanism for conditional/independent rendering within one layout: each @slot is an independent page tree rendered into its named outlet. The layout receives the slots as props ({ children, feed, analytics }), and each slot has its own navigation state. This enables: dashboards where sections update independently without full-page reloads, and conditional UI (e.g. an auth slot that renders login only when needed). Slots share the parent layout but keep separate route trees — navigation to a URL that matches only some slots uses default.tsx for the unmatched ones.",
+    "underTheHood": "The App Router builds a route tree where each parallel route is a separate child segment of the layout node. At request time, the router resolves each slot's segment against the URL and renders the matched page (or its default.tsx) into the corresponding layout prop. On client navigation, the router compares the previous and next trees per slot and patches only the changed slot subtrees in the React tree (via a custom reconciler over the flight data). This is why one slot can navigate independently without re-rendering the others — the parallel branches are separate React subtrees managed by the same router."
+  },
+  "rosettaStone": {
+    "react": "React Router's outlets in a layout and conditional rendering approaches are the conceptual analogues.",
+    "angular": "Angular named router-outlets are the closest analogue to @slot parallel routes.",
+    "vue": "Vue Router's named views (router-view name=...) map to the same idea.",
+    "svelte": "SvelteKit's layout slots (multiple children) approximate parallel rendering."
+  },
+  "codeComparison": {
+    "title": "Single outlet vs parallel slots in a dashboard",
+    "summary": "A single outlet forces one page per layout region; parallel @slots render independent page trees in the same layout simultaneously.",
+    "legacyOrBad": {
+      "label": "Single outlet dashboard",
+      "snippet": "app/dashboard/page.tsx — one page rendering everything: <Feed /><Analytics />",
+      "fullFile": {
+        "filename": "app/dashboard/page.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: One page per URL. To show feed + analytics together you\n// compose them inside a single page component, so they cannot navigate\n// independently and any navigation reloads the whole composition.\nimport { Feed } from '@/components/feed';\nimport { Analytics } from '@/components/analytics';\n\nexport default function DashboardPage() {\n  return (\n    <div>\n      {/* ❌ OLD: both sections are hard-wired into one route */}\n      <Feed />\n      <Analytics />\n    </div>\n  );\n}\n\n// Navigating to /dashboard/analytics would need a different page; you\n// cannot keep the feed mounted while only the analytics section changes."
+      }
+    },
+    "modernOrGood": {
+      "label": "Parallel route slots",
+      "snippet": "app/@feed/page.tsx + app/@analytics/page.tsx rendered via {children}, {feed}, {analytics}",
+      "fullFile": {
+        "filename": "app/layout.tsx",
+        "language": "tsx",
+        "code": "// ✅ NEW: Parallel routes. Each @slot is an independent page tree\n// rendered into its named outlet; sections navigate independently.\n// app/@feed/page.tsx and app/@analytics/page.tsx exist as separate\n// route trees.\nexport default function DashboardLayout(props: {\n  children: React.ReactNode;\n  feed: React.ReactNode; // ✅ NEW: the @feed slot\n  analytics: React.ReactNode; // ✅ NEW: the @analytics slot\n}) {\n  return (\n    <div className=\"dashboard\">\n      <aside>{props.feed}</aside> {/* ✅ NEW: renders @feed/page.tsx */}\n      <main>{props.children}</main>\n      <aside>{props.analytics}</aside> {/* ✅ NEW: renders @analytics/page.tsx */}\n    </div>\n  );\n}\n\n// Navigation updates only the affected slot; unmatched slots use\n// their default.tsx fallback."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is default.tsx for, and what happens when a slot has no page for the current URL?",
+      "contextIntro": "This tests the slot resolution fallback mechanism — interviewers want to know how the router handles partial URL-to-slot matches, a common source of 404s in parallel-route apps.",
+      "detailedAnswer": "Each @slot is resolved against the current URL. If the URL matches a page in only some slots (e.g. navigating to /dashboard/settings while only the @settings slot has that page), the unmatched slots must still render something — default.tsx provides that fallback. Without a default.tsx for a slot with no matching page, the router renders a 404 for that slot (or the whole page errors). default.tsx is the equivalent of the slot's home page for unmatched paths. Best practice is to provide default.tsx for every parallel slot that might be unmatched during navigation, especially when slots are conditionally rendered.",
+      "trapWarning": "The naive answer is 'missing slots are just skipped'. Without default.tsx the router can 404 the entire route. Another trap: thinking default.tsx only matters for full-page loads — it is also used during client-side navigation when a slot's segment is unmatched. Candidates who describe the per-slot resolution and the fallback file show real App Router knowledge."
+    },
+    {
+      "question": "How do parallel slots interact with the layout and with client-side navigation performance?",
+      "contextIntro": "This probes the route-tree mechanics — how slots share the layout yet keep independent subtrees, and why navigation can avoid re-rendering unaffected slots.",
+      "detailedAnswer": "The layout component receives each slot as a prop, so the layout is rendered once with multiple children subtrees. Each slot is its own branch in the route tree; during client navigation, the router computes a diff between the previous and next route trees and updates only the changed branches — the React reconciliation is scoped per slot. So navigating within @feed does not re-render @analytics (its subtree and RSC payload are untouched). The slots share the parent layout's shell (headers/nav) and any providers in it. This is what enables the fast, independent section updates that make dashboards feel like SPAs within the App Router.",
+      "trapWarning": "The naive answer is 'parallel routes re-render the whole layout on any navigation'. The router patches only changed slot branches. Another trap: assuming slots share URL state automatically — each slot is keyed to its own segment, so two slots do not magically share query params unless you wire them. Candidates who describe the per-branch patching and slot independence show real understanding."
+    }
+  ]
+}

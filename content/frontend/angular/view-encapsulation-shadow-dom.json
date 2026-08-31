@@ -1,0 +1,61 @@
+{
+  "id": "view-encapsulation-shadow-dom",
+  "title": "ViewEncapsulation: Emulated vs ShadowDom Host Attributes",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["angular", "view-encapsulation", "shadow-dom", "emulated", "css-scoping", "styles"],
+  "prerequisites": [
+    "Angular component styles basics",
+    "Understanding of CSS specificity and Shadow DOM"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two ways to stop room decorations from affecting other rooms. The first way: the decorator secretly labels every piece of furniture with the room's name, so a rule like 'red chairs' only matches chairs bearing that label — the labels make the rules behave as if they were private. The second way: the room is built with a true wall — nothing inside can be seen or changed from outside, and outside rules bounce off the wall entirely. The first is quick and works everywhere; the second is a real wall but heavier to build.",
+    "junior": "ViewEncapsulation controls whether a component's styles stay scoped. The default (Emulated) rewrites your selectors with attribute selectors like [_ngcontent-abc123] so styles only match elements in the component's own template — no real Shadow DOM, works in all browsers. ShadowDom uses the native Shadow DOM: the component's styles live inside a real shadow root, fully isolated (outer styles cannot reach in). None means no scoping — your styles are global. Choose Emulated for broad compatibility, ShadowDom for true encapsulation (e.g. third-party widgets), None deliberately for global styles.",
+    "senior": "Architecturally, Emulated encapsulation is a compile-time transformation: the compiler adds a unique attribute (e.g. _nghost-xxx on the host and _ngcontent-xxx on template elements) and rewrites component selectors to include the content attribute, scoping styles by specificity-inflation rather than a real boundary. ShadowDom encapsulation compiles the component's template and styles into a shadow root at runtime, giving true encapsulation: outer styles and inner styles cannot cross the boundary (except via ::part and CSS custom properties). Emulated has the classic caveat that child component styles CAN leak upward through inherited properties and that global styles (e.g. a body rule) still affect the component — which is why emulated is 'pseudo-scoped'.",
+    "underTheHood": "For Emulated, the Angular compiler (Angular 17+'s output) generates the component's style strings with attribute selectors appended: .foo[_ngcontent-%COMP%] and host selectors rewritten to [_nghost-%COMP%]. These attribute tokens are unique per component class, not per instance, so styles are shared across instances. For ShadowDom, the runtime calls attachShadow({ mode: 'open' }) on the host element and appends the compiled <style> into the shadow root; the component template is rendered into the shadow tree, so style matching is boundary-isolated. The encapsulation mode is stored in component def (ɵcmp) metadata; ShadowDom additionally requires the browser's native shadow support and affects global event retargeting (events inside the shadow root retarget to the host)."
+  },
+  "rosettaStone": {
+    "react": "React has no built-in scoping; CSS Modules/CSS-in-JS emulate the Emulated approach.",
+    "angular": "ViewEncapsulation.Emulated vs ShadowDom — the current topic.",
+    "vue": "Vue scoped styles use attribute hashing, like Angular's Emulated.",
+    "svelte": "Svelte compiles scoped styles with class hashing, closer to Emulated than real Shadow DOM."
+  },
+  "codeComparison": {
+    "title": "Emulated scoping vs real Shadow DOM encapsulation",
+    "summary": "Emulated rewrites selectors with component attributes (pseudo-scoped); ShadowDom creates a real boundary that blocks outer styles entirely.",
+    "legacyOrBad": {
+      "label": "Emulated (default) scoping",
+      "snippet": "@Component({\n  selector: 'app-card',\n  encapsulation: ViewEncapsulation.Emulated, // ❌ OLD: pseudo-scoping via attributes\n  styles: ['p { color: red; }'],\n})",
+      "fullFile": {
+        "filename": "card.component.ts",
+        "language": "typescript",
+        "code": "import { Component, ViewEncapsulation } from '@angular/core';\n\n// ❌ OLD: Emulated scoping rewrites `p` to `p[_ngcontent-abc]`, so the\n// rule only matches the component's own <p> tags. But it is NOT a real\n// boundary: a global `p { color: blue }` rule with higher/later\n// specificity still wins, and inherited properties (color, font) leak\n// in from outside.\n@Component({\n  selector: 'app-card',\n  encapsulation: ViewEncapsulation.Emulated, // ❌ OLD: attribute-based scoping\n  styles: [`\n    p { color: red; }\n  `],\n  template: `<p>Card text</p>`,\n})\nexport class CardComponent {\n  // ❌ OLD: if the page sets `p { color: blue !important }`, this red\n  // rule loses — no real isolation against global styles.\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "ShadowDom encapsulation",
+      "snippet": "@Component({\n  selector: 'app-card',\n  encapsulation: ViewEncapsulation.ShadowDom, // ✅ NEW: real shadow boundary\n  styles: ['p { color: red; }'],\n})",
+      "fullFile": {
+        "filename": "card.component.ts",
+        "language": "typescript",
+        "code": "import { Component, ViewEncapsulation } from '@angular/core';\n\n// ✅ NEW: ShadowDom puts the template and styles inside a real shadow\n// root. Outer styles cannot match inner elements at all, and inner\n// styles cannot leak out — true isolation.\n@Component({\n  selector: 'app-card',\n  encapsulation: ViewEncapsulation.ShadowDom, // ✅ NEW: real boundary\n  styles: [`\n    p { color: red; } // ✅ NEW: fully isolated from page styles\n  `],\n  template: `<p>Card text</p>`,\n})\nexport class CardComponent {\n  // Global `p { color: blue }` rules now bounce off the shadow root.\n  // To style internals from outside, expose parts:\n  //   host: { 'part': 'card-body' }  ->  ::part(card-body) { ... }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What are the practical differences between Emulated and ShadowDom encapsulation beyond 'one uses attributes, one uses shadow DOM'?",
+      "contextIntro": "Interviewers want to see that you know the functional consequences — pseudo-scoping vs real isolation — not just the mechanism names, because those consequences cause real bugs.",
+      "detailedAnswer": "Emulated encapsulation rewrites selectors with component attributes, giving pseudo-scoping: it raises specificity but does not create a boundary. Global styles with higher specificity or !important still override component styles, and inherited CSS properties flow in from outside. It also cannot isolate IDs, focus, or events. ShadowDom creates a real rendering boundary: the shadow root's style matching is isolated in both directions, global styles cannot reach in, and inner styles cannot leak out. But ShadowDom changes behavior: global focus/outline styling, form control styles, and global utilities (Tailwind preflight) no longer apply inside the component, and events retarget to the host. It also prevents light-DOM styling except via ::part and custom properties. These differences drive real decisions for component libraries.",
+      "trapWarning": "The naive answer is 'ShadowDom is just stronger scoping, pick it for everything'. ShadowDom breaks global styling (fonts, resets, utility classes) inside the component and complicates accessibility/theming. Another trap: assuming Emulated protects against global !important or inherited styles — it does not. Candidates who can list what breaks with ShadowDom (global styles, event retargeting, form controls) demonstrate real production experience."
+    },
+    {
+      "question": "How does the Angular compiler implement Emulated encapsulation, and why does it use attributes rather than a real boundary?",
+      "contextIntro": "This probes the compile-time mechanics — attribute injection and selector rewriting — to see if you understand that Emulated is a specificity trick, not an isolation mechanism.",
+      "detailedAnswer": "At compile time, Angular assigns each component a unique attribute token (e.g. _ngcontent-abc123). The compiler rewrites every selector in the component's styles to include that attribute: p becomes p[_ngcontent-abc123], and the host selector gets _nghost-abc123. The component's template elements carry the attribute at runtime, so the scoped selectors only match the component's own nodes. This works without native Shadow DOM support, which is why it was the default for broad browser compatibility. Because it relies on specificity-inflated selectors, it is defeated by higher-specificity global rules and !important — it is a pragmatic scoping approximation, not an isolation boundary. Real Shadow DOM would require native support and changes event/form semantics, so Emulated remained the default.",
+      "trapWarning": "The naive answer is 'Emulated creates a mini shadow root'. It is purely a selector-rewriting compile step; there is no shadow root. Another trap: thinking the attribute is per-instance — it is per-component-class, so two instances share the same token, and styles are shared. Candidates who describe attribute injection and the specificity-inflation model show they understand the implementation rather than the marketing."
+    }
+  ]
+}

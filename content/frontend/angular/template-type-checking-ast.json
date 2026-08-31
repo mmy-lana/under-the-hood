@@ -1,0 +1,68 @@
+{
+  "id": "template-type-checking-ast",
+  "title": "Angular Compiler Strict Templates & AST Type Inference",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+ (strict templates by default)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "compiler",
+    "template-type-checking",
+    "ast",
+    "strict-templates",
+    "ivy"
+  ],
+  "prerequisites": [
+    "Angular templates and bindings",
+    "Understanding of TypeScript type checking"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Before a play goes on stage, the director reads every line and checks that each actor's script refers to real characters and real props. If a line says 'hand the hammer to the painter' but there is no hammer in the play, the director catches it during rehearsal instead of letting the actor fumble on stage. Strict template checking is that rehearsal: the framework reads your stage directions (the HTML template) before the show and flags references to things that don't exist or don't match.",
+    "junior": "Angular's compiler type-checks templates: it checks that {{ user.name }} exists on user, that (click)=\"save($event)\" matches the save method's signature, and that [value]=\"count\" has a compatible type. With strictTemplates enabled (default in new apps), the compiler catches typos and type mismatches at build time instead of runtime. It also infers types from structural directives: @for (let item of items) gives item the element type of items. Strictness flags include strictNullChecks (item could be null), strictInputTypes, and strictOutputEventTypes. This makes templates as type-safe as the rest of your TypeScript.",
+    "senior": "Architecturally, the Angular compiler parses the template into an AST, then generates a TypeScript 'type-check block' — synthetic .ts code that mirrors the template bindings — which the TypeScript compiler type-checks. The generated code references the component's properties and methods with their real types, so TS errors surface for template mistakes. The type-check block uses special marker types (e.g. TCB) and directive metadata (ngTypeCheckDirective) to model directives, pipes, and control flow. Strictness flags control how aggressive the checks are. This moves a whole class of runtime errors (undefined property reads, wrong event handler signatures) to compile time.",
+    "underTheHood": "The template compiler (ngtsc) walks the template AST (elements, bindings, control flow, template refs) and emits a type-check block per template into a synthetic file in the program. Bindings become assignment-like expressions typed with the component's types: an interpolation {{ user.name }} becomes a check that user has a name property (via a helper like typeof operator and the component's type). Structural directives are modeled with template context types; @for/@if generate their own context types. The generated block is fed to the TS compiler; errors are mapped back to template source locations. The strictTemplates flags (strictInputTypes, strictOutputEventTypes, strictNullChecks, strictDomEventTypes, etc.) toggle which generated checks are emitted."
+  },
+  "rosettaStone": {
+    "react": "TypeScript JSX gives the same compile-time template checking; Angular does it for HTML templates.",
+    "angular": "ngtsc strict templates — the current topic.",
+    "vue": "Vue's vue-tsc provides analogous type checking for SFC templates.",
+    "svelte": "Svelte's svelte-check type-checks markup with a similar synthetic-code approach."
+  },
+  "codeComparison": {
+    "title": "Runtime property errors vs build-time template type checking",
+    "summary": "Without strict templates, a typo like user.nmae fails silently at runtime; strict templates catch it at build time with a precise error.",
+    "legacyOrBad": {
+      "label": "Loosely typed template (strictTemplates off)",
+      "snippet": "<p>{{ user.nmae }}</p> <!-- ❌ OLD: typo passes the build; fails silently at runtime → undefined -->",
+      "fullFile": {
+        "filename": "app.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\n\n// ❌ OLD: Without strict templates, the compiler does NOT verify that\n// user.nmae exists. The template compiles, the app runs, and the\n// binding renders 'undefined' — or throws in a strict null context.\n@Component({\n  selector: 'app-root',\n  template: `\n    <p>{{ user.nmae }}</p> <!-- ❌ OLD: no build error for the typo -->\n    <button (click)=\"save($event)\">Save</button>\n  `,\n})\nexport class AppComponent {\n  user = { name: 'Ada' }; // ❌ OLD: typo is only caught when it renders\n\n  save(e: MouseEvent) {}\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Strict template type checking",
+      "snippet": "<p>{{ user.name }}</p> <!-- ✅ NEW: compiler verifies name exists and is a string -->",
+      "fullFile": {
+        "filename": "app.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\n\n// ✅ NEW: With strictTemplates, the compiler generates a type-check\n// block that TypeScript verifies. A typo like user.nmae now fails the\n// build with a precise error, and event handlers are signature-checked.\n@Component({\n  selector: 'app-root',\n  template: `\n    <p>{{ user.name }}</p> <!-- ✅ NEW: checked against the type of user -->\n    <button (click)=\"save($event)\">Save</button> <!-- $event inferred as MouseEvent -->\n  `,\n})\nexport class AppComponent {\n  user = { name: 'Ada' }; // ✅ NEW: template bindings are type-safe\n\n  save(e: MouseEvent) {}\n}\n\n// tsconfig: \"angularCompilerOptions\": { \"strictTemplates\": true }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does Angular actually type-check HTML templates, given that TypeScript doesn't understand HTML?",
+      "contextIntro": "This tests the compiler architecture — interviewers want the type-check block mechanism, not just 'it uses TypeScript'. Knowing this separates framework users from compiler-level thinkers.",
+      "detailedAnswer": "Angular's ngtsc compiler parses the template into an AST and then generates a synthetic TypeScript file containing a 'type-check block' (TCB) per template. The TCB is real TS code that mirrors each binding: interpolations become expressions assigned to typed variables, event handlers become calls typed against the handler's signature, and structural directives get typed context variables. This synthetic code is added to the TypeScript program, and the TS compiler type-checks it like any other source. Errors in the TCB are mapped back to the template's source locations and reported with the template context. The generated block uses the component's actual types, so template bindings are checked against the real class properties, directive inputs, and pipe signatures.",
+      "trapWarning": "The naive answer is 'Angular uses a separate type checker for templates'. It reuses the TypeScript checker via generated synthetic code — no separate engine. Another trap: assuming runtime type errors (like a non-existent property) are caught — strict templates catch structural/type issues at build time, but dynamic runtime states (null at runtime when type says non-null) still need strictNullChecks discipline. Candidates who mention the TCB and ngtsc pipeline show real compiler-level understanding."
+    },
+    {
+      "question": "What do the individual strictTemplates flags control, and what happens when you enable or disable them selectively?",
+      "contextIntro": "This probes the granularity of the strictness system — interviewers want to see that you know the flags map to specific check categories and can tune them for migration scenarios.",
+      "detailedAnswer": "strictTemplates is a master switch; individual flags control specific checks: strictInputTypes verifies binding values against directive/component input types; strictOutputEventTypes checks event handler payloads; strictNullChecks treats possibly-null values in bindings (e.g. user possibly undefined → accessing .name errors); strictDomEventTypes types DOM events precisely; strictAttributeTypes and strictSafeNavigationTypes refine attribute and safe-navigation checks. Disabling individual flags (e.g. strictNullChecks) relaxes only that category, useful when migrating a legacy codebase incrementally: you can enable the master flag and turn off only the noisiest checks, then tighten them over time. The flags are set in angularCompilerOptions in tsconfig.",
+      "trapWarning": "The naive answer is 'strictTemplates is one on/off switch'. It is a family of independent flags. Another trap: assuming safe navigation (?.) disables null checks — it handles null at runtime, but the type system still needs strictNullChecks on to flag missing handling elsewhere. Candidates who enumerate the flags and their migration use cases show real configuration experience."
+    }
+  ]
+}

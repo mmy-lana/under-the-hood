@@ -1,0 +1,68 @@
+{
+  "id": "router-functional-guards-resolvers",
+  "title": "Functional CanActivateFn vs Legacy Class Guards",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 15+ (functional guards/resolvers)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "router",
+    "guards",
+    "resolvers",
+    "CanActivateFn",
+    "functional"
+  ],
+  "prerequisites": [
+    "Angular Router basics (routes, guards)",
+    "Understanding of inject() and DI"
+  ],
+  "progressiveExplaining": {
+    "eli5": "The old way to have a door check who can enter was to assign a dedicated employee to stand at that door. The new way is to write a simple instruction card that says 'check the badge, then let them in' and pin it to the door. The card is lighter, easier to copy to other doors, and can be thrown away when the door changes. No employee uniform, no training — just a note that can be read by any doorman.",
+    "junior": "Angular guards/resolvers can be plain functions now: export const authGuard: CanActivateFn = () => inject(AuthService).isLoggedIn();. Register them directly in the route: { path: 'admin', canActivate: [authGuard] }. Functional guards can return boolean, UrlTree, or Observable/Promise of those. Resolvers: const userResolver: ResolveFn<User> = () => inject(UserService).load();. They use inject() for DI, so no @Injectable class or constructor boilerplate. They compose better: canActivate: [authGuard, roleGuard] runs them in order.",
+    "senior": "Architecturally, functional guards are just functions executed by the router's guards pipeline; they receive a route/state snapshot argument. They are tree-shakable (no class registration needed), work seamlessly with inject(), and make guard logic composable and testable as pure functions. The router resolves them at navigation time: for canActivate, the pipeline awaits the returned boolean/UrlTree/Observable/Promise, and a false or UrlTree blocks or redirects the navigation. Resolvers run before activation, and their returned values are stored in the ActivatedRouteSnapshot.data. The functional form is now the recommended pattern; class guards remain supported.",
+    "underTheHood": "When navigating, the router builds an ActivationStart flow: it collects the guard functions from the matched route configs (canActivate/canActivateChild/canDeactivate/canLoad/resolve) and runs them in order, per level. For each guard, it calls the function with the ActivatedRouteSnapshot and RouterStateSnapshot, then handles the return type via a coercion utility: boolean → proceed/block, UrlTree → redirect (the router sets a navigation to that tree), Promise/Observable → subscribed/awaited. If any guard returns false or a UrlTree, the navigation is cancelled/redirected and the router emits NavigationCancel. Resolver results are assigned to snapshot.data after all guards pass, before the component is created."
+  },
+  "rosettaStone": {
+    "react": "React Router loaders/guards are also function-based; Angular's pipeline ordering mirrors the concept.",
+    "angular": "CanActivateFn/ResolveFn — the current topic.",
+    "vue": "Vue Router navigation guards are functions with DI via the app context.",
+    "svelte": "SvelteKit load functions + guards are the function-first analogue."
+  },
+  "codeComparison": {
+    "title": "Class guard with constructor DI vs functional guard with inject()",
+    "summary": "Class guards need @Injectable + constructor + provider wiring; functional guards are single-purpose functions using inject().",
+    "legacyOrBad": {
+      "label": "Class-based guard",
+      "snippet": "@Injectable({ providedIn: 'root' })\nexport class AuthGuard implements CanActivate {\n  constructor(private auth: AuthService) {} // ❌ OLD: class + DI constructor\n  canActivate() { return this.auth.isLoggedIn(); }\n}",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "import { Injectable } from '@angular/core';\nimport { CanActivate } from '@angular/router';\n\n// ❌ OLD: A class guard must be decorated, provided, and constructed\n// through DI. For a single boolean check this is heavy boilerplate.\n@Injectable({ providedIn: 'root' }) // ❌ OLD: registration required\nexport class AuthGuard implements CanActivate {\n  constructor(private auth: AuthService) {} // ❌ OLD: constructor DI\n\n  canActivate() {\n    return this.auth.isLoggedIn();\n  }\n}\n\n// Route: { path: 'admin', canActivate: [AuthGuard] }"
+      }
+    },
+    "modernOrGood": {
+      "label": "Functional guard",
+      "snippet": "export const authGuard: CanActivateFn = () => inject(AuthService).isLoggedIn(); // ✅ NEW",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "import { inject } from '@angular/core';\nimport { CanActivateFn } from '@angular/router';\n\n// ✅ NEW: A plain function. inject() resolves AuthService from the\n// current injection context (guards run inside one). No class, no\n// @Injectable, no constructor — tree-shakable and testable.\nexport const authGuard: CanActivateFn = () => {\n  return inject(AuthService).isLoggedIn(); // ✅ NEW: inject() works here\n};\n\n// Route: { path: 'admin', canActivate: [authGuard] }\n\n// Redirect instead of blocking:\n// export const authGuard: CanActivateFn = () =>\n//   inject(AuthService).isLoggedIn() ? true : inject(Router).createUrlTree(['/login']);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why do functional guards work with inject() when regular functions called from components don't?",
+      "contextIntro": "This tests the injection-context model applied to the router — interviewers want to know what makes guard execution special and where inject() is legal.",
+      "detailedAnswer": "The router executes guards inside an injection context: when a navigation runs, the router sets up the environment injector (and route-level injectors) as the active injector before invoking guard functions. Therefore inject() inside the guard resolves against that context — services like AuthService, Router, or ActivatedRouteSnapshot data are available. Regular functions called from an event handler have no such ambient injector (the context is null), so inject() throws NG0203. This is why guards/resolvers can be plain functions: they are contractually executed within the DI context by the router. The same applies to providers' factory functions and interceptor functions.",
+      "trapWarning": "The naive answer is 'inject works in any function that imports it'. It works only in an active injection context; the router provides that for guards. Another trap: assuming you can inject route params directly — you must read them from the ActivatedRouteSnapshot argument or inject ActivatedRoute, not via a magic global. Candidates who explain the router-provided injection context show real understanding."
+    },
+    {
+      "question": "What happens when a functional guard returns a UrlTree, and how does the router handle multiple guards?",
+      "contextIntro": "This probes the guard pipeline semantics — return-type handling and ordering — which determine navigation outcomes in real apps.",
+      "detailedAnswer": "A UrlTree return causes the router to cancel the current navigation and start a new one to that tree (a redirect), so guards can redirect (e.g. to /login) without injecting Router manually. A false return cancels navigation (NavigationCancel). Multiple guards in one array run sequentially in order, top-down through the route levels (parent guards before child guards for canActivate); if any returns false or a UrlTree, the remaining guards are skipped and the navigation is cancelled or redirected. Promise/Observable returns are awaited/subscribed. Resolvers run after guards pass and populate the snapshot data. This deterministic pipeline is why functional composition (auth then role then data) is safe and testable.",
+      "trapWarning": "The naive answer is 'guards run in parallel'. They run sequentially per the router's pipeline, and ordering matters for side effects. Another trap: forgetting that a UrlTree is a redirect, not just 'deny' — returning a UrlTree to the current URL can cause a redirect loop if not guarded. Candidates who describe the ordered pipeline and the false-vs-UrlTree distinction show real depth."
+    }
+  ]
+}

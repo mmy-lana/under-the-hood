@@ -1,0 +1,67 @@
+{
+  "id": "custom-structural-directives-viewcontainer",
+  "title": "TemplateRef & ViewContainerRef: Manual View Hosting",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "structural-directives",
+    "TemplateRef",
+    "ViewContainerRef",
+    "directives"
+  ],
+  "prerequisites": [
+    "Angular directives and *ngIf/*ngFor",
+    "Understanding of templates and views"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A stage manager has a pile of unused scene scripts and a marked spot on the stage where a scene can be performed. A director's assistant reads the instruction 'if the show is sold out, put up the extra scene' — when the condition flips, the assistant either carries the script to the marked spot and performs it, or clears the spot and puts the script back in the pile. The stage manager controls exactly when and where scenes appear, and can perform the same script in multiple spots.",
+    "junior": "A structural directive (one with * prefix, like *myIf) is sugar for: <ng-template myIf [myIf]=\"cond\">...</ng-template>. Inside the directive you inject TemplateRef (the ng-template content) and ViewContainerRef (the anchor where the view should be created). Then: if (cond) { this.vcr.createEmbeddedView(this.tpl); } else { this.vcr.clear(); }. This is exactly how ngIf/ngFor are implemented. You can also create dynamic components with this.vcr.createComponent(ComponentType). TemplateRef gives you the template's context (via createEmbeddedView(context)), so directives can pass data into the template.",
+    "senior": "Architecturally, the * syntax is compiler sugar: the Angular compiler expands *myIf into <ng-template myIf> and wires an <ng-template> element with the directive as its host. The directive receives TemplateRef (a handle to the embedded template) and ViewContainerRef (a container anchored at the host element's location in the view). Calling createEmbeddedView(tpl, context) instantiates the template as an embedded view with its own context (for let- variables), attaches it to the container, and registers it for change detection. clear() or remove() destroys the view and runs its destroy hooks. This is the low-level API beneath all structural directives, and the same primitives power dynamic component creation and portals.",
+    "underTheHood": "ViewContainerRef is a marker inserted into the LView (the component's view data structure) at the location of the host element. createEmbeddedView calls the template's ɵɵtemplate instruction logic: it creates a new LView for the embedded view, binds the context (let- variables become locals in the embedded view's binding context), appends the view's nodes into the DOM at the container's anchor (via insert), and marks it dirty for CD. clear() calls destroy on each embedded view (running ngOnDestroy on components inside). TemplateRef wraps the template function + declaration container, enabling the template to be rendered in any ViewContainerRef, including different components."
+  },
+  "rosettaStone": {
+    "react": "React render props / children-as-function and portals are the conceptual analogues.",
+    "angular": "TemplateRef + ViewContainerRef — the current topic.",
+    "vue": "Vue's <template> + v-if compilation and render functions are the analogue.",
+    "svelte": "Svelte's {#if}/{#each} compile to snippet/fragment logic; manual fragment APIs differ."
+  },
+  "codeComparison": {
+    "title": "Repeating boilerplate with ngIf vs a custom structural directive",
+    "summary": "Hand-rolling permission checks with ngIf everywhere is repetitive; a custom structural directive encapsulates the logic and reuses the template.",
+    "legacyOrBad": {
+      "label": "Repeated ngIf permission checks",
+      "snippet": "@if (auth.can('admin')) { <admin-panel /> } <!-- ❌ OLD: repeated in every template -->",
+      "fullFile": {
+        "filename": "app.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\n\n// ❌ OLD: Permission logic is copy-pasted into every template that\n// needs it. If the permission model changes, every usage must change.\n@Component({\n  selector: 'app-root',\n  template: `\n    @if (auth.can('admin')) { <admin-panel /> } <!-- ❌ OLD: repeated -->\n    @if (auth.can('admin')) { <admin-link /> }  <!-- ❌ OLD: and again -->\n    @if (auth.can('editor')) { <editor-tools /> } <!-- ❌ OLD: custom per use -->\n  `,\n})\nexport class AppComponent {\n  constructor(public auth: AuthService) {}\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Custom *hasPermission structural directive",
+      "snippet": "@if true, render template via TemplateRef/ViewContainerRef — wrapped in *hasPermission=\"'admin'\"",
+      "fullFile": {
+        "filename": "has-permission.directive.ts",
+        "language": "typescript",
+        "code": "import { Directive, Input, TemplateRef, ViewContainerRef } from '@angular/core';\n\n// ✅ NEW: A reusable structural directive. The * syntax expands to an\n// <ng-template>; the directive uses TemplateRef + ViewContainerRef to\n// create or clear the embedded view based on the condition.\n@Directive({ selector: '[hasPermission]' })\nexport class HasPermissionDirective {\n  private condition = false;\n\n  constructor(\n    private tpl: TemplateRef<unknown>, // ✅ NEW: the ng-template content\n    private vcr: ViewContainerRef, // ✅ NEW: the anchor for the view\n  ) {}\n\n  @Input() set hasPermission(perm: string) {\n    this.condition = inject(AuthService).can(perm);\n    this.update();\n  }\n\n  private update() {\n    this.vcr.clear(); // ✅ NEW: remove any existing view\n    if (this.condition) {\n      this.vcr.createEmbeddedView(this.tpl); // ✅ NEW: render the template\n    }\n  }\n}\n\n// Usage: <div *hasPermission=\"'admin'\"><admin-panel /></div>\n// The compiler expands this to:\n// <ng-template hasPermission=\"'admin'\"><admin-panel /></ng-template>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does the * prefix actually compile to, and why does a structural directive need both TemplateRef and ViewContainerRef?",
+      "contextIntro": "This tests the core mental model of structural directives — the ng-template desugaring and the two-primitive contract. Interviewers want the compiler expansion, not just 'it renders templates'.",
+      "detailedAnswer": "The * prefix is compiler sugar: *myDirective=\"expr\" expands to <ng-template myDirective=\"expr\">...</ng-template> with the directive as the host on the ng-template element. Inside the directive, TemplateRef is the handle to that embedded template (the content the user wrote inside the * element), and ViewContainerRef is the container anchored at the host's location in the parent view. Rendering requires both: TemplateRef holds the template function + declaration view, and ViewContainerRef provides the location to insert the instantiated embedded view and manages its lifecycle (create/remove/destroy). Without ViewContainerRef you have no insertion point; without TemplateRef you have nothing to render. Together they give the directive full control over when and where content appears.",
+      "trapWarning": "The naive answer is 'the * just makes a component render conditionally'. The * compiles to an ng-template + a directive hosting it. Another trap: thinking createEmbeddedView re-runs the template function on every CD — the view is created once and its bindings update reactively; creating it repeatedly without clearing leaks views. Candidates who describe the ng-template expansion and the insert/destroy lifecycle show real understanding."
+    },
+    {
+      "question": "How does a structural directive pass data into the template it renders, and what are let- variables?",
+      "contextIntro": "This probes the embedded-view context mechanism — the let- microsyntax that ngIf/ngFor/ngComponentOutlet use to expose values to the template body.",
+      "detailedAnswer": "createEmbeddedView(tpl, context) accepts a context object whose properties become the template's let- bindings. In the template, let-item exposes context.item; the compiler lowers let-item to a read of the embedded view's context slot. This is how *ngFor=\"let item of items; index as i\" works — the context carries item, index, count, etc. Custom directives implement the same by defining @Input() set with template-bound values and passing a context to createEmbeddedView. The context object is the contract between the directive logic and the template body; it is typed via the directive's ngTemplateContextGuard for strict templates, giving template authors type-checked let- variables.",
+      "trapWarning": "The naive answer is 'let- variables are just local variables'. They are slots on the embedded view's context object, injected by the directive. Another trap: forgetting the ngTemplateContextGuard when using strictTemplates — without it, let- variables are typed as unknown/any and template type-checking degrades. Candidates who mention the context object and the type guard demonstrate real advanced knowledge."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "standalone-component-module-tree",
+  "title": "Standalone Components Compilation vs NgModule Boundary",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 14+ (standalone), 17+ (default)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "standalone",
+    "ngmodule",
+    "compilation",
+    "component",
+    "architecture"
+  ],
+  "prerequisites": [
+    "Angular components and NgModules",
+    "Understanding of the Angular compiler (ngtsc)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "The old office required every employee to be registered in a department before they could use the printer or the meeting room (NgModule). The new office lets each employee carry their own keycard that directly lists the rooms they may enter (standalone). The employee no longer needs to ask a department to be 'included' — they declare their own access. This makes it much easier to move an employee to another building: their keycard comes with them, instead of requiring a new department registration at the destination.",
+    "junior": "A standalone component declares its own dependencies directly: @Component({ standalone: true, imports: [CommonModule, MyComponent], ... }). It does not need to be declared in an NgModule. You can lazy-load it directly in routes: { path: 'x', loadComponent: () => import('./x.component').then(m => m.XComponent) }. Since Angular 17, standalone: true is the default and the recommended style. NgModules still exist for some cases (browser module config, NgModule-based libraries), but new code can be fully standalone. Remove declarations/imports from a module and use imports: [] on the component itself.",
+    "senior": "Architecturally, standalone components remove the NgModule indirection layer: the compiler analyzes the component's imports array to build its dependency graph directly. This enables full tree-shaking (unused components/imports are dropped) and simplifies lazy loading (a route can load exactly one component + its imports). The NgModule boundary previously determined compilation units and injector scope; standalone components get their own injector environment via the imports they reference. Migrations (ng generate @angular/core:standalone) convert NgModule apps automatically. This is a structural simplification of Angular's architecture, not just syntax sugar.",
+    "underTheHood": "ngtsc compiles a standalone component by resolving its imports array into component dependencies (directives/pipes/components) and generating the ɵcmp def with a standalone flag. At runtime, the compiler's dependency resolution walks the imported symbols (via their ɵdir/ɵpipe/ɵcmp metadata) to build the render-time dependency list. Lazy routes use loadComponent: the router imports the module chunk and constructs the component with its dependencies resolved from the imports array. The injector for a standalone component is created from the EnvironmentInjector that bootstraps it; providers declared on the component (providers: [...]) create element-level injectors as before. The NgModule-to-standalone migration rewires all this metadata automatically."
+  },
+  "rosettaStone": {
+    "react": "React components are inherently standalone (import what you use); Angular's standalone mode converges to that model.",
+    "angular": "standalone components — the current topic.",
+    "vue": "Vue SFCs are self-contained by design, like Angular standalone.",
+    "svelte": "Svelte components import their dependencies directly — the same model."
+  },
+  "codeComparison": {
+    "title": "NgModule-declared component vs standalone component",
+    "summary": "NgModule indirection requires declaring components in a module and importing the module everywhere; standalone components import dependencies directly.",
+    "legacyOrBad": {
+      "label": "NgModule-wrapped component",
+      "snippet": "@Component({ selector: 'app-card', template: '...' })\n@NgModule({\n  declarations: [CardComponent], // ❌ OLD: must declare in a module\n  imports: [CommonModule],\n})\nexport class CardModule {}",
+      "fullFile": {
+        "filename": "card.module.ts",
+        "language": "typescript",
+        "code": "import { NgModule } from '@angular/core';\nimport { CommonModule } from '@angular/common';\nimport { CardComponent } from './card.component';\n\n// ❌ OLD: The component must be declared in a module, and consumers\n// must import the module to use it. Extra indirection, and lazy\n// loading pulls the whole module (all its declarations) together.\n@NgModule({\n  declarations: [CardComponent], // ❌ OLD: declaration indirection\n  imports: [CommonModule],\n  exports: [CardComponent], // ❌ OLD: re-export to make it usable\n})\nexport class CardModule {}\n\n// Usage: imports: [CardModule] in another module, or NgModule-based\n// lazy loading via loadChildren."
+      }
+    },
+    "modernOrGood": {
+      "label": "Standalone component",
+      "snippet": "@Component({\n  selector: 'app-card',\n  imports: [CommonModule], // ✅ NEW: dependencies declared here\n  template: '...',\n})\nexport class CardComponent {}",
+      "fullFile": {
+        "filename": "card.component.ts",
+        "language": "typescript",
+        "code": "import { Component } from '@angular/core';\nimport { CommonModule } from '@angular/common';\n\n// ✅ NEW: The component imports exactly what it needs. No NgModule\n// wrapper, direct lazy loading, tree-shakable.\n@Component({\n  selector: 'app-card',\n  imports: [CommonModule], // ✅ NEW: direct dependency declaration\n  template: `<p>Card</p>`,\n})\nexport class CardComponent {}\n\n// Lazy route:\n// {\n//   path: 'card',\n//   loadComponent: () => import('./card.component').then((m) => m.CardComponent),\n// }\n\n// The compiler builds the dependency graph straight from the imports\n// array — no module boundary involved."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What architectural problems did NgModules solve that standalone components replace, and what changed in the compilation model?",
+      "contextIntro": "This tests whether you understand the historical role of NgModules (compilation units, DI scope, tree-shaking boundaries) and how standalone components move that responsibility.",
+      "detailedAnswer": "NgModules were the compilation and dependency-scoping unit: a component could only use directives/pipes listed in its module's imports, which defined both the compilation unit (what the compiler knows about) and the injector scope. This enabled ahead-of-time compilation with a bounded dependency set, but it also meant indirection (declare + import + export), harder tree-shaking, and heavier lazy chunks (a module loads all its declarations). Standalone components declare dependencies directly in imports: [], so the compiler resolves the exact dependency graph per component, enabling precise tree-shaking and component-level lazy loading. The DI scope still comes from the injector (environment + element), but there is no artificial module boundary to configure.",
+      "trapWarning": "The naive answer is 'standalone just removes a file'. It changes compilation granularity and tree-shaking. Another trap: assuming NgModules are dead — existing libraries and some setup (BrowserModule, providers arrays) still use them; migration is mechanical but not zero. Candidates who mention compilation units, DI scope, and lazy-chunk size show real architectural understanding."
+    },
+    {
+      "question": "How does dependency resolution work for a standalone component, and what happens to providers it declares?",
+      "contextIntro": "This probes the runtime/compiler mechanics — how imports: [] becomes a render-time dependency list and how the injector tree is built for standalone components.",
+      "detailedAnswer": "At compile time, ngtsc resolves each symbol in the imports array by reading its Angular metadata (ɵcmp/ɵdir/ɵpipe) and records the resolved directives/pipes in the component's ɵcmp def. At runtime, when the component is instantiated, Angular uses that pre-resolved dependency list to build the view (matching element tags to directives) without consulting any module. Providers declared on a standalone component (providers: []) are scoped to the component's element injector, so descendants can inject them but siblings cannot. If a standalone component is bootstrapped or lazy-loaded, it inherits the application's EnvironmentInjector; provider trees (providedIn: 'root') still work globally. The migration tool rewires these relationships automatically.",
+      "trapWarning": "The naive answer is 'standalone components have no providers or injectors'. They create element injectors exactly like before. Another trap: assuming a standalone component can use any directive globally — it can only use what is in its imports array, and forgetting a directive import produces a template compile error (NG0301-style). Candidates who describe the metadata resolution and injector scoping show real under-the-hood knowledge."
+    }
+  ]
+}

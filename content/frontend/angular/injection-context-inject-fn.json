@@ -1,0 +1,68 @@
+{
+  "id": "injection-context-inject-fn",
+  "title": "inject() Function, runInInjectionContext(), and DI Hierarchy",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 14+ (inject), 16+ (runInInjectionContext)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "dependency-injection",
+    "inject",
+    "injection-context",
+    "hierarchy",
+    "di"
+  ],
+  "prerequisites": [
+    "Angular dependency injection basics (providers, tokens)",
+    "Understanding of constructor-based DI"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Instead of every employee filling out a form to ask for office supplies, there is now a central supply room that any employee can walk into at any moment and grab what they need. But the supply room has a rule: you can only enter it while you are actually working at your desk (during a valid work moment). If you try to walk in while off-duty, the door simply doesn't open. The central room also knows which department you belong to, so it gives you the department's special supplies first.",
+    "junior": "inject(SomeToken) returns a dependency from the current injection context. Use it in component/pipe/directive constructors, in field initializers, in providers' factory functions, and in guard/resolver functions. const api = inject(ApiService);. It replaces constructor parameter injection for most cases and works in functions too. If you call inject() outside an injection context (e.g. a random utility function called from an event handler), it throws NG0203. To inject in a context-less function, wrap with runInInjectionContext(environmentInjector, () => inject(...)).",
+    "senior": "Architecturally, inject() resolves from the active injector — the one established by the current injection context (component's injector, or the environment injector). This enables functional composition: guards, resolvers, interceptors, and factory providers can all call inject() without constructor plumbing. The injection context is an ambient/thread-local value set during DI resolution, component creation, and guard execution. runInInjectionContext() explicitly scopes a callback to a given injector, letting utility functions participate in DI. Because it's function-friendly, inject() supports tree-shaking and cleaner functional patterns than constructor-based DI.",
+    "underTheHood": "Angular tracks the current injector on a global/ambient reference (the TInjector / injector state) while creating components, resolving providers, and executing guards. inject() reads that ambient state and walks the injector hierarchy (ElementInjector chain → ModuleInjector → EnvironmentInjector → NullInjector) to find the token. Outside any DI-driven execution, the ambient state is null, so inject() throws NG0203. runInInjectionContext(injector, fn) temporarily sets the ambient injector, runs fn, and restores it. The DI resolution uses the token's ɵprov metadata and caches instances in the injector's records; inject() from a field initializer works because field initializers run during construction, which is within the injection context."
+  },
+  "rosettaStone": {
+    "react": "React Context via useContext is similar; Angular's inject resolves through the injector hierarchy.",
+    "angular": "inject() + runInInjectionContext() — the current topic.",
+    "vue": "inject() in Vue's Composition API mirrors the same hierarchical lookup.",
+    "svelte": "getContext()/setContext() in Svelte are the analogue for component-hierarchy injection."
+  },
+  "codeComparison": {
+    "title": "Constructor injection vs inject() in a functional guard",
+    "summary": "Constructor DI requires class scaffolding; inject() works in plain functions (guards, resolvers, factories) with the same hierarchy resolution.",
+    "legacyOrBad": {
+      "label": "Class guard with constructor DI",
+      "snippet": "export class AuthGuard implements CanActivate {\n  constructor(private auth: AuthService) {} // ❌ OLD: requires a class + constructor\n  canActivate() { return this.auth.isLoggedIn(); }\n}",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "import { Injectable } from '@angular/core';\nimport { CanActivate } from '@angular/router';\n\n// ❌ OLD: A class guard must be declared, provided, and wired into the\n// route with its class name. Constructor DI is verbose and the guard\n// cannot be expressed as a lightweight function.\n@Injectable({ providedIn: 'root' })\nexport class AuthGuard implements CanActivate {\n  constructor(private auth: AuthService) {} // ❌ OLD: constructor plumbing\n\n  canActivate() {\n    return this.auth.isLoggedIn();\n  }\n}\n\n// Route wiring: { path: 'admin', canActivate: [AuthGuard] }"
+      }
+    },
+    "modernOrGood": {
+      "label": "Functional guard with inject()",
+      "snippet": "export const authGuard: CanActivateFn = () => inject(AuthService).isLoggedIn(); // ✅ NEW",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "import { inject } from '@angular/core';\nimport { CanActivateFn } from '@angular/router';\n\n// ✅ NEW: A plain function can call inject() because guards run inside\n// an injection context. No class, no constructor, no @Injectable.\nexport const authGuard: CanActivateFn = () => {\n  const auth = inject(AuthService); // ✅ NEW: resolves from the current injector\n  return auth.isLoggedIn();\n};\n\n// Route wiring: { path: 'admin', canActivate: [authGuard] }\n\n// inject() also works in field initializers and provider factories:\n// export const api = { provide: ApiService, useFactory: () => inject(Config).baseUrl };"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "When does inject() throw NG0203, and how do you fix code that needs DI outside an injection context?",
+      "contextIntro": "This tests the ambient-injection-context model — interviewers want to know exactly when DI is available and the standard escape hatches when it isn't.",
+      "detailedAnswer": "inject() requires an active injection context, which exists while Angular is: constructing components/directives/pipes, executing injectable constructors, running provider factory functions, executing route guards/resolvers/interceptors, and within runInInjectionContext. Calling inject() from an ordinary function invoked later (e.g. an event handler, setTimeout callback, or a utility called from business logic) finds no ambient injector and throws NG0203. Fixes: capture the injected value in an injection-context scope (a component constructor/field initializer) and close over it, or wrap the call site with runInInjectionContext(environmentInjector, () => inject(...)). This is a common migration issue when refactoring class services into functions.",
+      "trapWarning": "The naive answer is 'inject() works anywhere because it's global'. It relies on an ambient injector that only exists during DI-driven execution. Another trap: assuming arrow functions in the component body have injection context — they run later (events, timers), so inject() inside them throws. Candidates who describe the ambient injector and runInInjectionContext escape hatch demonstrate real understanding."
+    },
+    {
+      "question": "How does inject() resolve a token, and what is the actual resolution order through the injector hierarchy?",
+      "contextIntro": "This probes the DI resolution mechanics — the injector chain traversal and how element vs environment injectors differ — a core Angular interview area.",
+      "detailedAnswer": "inject() uses the currently-active injector, then walks the hierarchy: for a component, it starts at the ElementInjector chain (component and ancestor component injectors, which can provide per-element services), then falls through to the ModuleInjector (the @NgModule injector or environment injector), then to the NullInjector, which throws if nothing provides the token. Tokens resolve by matching the provided key (class, InjectionToken, or string) and consulting each injector's records; providers with providedIn: 'root' live in the environment injector, while component-level providers live in the element chain. The resolution caches instances per injector. Tree-shakable tokens (providedIn) are created lazily on first injection.",
+      "trapWarning": "The naive answer is 'inject just returns the singleton'. Hierarchy matters: a component-provided service shadows the root one for that subtree, and inject() respects the current element chain, not a global registry. Another trap: thinking providedIn: 'root' bypasses element-level overrides — element providers take precedence for that subtree. Candidates who can describe the Element → Module → Null walk and shadowing rules show real DI mastery."
+    }
+  ]
+}

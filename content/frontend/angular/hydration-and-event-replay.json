@@ -1,0 +1,68 @@
+{
+  "id": "hydration-and-event-replay",
+  "title": "Non-Destructive Hydration & Event Replay Mechanics",
+  "category": "frontend",
+  "subcategory": "angular",
+  "versionContext": "Angular 17+ (hydration), 18+ (event replay)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "angular",
+    "hydration",
+    "ssr",
+    "event-replay",
+    "server-side-rendering",
+    "dom"
+  ],
+  "prerequisites": [
+    "Angular SSR/SSG basics",
+    "Understanding of the DOM lifecycle and event listeners"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant prints the full menu ahead of time so customers see it instantly. When the real waiter finally arrives at the table, he does NOT rewrite every dish on the menu — he just checks that the printed menu matches what the kitchen actually serves, and then starts taking orders. The trick is that if a customer tapped a dish on the printed menu before the waiter arrived, the restaurant saved that tap and the waiter processes it as soon as he is ready. Nothing on the menu was re-written; the printed copy was reused.",
+    "junior": "Hydration is the process where Angular, after server-side rendering HTML, attaches client-side behavior to that existing HTML instead of re-creating it. With hydration enabled (provideClientHydration()), Angular reuses the SSR-generated DOM nodes and wires up event listeners, avoiding a destructive re-render (which caused flicker and broke focus/scroll). In Angular 18+, event replay is also available: user interactions that happened before hydration completed (clicks on buttons rendered by SSR) are recorded and replayed once the app hydrates, so no click is lost. This gives near-instant first paint plus full interactivity.",
+    "senior": "Architecturally, non-destructive hydration means Angular's runtime adopts the existing DOM (the LView is bound to the existing nodes) instead of creating fresh nodes and replacing the tree. The hydration code path walks the SSR markup and matches each element to the component's template expectations, skipping creation for matched nodes. This preserves DOM state: scroll position, focus, and CSS animations survive hydration. Event replay extends this by buffering events dispatched before hydration: the DOM dispatches events to a recording layer; when hydration completes, the recorded events are re-dispatched. This solves the classic 'dead HTML' window between first paint and app-ready.",
+    "underTheHood": "The hydration runtime uses a DOM-node matching algorithm: Angular serializes component/host data into the SSR HTML (via transfer state and node annotations), and on the client walks the DOM comparing expected node types/order. For each matched node, it reuses the DOM element rather than creating one (the creation is skipped and the LView references the existing node). Unmatched nodes trigger an error or fallback. Event replay works by installing early global listeners (click, input, etc.) that push events into a queue keyed by the target node; when hydration finishes, Angular replays queued events on the now-hydrated tree. This is coordinated with zoneless change detection so replay triggers proper CD."
+  },
+  "rosettaStone": {
+    "react": "React 19's hydration + (experimental) event replay are the direct analogues.",
+    "angular": "provideClientHydration() + withEventReplay() — the current topic.",
+    "vue": "Vue's SSR hydration reuses the DOM; event replay is handled by Vue 3.4's hydration timings differently.",
+    "svelte": "SvelteKit hydrates and reuses DOM; Svelte 5's event delegation provides similar early-interaction support."
+  },
+  "codeComparison": {
+    "title": "Destructive re-render vs non-destructive hydration",
+    "summary": "Without hydration, Angular re-creates the DOM after SSR (flicker, lost focus); with hydration, the SSR DOM is adopted in place and early events replay.",
+    "legacyOrBad": {
+      "label": "No hydration (destructive re-render)",
+      "snippet": "bootstrapApplication(App); // ❌ OLD: no provideClientHydration → Angular re-creates the DOM",
+      "fullFile": {
+        "filename": "main.ts",
+        "language": "typescript",
+        "code": "import { bootstrapApplication } from '@angular/platform-browser';\nimport { AppComponent } from './app/app.component';\n\n// ❌ OLD: Without hydration, the client re-renders the app from\n// scratch: Angular creates a fresh DOM tree and replaces the SSR\n// markup. Users see flicker, lose scroll position and focus, and the\n// SSR work is wasted (double render).\nbootstrapApplication(AppComponent);\n\n// The SSR HTML is discarded and rebuilt client-side, which also\n// defeats some benefits of server rendering (faster interaction is\n// delayed until the client render completes)."
+      }
+    },
+    "modernOrGood": {
+      "label": "Hydration + event replay",
+      "snippet": "bootstrapApplication(App, {\n  providers: [provideClientHydration(withEventReplay())], // ✅ NEW\n});",
+      "fullFile": {
+        "filename": "main.ts",
+        "language": "typescript",
+        "code": "import { bootstrapApplication } from '@angular/platform-browser';\nimport { provideClientHydration, withEventReplay } from '@angular/platform-browser';\nimport { AppComponent } from './app/app.component';\n\n// ✅ NEW: The client adopts the SSR DOM instead of re-creating it, and\n// events dispatched before hydration completes are replayed.\nbootstrapApplication(AppComponent, {\n  providers: [\n    provideClientHydration(withEventReplay()), // ✅ NEW: reuse DOM + replay events\n  ],\n});\n\n// Result: no flicker, scroll/focus preserved, and a click on a\n// server-rendered button just before hydration is not lost — it is\n// replayed once the app is interactive."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What can break non-destructive hydration, and how does Angular decide whether to reuse a DOM node?",
+      "contextIntro": "This tests the matching algorithm and its failure modes — interviewers want to know why some SSR apps hit hydration mismatches and how the framework reacts.",
+      "detailedAnswer": "Hydration reuses a node when it matches the expected template structure: same element type, same order, and consistent Angular annotations (component host markers, i18n nodes). Anything that makes the client's expected tree differ from the SSR HTML — dynamic content that renders differently on server vs client (e.g. reading localStorage, window size, Date), structural directives whose data changed between server and client render, or third-party DOM mutation of the SSR markup — causes a mismatch. Angular logs a hydration error (NG0500 series) and falls back to re-rendering that subtree (destructive for that branch only) to avoid a broken UI. The transfer state mechanism also carries serialized data so client render matches server state.",
+      "trapWarning": "The naive answer is 'hydration works unless you mutate the DOM'. Mismatches also come from nondeterministic rendering (Date.now(), Math.random, window access) and from services that produce different data on server vs client. Another trap: assuming a mismatch breaks the whole app — Angular falls back per-subtree, but silent mismatches can cause event/listener wiring errors, which is why the errors are worth fixing. Candidates who mention NG0500 errors and the per-subtree fallback show real experience."
+    },
+    {
+      "question": "How does event replay work, and why can't it capture every interaction type?",
+      "contextIntro": "This probes the mechanism and its limits — interviewers want the buffering-then-replay design and an honest account of which events are replayable.",
+      "detailedAnswer": "Event replay installs capture-phase listeners very early (before hydration) for a set of common events (click, input, keydown, etc.). Events dispatched on SSR nodes during the pre-hydration window are recorded — the engine captures the event type, target node path, and payload — and stored in a buffer. When hydration completes, Angular re-dispatches the buffered events on the now-hydrated nodes, so handlers fire as if they had been attached all along. The limitations: only the configured event types are captured, and events depending on exact timing/coordinates or on listener-state that changed during hydration may behave slightly differently. Also, events on nodes that get removed during hydration cannot always be replayed faithfully.",
+      "trapWarning": "The naive answer is 'event replay captures every event'. It captures a configured subset (click/input etc.), and complex events (drag sequences, pointer events with coordinates) may replay imperfectly. Another trap: thinking replay makes hydration synchronous — replay happens after hydration completes, so there is still a (short) window where the UI is static. Candidates who can enumerate the captured event types and the replay timing show real depth."
+    }
+  ]
+}
