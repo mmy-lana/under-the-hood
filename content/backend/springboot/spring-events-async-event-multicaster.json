@@ -1,0 +1,68 @@
+{
+  "id": "spring-events-async-event-multicaster",
+  "title": "@EventListener, @TransactionalEventListener, ApplicationEventPublisher",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Framework 6.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "events",
+    "event-listener",
+    "transactional-event-listener",
+    "event-publisher",
+    "async"
+  ],
+  "prerequisites": [
+    "Spring beans and DI",
+    "Understanding of transactions and loose coupling"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel has a bell that announces 'a guest checked in'. Anyone interested can sign up to hear the bell: the housekeeping crew hears it and prepares the room; the billing desk hears it and opens the account. The people who signed up don't need to know each other — they just react to the bell. The bell also has a special rule: the billing desk can ask to be rung only AFTER the check-in paperwork is fully recorded (after transaction commit), so it never acts on half-finished paperwork. If the paperwork fails, the desk is never rung at all.",
+    "junior": "Spring events decouple components: publish with ApplicationEventPublisher.publishEvent(new OrderPlacedEvent(order)); listen with @EventListener on a method: @EventListener public void on(OrderPlacedEvent e) { ... }. The listener runs synchronously by default in the publisher's thread. For async, add @Async to the listener (and @EnableAsync). @TransactionalEventListener(phase = AFTER_COMMIT) runs the listener only after the transaction commits — perfect for sending emails/notifications that should not happen if the transaction rolls back. @TransactionalEventListener has a fallbackExecution attribute to also run when there is no transaction.",
+    "senior": "Architecturally, Spring's event mechanism is a simple observer pattern within the ApplicationContext: publishEvent notifies the ApplicationEventMulticaster, which dispatches to registered ApplicationListener beans (or @EventListener-annotated methods adapted into ApplicationListenerMethodAdapter). By default the multicaster (SimpleApplicationEventMulticaster) invokes listeners synchronously in the caller's thread — an exception in a listener propagates to the publisher (unless configured otherwise). @Async listeners run on the application's async executor, decoupling timing and adding failure isolation. @TransactionalEventListener is a special listener registered with a transaction phase: the TransactionSynchronization triggers it after commit/rollback/completion, so the listener sees committed data.",
+    "underTheHood": "ApplicationEventPublisher.publishEvent resolves the event to a payload type and calls the multicaster's multicastEvent. SimpleApplicationEventMulticaster looks up listener beans and invokes each listener's onApplicationEvent (or the adapted @EventListener method, resolving the event argument). With @Async, the multicaster's taskExecutor (ThreadPoolTaskExecutor) runs the invocation asynchronously. @TransactionalEventListener registers the listener with a TransactionSynchronization via TransactionSynchronizationManager: on commit, the afterCommit synchronization invokes the listener; if the transaction rolls back and phase=AFTER_ROLLBACK, it runs then; fallbackExecution controls behavior with no active transaction. Event inheritance and generics resolution (ResolvableType) determine which listeners match which events."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Direct service-to-service calls vs events",
+    "summary": "Calling another service directly couples the components and runs regardless of transaction outcome; events decouple them and can wait for commit.",
+    "legacyOrBad": {
+      "label": "Direct call in the same transaction",
+      "snippet": "public void placeOrder(Order o) {\n  orderRepo.save(o);\n  emailService.sendConfirmation(o); // ❌ OLD: coupled + sent before commit\n}",
+      "fullFile": {
+        "filename": "OrderServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\n\n@Service\npublic class OrderServiceLegacy {\n  private final OrderRepository orderRepo;\n  private final EmailService emailService; // ❌ OLD: hard dependency\n\n  @Transactional\n  public void placeOrder(Order o) {\n    orderRepo.save(o);\n    // ❌ OLD: direct coupling — this service knows about EmailService\n    // and calls it inline. Problems:\n    // 1) If the transaction later rolls back, the email was ALREADY\n    //    sent for an order that doesn't exist.\n    // 2) Adding another subscriber (analytics, warehouse) means\n    //    editing this method again.\n    emailService.sendConfirmation(o); // ❌ OLD\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Publish event + transactional listener",
+      "snippet": "publisher.publishEvent(new OrderPlacedEvent(o)); // ✅ NEW: decoupled\n\n@TransactionalEventListener(phase = AFTER_COMMIT) // ✅ NEW\npublic void on(OrderPlacedEvent e) { emailService.sendConfirmation(e.order()); }",
+      "fullFile": {
+        "filename": "OrderEvents.java",
+        "language": "java",
+        "code": "import org.springframework.context.ApplicationEventPublisher;\nimport org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\nimport org.springframework.transaction.event.TransactionalEventListener;\n\n// ✅ NEW: Publisher emits the event; listeners subscribe independently.\n@Service\npublic class OrderService {\n  private final OrderRepository orderRepo;\n  private final ApplicationEventPublisher publisher;\n\n  @Transactional\n  public void placeOrder(Order o) {\n    orderRepo.save(o);\n    // ✅ NEW: just announce it — no knowledge of who cares\n    publisher.publishEvent(new OrderPlacedEvent(o));\n  }\n}\n\n// ✅ NEW: Separate listener bean — email only after COMMIT.\n@Service\npublic class OrderNotificationListener {\n  private final EmailService emailService;\n\n  @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT) // ✅ NEW\n  public void onOrderPlaced(OrderPlacedEvent e) {\n    emailService.sendConfirmation(e.order()); // ✅ NEW: only if committed\n  }\n}\n\n// record OrderPlacedEvent(Order order) {}\n\n// For async listeners: add @Async to the method + @EnableAsync."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why should side effects like emails use @TransactionalEventListener(AFTER_COMMIT) instead of a plain @EventListener?",
+      "contextIntro": "This tests the transaction-aware event model — interviewers want the commit/rollback semantics that prevent acting on data that never materialized.",
+      "detailedAnswer": "A plain @EventListener runs synchronously at publish time, which is INSIDE the transaction (if the publisher method is @Transactional). If the transaction later rolls back, the listener has already acted on data that no longer exists — an email sent for an order that was never committed. @TransactionalEventListener with phase AFTER_COMMIT registers the listener to be invoked by the transaction synchronization AFTER the commit succeeds: the listener runs only when the data is durable, and it does NOT run at all if the transaction rolls back (unless you also use AFTER_ROLLBACK or fallbackExecution). This guarantees side effects are consistent with committed state. The trade-off: the listener runs later (after commit), so it can't affect the transaction, and the commit must succeed for it to fire.",
+      "trapWarning": "The naive answer is '@TransactionalEventListener just delays the listener'. It binds the listener to the transaction outcome — no commit, no callback (for AFTER_COMMIT). Another trap: assuming the listener shares the transaction — after commit, the transaction is gone, so the listener starts its own (or none); data read in the listener sees the committed state. Candidates who explain the synchronization binding show real Spring event mastery."
+    },
+    {
+      "question": "What happens if a listener throws, and how does async vs sync execution change the behavior?",
+      "contextIntro": "This probes the failure semantics — interviewers want to know whether an exception in a listener affects the publisher/transaction and what async execution changes.",
+      "detailedAnswer": "With the default synchronous multicaster, a listener exception propagates back to the publisher (publishEvent) — so if a @EventListener throws, the exception bubbles into the publishing method and can roll back its transaction (if @Transactional). This is often surprising: a failing notification listener can break the core operation. With @Async listeners, the invocation happens on the async executor thread, so the exception does NOT propagate to the publisher — the core flow is isolated, but the failure is silent unless you handle it in the listener or a global async exception handler (AsyncUncaughtExceptionHandler). @TransactionalEventListener exceptions: after commit, an exception propagates from the afterCommit callback, which can cause an error at the transaction boundary. Best practice: make listeners resilient (catch and log, or retry) so a notification failure never corrupts the primary transaction.",
+      "trapWarning": "The naive answer is 'listener exceptions are isolated'. Synchronous listeners propagate exceptions to the publisher. Another trap: assuming async listeners' failures are logged by default — unhandled async exceptions vanish unless you register an AsyncUncaughtExceptionHandler. Candidates who distinguish the sync-propagation and async-isolation paths show real understanding."
+    }
+  ]
+}

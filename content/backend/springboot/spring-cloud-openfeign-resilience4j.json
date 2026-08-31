@@ -1,0 +1,68 @@
+{
+  "id": "spring-cloud-openfeign-resilience4j",
+  "title": "Feign Client Declarative HTTP & Resilience4j Circuit Breakers",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Cloud OpenFeign 4.x / Resilience4j 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "feign",
+    "resilience4j",
+    "circuit-breaker",
+    "microservices",
+    "http-client"
+  ],
+  "prerequisites": [
+    "Spring Boot REST basics",
+    "Understanding of microservice communication and failure handling"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A call center has a phone line to a partner company. Instead of dialing and re-typing the order every time, the operator uses a pre-printed order form: fill in a few fields, hand it over — the form knows the address and format. The center also has an electrical breaker on the line: if the partner keeps failing, the breaker TRIPS, and for a while every new call is immediately answered with 'line busy — try later' instead of waiting on the dead line. This protects the call center from wasting time on a partner that's down, and it gives the partner time to recover.",
+    "junior": "OpenFeign makes HTTP clients declarative: @FeignClient(name = \"users\", url = \"${users.url}\") interface UserClient { @GetMapping(\"/users/{id}\") User get(@PathVariable Long id); }. Spring creates a proxy implementing the interface that makes the HTTP calls. Resilience4j adds resilience patterns: CircuitBreaker, RateLimiter, Retry, TimeLimiter, Bulkhead. Wire them with annotations or a Registry: @CircuitBreaker(name = \"users\", fallbackMethod = \"getFallback\"). A circuit breaker trips after N failures, opens for a wait duration, then half-opens to test recovery.",
+    "senior": "Architecturally, Feign is a declarative HTTP client built on an interface proxy: Spring Cloud creates a FeignClientFactoryBean that builds a JDK proxy; method calls are mapped to HTTP requests via the annotations (contract), using an encoder/decoder (Jackson) and a client (OkHttp/HttpClient). Resilience4j is a fault-tolerance library using decorators: each pattern wraps the function call with a state machine — the CircuitBreaker tracks failure rate in a sliding window and transitions CLOSED → OPEN → HALF_OPEN → CLOSED. In Spring Cloud, the CircuitBreaker integrates with Feign via a custom Feign circuit breaker, or you wrap the client method with the annotation. Fallbacks return a safe default when the circuit is open or the call fails.",
+    "underTheHood": "Feign's proxy: MethodMetadata is parsed from the interface annotations; invoking a method creates a RequestTemplate, encodes args, executes via the configured Client (with LoadBalancer if name-based), decodes the response into the return type. Resilience4j's CircuitBreaker: an internal state machine with a ring buffer (sliding window) recording call outcomes; when the failure rate exceeds the threshold (e.g. 50% over 10 calls), it opens; while open, calls fail fast with CallNotPermittedException (invoking the fallback); after waitDuration, it half-opens (allows a few test calls); success closes it, failure reopens. Retry decorates with attempts/backoff; TimeLimiter bounds the call duration; Bulkhead limits concurrent calls. The decorators compose as a chain around the Feign call."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring/Feign concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Raw RestTemplate calls vs Feign + circuit breaker",
+    "summary": "Hand-rolled HTTP calls with manual error handling are verbose and have no failure isolation; Feign + Resilience4j makes the client declarative and resilient.",
+    "legacyOrBad": {
+      "label": "Manual RestTemplate call",
+      "snippet": "ResponseEntity<User> r = restTemplate.getForEntity(\n    \"http://users/users/\" + id, User.class); // ❌ OLD: manual, no resilience",
+      "fullFile": {
+        "filename": "UserServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\nimport org.springframework.web.client.RestTemplate;\n\n@Service\npublic class UserServiceLegacy {\n  private final RestTemplate restTemplate;\n\n  public UserServiceLegacy(RestTemplate restTemplate) {\n    this.restTemplate = restTemplate;\n  }\n\n  public User getUser(Long id) {\n    // ❌ OLD: hard-coded URL, manual HTTP, no retry/breaker/timeout.\n    // If the users service is down, this call blocks (until the HTTP\n    // timeout) and the caller's thread hangs — a downstream outage\n    // cascades into this service, exhausting threads.\n    ResponseEntity<User> r = restTemplate.getForEntity(\n        \"http://users-service/users/\" + id, User.class); // ❌ OLD\n    return r.getBody();\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Feign client with circuit breaker",
+      "snippet": "@FeignClient(name = \"users\")\npublic interface UserClient { // ✅ NEW: declarative\n  @GetMapping(\"/users/{id}\") User get(@PathVariable Long id);\n}",
+      "fullFile": {
+        "filename": "UserClient.java",
+        "language": "java",
+        "code": "import org.springframework.cloud.openfeign.FeignClient;\nimport org.springframework.web.bind.annotation.*;\n\n// ✅ NEW: Declarative HTTP client — the interface IS the client.\n@FeignClient(name = \"users\", fallback = UserClientFallback.class)\npublic interface UserClient {\n  @GetMapping(\"/users/{id}\")\n  User get(@PathVariable Long id); // ✅ NEW: proxy makes the HTTP call\n}\n\n// ✅ NEW: fallback used when the circuit is open or the call fails\n@Component\npublic class UserClientFallback implements UserClient {\n  @Override\n  public User get(Long id) {\n    return User.unknown(); // ✅ NEW: safe default, no cascading failure\n  }\n}\n\n// Resilience4j config (application.yml):\n// resilience4j.circuitbreaker.instances.users:\n//   slidingWindowSize: 10\n//   failureRateThreshold: 50\n//   waitDurationInOpenState: 5s\n\n// Or annotate a service method:\n// @CircuitBreaker(name = \"users\", fallbackMethod = \"fallback\")\n// public User getUser(Long id) { return client.get(id); }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does a circuit breaker's state machine work, and what is the half-open state for?",
+      "contextIntro": "This tests the fault-tolerance mechanics — interviewers want the CLOSED → OPEN → HALF_OPEN transitions and the sliding-window failure measurement that drives them.",
+      "detailedAnswer": "The circuit breaker is a state machine. CLOSED (normal): calls pass through and outcomes are recorded in a sliding window (e.g. the last 10 calls or 10 seconds); when the failure rate exceeds the threshold (e.g. 50%), it transitions to OPEN. OPEN: calls fail fast (CallNotPermittedException) without hitting the downstream service — protecting it and freeing the caller's resources; this lasts waitDurationInOpenState (e.g. 5s). HALF_OPEN: after the wait, the breaker lets a small number of trial calls through to test whether the downstream has recovered; if they succeed (below the threshold), it returns to CLOSED; if they fail, it reopens. This prevents a broken service from being hammered while still allowing automatic recovery. The fallback method is invoked for the failing calls so the caller gets a graceful response instead of an exception.",
+      "trapWarning": "The naive answer is 'a circuit breaker retries failed calls'. It blocks calls when open (fail-fast), it doesn't retry — retry is a separate Resilience4j pattern. Another trap: setting the window too small (e.g. 1 call) makes the breaker trip on a single blip, and too large delays detection. Candidates who describe the three states and the window math show real understanding."
+    },
+    {
+      "question": "What is the difference between a Feign client and RestTemplate/WebClient, and when would you choose Feign?",
+      "contextIntro": "This probes the client-selection trade-off — interviewers want to know the declarative-proxy model's pros/cons vs the more manual RestTemplate and the reactive WebClient.",
+      "detailedAnswer": "Feign is a declarative, interface-based HTTP client: you define the contract as a Java interface with Spring MVC annotations, and Spring generates a proxy that implements the HTTP calls. It shines for typed, synchronous service-to-service calls in microservices (especially with Spring Cloud: load balancing, circuit breakers, request interceptors). RestTemplate is imperative and manual (build URLs, map responses) — more verbose but more explicit; still fine for simple clients. WebClient is the reactive client (Mono/Flux), non-blocking, for WebFlux or when you need streaming/async; it can also be used in MVC. Choose Feign for declarative typed contracts with Spring Cloud integration; WebClient for reactive/streaming; RestTemplate for legacy/simple blocking needs. Feign's proxy adds abstraction that can obscure the actual HTTP call, so debugging may require enabling Feign logging.",
+      "trapWarning": "The naive answer is 'Feign is just a wrapper around RestTemplate'. It's a distinct code-generated proxy model. Another trap: assuming Feign is asynchronous — by default it's synchronous blocking; async requires a CompletableFuture return type or reactive support. Candidates who compare the three clients on the blocking/reactive and declarative axes show real depth."
+    }
+  ]
+}

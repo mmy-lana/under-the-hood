@@ -1,0 +1,68 @@
+{
+  "id": "spring-boot-auto-configuration-conditionals",
+  "title": "Auto-Configuration: @ConditionalOnClass, @ConditionalOnMissingBean",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Boot 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "spring-boot",
+    "auto-configuration",
+    "conditional",
+    "ConditionalOnClass",
+    "ConditionalOnMissingBean"
+  ],
+  "prerequisites": [
+    "Spring configuration and beans basics",
+    "Understanding of @Configuration and @Bean"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel's front desk has a box of pre-printed cards for every service (wake-up call, room service, taxi). When a guest checks in, the desk reads the guest's preferences and only hands out the cards that apply — a guest who said 'no taxi' doesn't get the taxi card, and a guest who already has a wake-up card from booking doesn't get a duplicate. The desk decides based on what's already on the table and what the guest needs.",
+    "junior": "Spring Boot auto-configuration creates beans automatically based on what's on the classpath and your properties. It's driven by @Conditional annotations: @ConditionalOnClass(name = \"org.h2.Driver\") creates the bean only if that class is present; @ConditionalOnMissingBean(DataSource.class) only if you haven't defined your own; @ConditionalOnProperty, @ConditionalOnExpression, @ConditionalOnWebApplication. Your own @Configuration classes are processed AFTER auto-configuration, so a bean you define with the same type overrides the auto-configured one (via @ConditionalOnMissingBean).",
+    "senior": "Architecturally, auto-configuration is a set of @AutoConfiguration classes (in spring.factories / AutoConfiguration.imports) that register beans conditionally. The conditions are evaluated at context-refresh time by the ConditionEvaluator: each @Conditional annotation's Condition is checked in order (all must pass). @ConditionalOnMissingBean checks whether a bean of the specified type already exists (with a delay: it can't see beans defined later, hence ordering rules). This 'convention over configuration' lets Boot assemble a working app from dependencies alone. Understanding the evaluation order and the missing-bean backoff is key to debugging 'why is my bean not created'.",
+    "underTheHood": "Spring Boot loads auto-configuration candidates from META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports (the modern replacement for spring.factories). These are @Configuration classes processed after user configurations (the auto-configuration classes are sorted via @AutoConfigureBefore/@AutoConfigureAfter). Conditions are evaluated by ConfigurationClassPostProcessor when parsing each configuration class; @ConditionalOnClass uses a metadata reader to check class presence (name-based, no class loading). @ConditionalOnMissingBean registers a bean-definition-based check — evaluated during bean definition registration, so ordering matters; later-defined user beans of the same type cause the auto-configured bean to back off. @ConditionalOnProperty reads the Environment."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring Boot concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Hand-wiring beans vs auto-configuration with conditionals",
+    "summary": "Manually configuring beans for every dependency is boilerplate; Boot's conditional auto-configuration creates sensible defaults that back off when you override.",
+    "legacyOrBad": {
+      "label": "Manual bean wiring (pre-Boot)",
+      "snippet": "@Bean\nDataSource dataSource() {\n  return new DriverManagerDataSource(\"jdbc:h2:mem:test\", \"sa\", \"\"); // ❌ OLD: hand-wired\n}",
+      "fullFile": {
+        "filename": "DbConfigLegacy.java",
+        "language": "java",
+        "code": "// ❌ OLD: Pre-Boot, you manually wired every infrastructure bean.\n// Even with H2 on the classpath, nothing happened until you wrote\n// this configuration — repetitive, error-prone, and duplicated across\n// every project.\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.jdbc.datasource.DriverManagerDataSource;\nimport javax.sql.DataSource;\n\n@Configuration\npublic class DbConfigLegacy {\n  @Bean\n  DataSource dataSource() { // ❌ OLD: hand-created every time\n    return new DriverManagerDataSource(\"jdbc:h2:mem:test\", \"sa\", \"\");\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Conditional auto-configuration",
+      "snippet": "// spring-boot-starter-jdbc on the classpath + application.properties\n// spring.datasource.url=...  →  ✅ NEW: DataSource auto-configured",
+      "fullFile": {
+        "filename": "application.properties",
+        "language": "properties",
+        "code": "# ✅ NEW: With spring-boot-starter-jdbc (or -data-jpa) on the\n# classpath, Boot's DataSourceAutoConfiguration creates a DataSource\n# bean automatically — gated by @ConditionalOnClass and\n# @ConditionalOnMissingBean.\nspring.datasource.url=jdbc:h2:mem:testdb\nspring.datasource.username=sa\nspring.datasource.password=\n\n# ✅ NEW: Your own DataSource bean backs the auto-config off:\n# @Bean DataSource myDataSource() { ... }\n# Because DataSourceAutoConfiguration is annotated with\n# @ConditionalOnMissingBean(DataSource.class), it skips creating one\n# when your bean exists — no conflict, no override needed.\n\n# Auto-config is conditional on the classpath too:\n# @ConditionalOnClass(name = \"org.h2.Driver\") — only active with H2."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does @ConditionalOnMissingBean sometimes not back off when you define a bean, and how does evaluation order affect it?",
+      "contextIntro": "This tests the bean-definition timing model — interviewers want to know that the missing-bean check happens during registration, so ordering (user config vs auto-config) determines the outcome.",
+      "detailedAnswer": "@ConditionalOnMissingBean is evaluated when the auto-configuration class's bean definitions are being registered. It checks whether a bean definition of the specified type already exists at that moment. Because user-defined @Configuration classes are processed BEFORE auto-configuration classes (by design), a user bean is typically visible and the auto-configured bean backs off. However, if a bean is defined in a way that registers later (e.g. another auto-configuration ordered after, a @Bean defined in an @Import processed later, or a bean created from a factory that hasn't registered yet), the condition may not see it, and BOTH beans get created — leading to ambiguity. The fix is to understand the ordering (use @AutoConfigureBefore/After or define the override early) and that the check is registration-time, not injection-time.",
+      "trapWarning": "The naive answer is 'if I define a bean, auto-configuration always skips'. The check is timing-sensitive and registration-based; late-registered beans can coexist with the auto-configured one, causing a NoUniqueBeanDefinitionException. Another trap: thinking @ConditionalOnMissingBean checks at runtime — it's evaluated at bean-definition registration during context refresh. Candidates who describe the registration-order model show real understanding."
+    },
+    {
+      "question": "How do the different @Conditional annotations work together, and what happens when multiple conditions are on one class?",
+      "contextIntro": "This probes the condition evaluation model — interviewers want the AND semantics and the typical combination pattern (class present + missing bean + property enabled).",
+      "detailedAnswer": "Conditions are evaluated with AND semantics: every @Conditional annotation on a class or @Bean method must pass for the bean to be registered. The ConditionEvaluator evaluates all conditions in the order they appear; the first failure skips the registration. The common pattern is a stack: @ConditionalOnClass(name = \"com.example.FeatureClient\") (the dependency exists), @ConditionalOnProperty(prefix = \"app.feature\", name = \"enabled\", havingValue = \"true\") (the user opted in), and @ConditionalOnMissingBean(FeatureClient.class) (the user didn't define their own). If the class is absent, the property is unset, or a user bean exists, the auto-configured bean is skipped. Each condition reads different sources (classpath metadata, Environment, existing bean definitions), and they compose to make auto-configuration safe and overridable.",
+      "trapWarning": "The naive answer is 'conditions are OR — any one passing enables the bean'. They are AND — all must pass. Another trap: assuming @ConditionalOnClass loads the class — it uses name-based metadata checks precisely to avoid loading optional classes (which could fail with NoClassDefFoundError). Candidates who explain the AND evaluation and name-based class checks show real depth."
+    }
+  ]
+}

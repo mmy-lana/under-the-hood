@@ -1,0 +1,68 @@
+{
+  "id": "spring-boot-actuator-micrometer-metrics",
+  "title": "Spring Actuator: Micrometer Counters, Gauges, Prometheus Scrape",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Boot 3.x / Micrometer 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "actuator",
+    "micrometer",
+    "metrics",
+    "prometheus",
+    "monitoring"
+  ],
+  "prerequisites": [
+    "Spring Boot basics",
+    "Understanding of metrics and monitoring concepts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A gym has a wall of gauges and counters: how many people came in today (counter), how many people are currently inside (gauge), how long the average workout lasts (timer). The manager can either read these off the wall directly or hook up a clipboard system (Prometheus) that periodically walks over and copies all the numbers. The wall is the actuator; the instruments are Micrometer meters; the clipboard walker is the Prometheus scrape.",
+    "junior": "Spring Boot Actuator exposes health, metrics, and info endpoints (/actuator/health, /actuator/metrics). Metrics are collected with Micrometer: counters (increment), gauges (current value), timers (duration + count), distribution summaries. Enable Prometheus with the micrometer-registry-prometheus dependency; then /actuator/prometheus exposes metrics in Prometheus format, scraped by Prometheus. Create your own: Counter.builder(\"orders.created\").register(meterRegistry) then counter.increment(). Use @Timed for timers around methods. Health indicators: HealthIndicator beans contribute to /actuator/health (UP/DOWN).",
+    "senior": "Architecturally, Actuator is a set of endpoints backed by Spring's infrastructure; Micrometer is a vendor-neutral metrics facade: you create Meter instances (Counter, Gauge, Timer, DistributionSummary) via a MeterRegistry, and a registry implementation (PrometheusMeterRegistry, StatsD, Datadog) exports them. Prometheus uses a pull model: the /actuator/prometheus endpoint serializes the registry's meters in the Prometheus text format, and Prometheus scrapes it on an interval. Gauges are a current-value snapshot (a lambda to read); counters are monotonically increasing. Timers measure duration distributions. Actuator also exposes health (with readiness/liveness probes for Kubernetes), info, env, and metrics per endpoint.",
+    "underTheHood": "Micrometer's MeterRegistry maintains a map of meters; each meter has an id (name + tags). The Prometheus registry renders the registry into the Prometheus exposition format (metric name, labels, sample values). Counters use DoubleAdder/LongAdder internally for concurrent increments; timers record duration in a histogram/digest (Prometheus histogram buckets). Spring Boot auto-configures the registry from the classpath and registers Actuator's own metrics (JVM memory, GC, HTTP server requests via WebMvcTagsContributor/observation). Health endpoints are built from HealthContributor beans evaluated by HealthEndpoint. Readiness/liveness map to Kubernetes probes: /actuator/health/readiness and /actuator/health/liveness."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Log-based metrics vs Micrometer counters",
+    "summary": "Parsing logs to count events is brittle and lossy; a Micrometer counter gives an exact, queryable metric.",
+    "legacyOrBad": {
+      "label": "Counting events via log parsing",
+      "snippet": "log.info(\"order created id={}\", id); // ❌ OLD: counting requires log parsing",
+      "fullFile": {
+        "filename": "OrderServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\n\n@Service\npublic class OrderServiceLegacy {\n  private static final Logger log = LoggerFactory.getLogger(OrderServiceLegacy.class);\n\n  public Order create(OrderRequest req) {\n    Order order = doCreate(req);\n    // ❌ OLD: 'metrics' are inferred by scraping logs with grep/elk\n    // queries. Lossy (dropped logs, multi-line messages), slow (log\n    // ingest latency), and impossible to slice by tags in real time.\n    log.info(\"order created id={}\", order.getId()); // ❌ OLD\n    return order;\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Micrometer counter",
+      "snippet": "private final Counter ordersCreated; // ✅ NEW: exact, tagged, scrapable",
+      "fullFile": {
+        "filename": "OrderService.java",
+        "language": "java",
+        "code": "import io.micrometer.core.instrument.Counter;\nimport io.micrometer.core.instrument.MeterRegistry;\nimport org.springframework.stereotype.Service;\n\n@Service\npublic class OrderService {\n  private final Counter ordersCreated;\n\n  public OrderService(MeterRegistry registry) {\n    // ✅ NEW: a counter with tags (channel) for slicing in Prometheus\n    this.ordersCreated = Counter.builder(\"orders.created\")\n        .description(\"Total orders created\")\n        .tag(\"channel\", \"web\")\n        .register(registry); // ✅ NEW: registered into the MeterRegistry\n  }\n\n  public Order create(OrderRequest req) {\n    Order order = doCreate(req);\n    ordersCreated.increment(); // ✅ NEW: exact increment, concurrency-safe\n    return order;\n  }\n}\n\n// Prometheus: GET /actuator/prometheus\n//   orders_created_total{channel=\"web\"} 42.0\n// Grafana queries it directly — no log parsing.\n\n// For method timing:\n// @Timed(\"orders.create.time\")\n// public Order create(...) { ... }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between a Counter and a Gauge, and when would you use each?",
+      "contextIntro": "This tests the meter type semantics — interviewers want the monotonic-counter vs current-value distinction and the practical implications for Prometheus queries.",
+      "detailedAnswer": "A Counter is a monotonically increasing value — it only goes up (it tracks the total number of events since start). In Prometheus, counters are queried with rate()/increase() to derive per-second rates, and they reset on restart (Prometheus handles resets). A Gauge is a current value that can go up and down — a snapshot at scrape time (queue depth, in-flight requests, temperature, memory usage). Choosing wrong causes wrong queries: using a gauge for an event total loses the rate history; using a counter for a current level (e.g. active sessions) produces meaningless rates. Micrometer enforces this conceptually: counters expose increment(), gauges wrap a supplier and are read at scrape time. Timers are a third type — they measure durations and expose count + total + histogram.",
+      "trapWarning": "The naive answer is 'counter and gauge are interchangeable'. They have opposite semantics (monotonic total vs current level) and different query patterns. Another trap: creating a gauge that calls an expensive method at every scrape — gauges are read on scrape, so the supplier runs on each Prometheus pull. Candidates who map the meter type to the query pattern (rate vs snapshot) show real monitoring understanding."
+    },
+    {
+      "question": "How does Prometheus scraping work with Actuator, and why is it a pull model?",
+      "contextIntro": "This probes the metrics export architecture — interviewers want the pull-based scrape contract and how the Micrometer registry renders into the Prometheus format.",
+      "detailedAnswer": "Prometheus uses a pull model: the Prometheus server periodically requests metrics from each target's /metrics endpoint. In Spring Boot, that's /actuator/prometheus, which the Micrometer PrometheusMeterRegistry renders in the Prometheus text exposition format (metric names like orders_created_total, label sets, and sample values). The scrape interval is configured on the Prometheus side; each scrape reads the CURRENT state of the registry's meters. Because it's pull-based, the app doesn't push anywhere — it just serves the exposition format. This differs from push models (StatsD, Datadog) where the app sends to an agent. The pull model gives Prometheus control over scrape frequency, discovery (via service discovery), and consistency across instances.",
+      "trapWarning": "The naive answer is 'Actuator pushes metrics to Prometheus'. It serves them; Prometheus pulls. Another trap: forgetting that the registry holds in-memory state — a gauge's value at scrape time is what's reported, so long-lived gauges must reflect current state (a lambda, not a captured constant). Candidates who describe the scrape contract and the exposition format show real depth."
+    }
+  ]
+}

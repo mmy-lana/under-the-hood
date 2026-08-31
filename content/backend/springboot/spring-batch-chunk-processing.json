@@ -1,0 +1,69 @@
+{
+  "id": "spring-batch-chunk-processing",
+  "title": "Spring Batch: JobRepository, Chunk Processing (ItemReader/Processor/Writer)",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Batch 5.x / Spring Boot 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "spring-batch",
+    "chunk",
+    "job-repository",
+    "item-reader",
+    "item-writer",
+    "batch"
+  ],
+  "prerequisites": [
+    "Spring Boot basics",
+    "Understanding of batch processing concepts (jobs, steps)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A factory processes a huge pile of forms. Instead of handling all 10,000 forms in one go (risking a crash that loses everything), the factory processes them in small batches of 50: read 50 forms, process them, write the results, record on a ledger how far it got (the JobRepository), then take the next 50. If the machine crashes mid-batch, the factory restarts from the last recorded point — no redoing the whole pile, and no losing the completed work. Each batch is a transaction: all 50 succeed or all 50 roll back.",
+    "junior": "Spring Batch processes large volumes with the chunk model: a Step reads items (ItemReader), processes them (ItemProcessor), and writes them (ItemWriter) in chunks of a configured size (commit-interval). A Job is a sequence of Steps; JobRepository persists job/step execution state so jobs can restart from where they failed. Build with @Configuration: @Bean Job job(JobRepository repo, Step step) and @Bean Step step(JobRepository repo, PlatformTransactionManager tm, ItemReader..., ItemProcessor..., ItemWriter...). Run with CommandLineRunner/JobLauncher. Enable with @EnableBatchProcessing. Readers: JdbcCursorItemReader, JpaPagingItemReader, FlatFileItemReader.",
+    "senior": "Architecturally, chunk-oriented processing makes the commit-interval the unit of transaction: the Step reads up to N items, processes each, writes the chunk, and commits — so a failure rolls back only the current chunk and the job can restart at the last committed chunk boundary. The JobRepository records JobInstance/JobExecution/StepExecution and restart status (STARTED, COMPLETED, FAILED). This gives restartability, skip/repeat/retry policies, and partitioning. The job runs inside a transaction per chunk (managed by the PlatformTransactionManager). SkipListener, retry, and chunk listeners add failure handling. Steps can be tasklet-based (single unit of work) for non-chunk operations.",
+    "underTheHood": "The Step executes via a ChunkOrientedTasklet loop: it calls the ItemReader until the commit-interval is reached or the reader returns null (end of data), invokes the ItemProcessor per item (skipping nulls), then the ItemWriter with the chunk list, then commits the transaction. The JobRepository (JDBC-backed by default: BATCH_JOB_INSTANCE, BATCH_JOB_EXECUTION, BATCH_STEP_EXECUTION tables) is updated with statuses and restart data. On restart, the framework finds the last FAILED JobExecution and resumes from the last committed StepExecution (using the reader's restart data/current item count). Skip policy increments skip counts and continues; retry re-invokes within the chunk transaction. ItemReader implementations use cursors (streaming, one row at a time) or paging (a page of rows per query)."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring Batch concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Manual loop + no restart vs Spring Batch chunk step",
+    "summary": "A hand-written processing loop is not restartable and has no chunked transactions; the chunk model gives atomic batches, restart, and skip/retry.",
+    "legacyOrBad": {
+      "label": "Manual processing loop",
+      "snippet": "for (Row r : db.queryAll()) { // ❌ OLD: no chunking, no restart, no transaction per batch",
+      "fullFile": {
+        "filename": "ImporterLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\n\n@Service\npublic class ImporterLegacy {\n  // ❌ OLD: A naive loop. If the process crashes at row 7,342 of\n  // 10,000, everything must restart from scratch (no restart point),\n  // and each write autocommits independently — a failure mid-row\n  // leaves partial, inconsistent data with no atomic batch boundary.\n  public void importAll() {\n    for (Row r : db.queryAll()) { // ❌ OLD: read everything into memory too\n      transformAndSave(r); // ❌ OLD: no chunk transaction, no skip/retry\n    }\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Spring Batch chunk step",
+      "snippet": "@Bean\nStep step(JobRepository repo, PlatformTransactionManager tm) {\n  return new StepBuilder(\"import\", repo)\n    .<Row, Out>chunk(500, tm) // ✅ NEW: 500 rows per transaction\n    .reader(reader())\n    .processor(processor())\n    .writer(writer())\n    .build();\n}",
+      "fullFile": {
+        "filename": "BatchConfig.java",
+        "language": "java",
+        "code": "import org.springframework.batch.core.*;\nimport org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;\nimport org.springframework.batch.core.job.builder.JobBuilder;\nimport org.springframework.batch.core.step.builder.StepBuilder;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\n\n@Configuration\n@EnableBatchProcessing\npublic class BatchConfig {\n  // ✅ NEW: chunk of 500 — each chunk commits as one transaction.\n  @Bean\n  Step importStep(JobRepository repo, PlatformTransactionManager tm,\n      ItemReader<Row> reader, ItemProcessor<Row, Out> processor, ItemWriter<Out> writer) {\n    return new StepBuilder(\"import\", repo)\n        .<Row, Out>chunk(500, tm) // ✅ NEW: atomic per-chunk commit\n        .reader(reader)\n        .processor(processor)\n        .writer(writer)\n        .faultTolerant()\n        .skip(Exception.class).skipLimit(50) // ✅ NEW: skip bad records\n        .retry(TransientException.class).retryLimit(3) // ✅ NEW: retry\n        .build();\n  }\n\n  @Bean\n  Job importJob(JobRepository repo, Step importStep) {\n    return new JobBuilder(\"import\", repo)\n        .start(importStep)\n        .build();\n  }\n}\n\n// ✅ NEW: JobRepository persists state — a crash restarts from the\n// last committed chunk instead of redoing everything."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does chunk processing make a job restartable, and what does the JobRepository actually store?",
+      "contextIntro": "This tests the restart model — interviewers want the commit-boundary and persisted-execution-state mechanics that distinguish Spring Batch from a plain loop.",
+      "detailedAnswer": "Chunk processing commits every N items as one transaction. The JobRepository persists metadata about every execution: JobInstance (the logical job + parameters), JobExecution (one run), and StepExecution (one step's run with read/write/skip counts, status, and restart data). After a failure, the batch framework identifies the FAILED JobExecution, finds the last successfully committed chunk boundary of the failed StepExecution, and resumes the reader from there — so already-committed chunks are never reprocessed, and the partially-processed chunk is redone atomically. This restartability is what makes batch jobs safe to rerun. The reader must support restart (return a restart token / current position) for precise resumption; otherwise the job restarts from the beginning but still skips nothing that was committed.",
+      "trapWarning": "The naive answer is 'Spring Batch just processes in chunks'. The chunk IS the atomic/restart unit, and the JobRepository persistence is what enables resumption. Another trap: assuming a restarted job re-reads from the start and skips duplicates — it resumes at the last committed chunk; if the reader doesn't implement restart properly, it starts over. Candidates who describe the commit boundary and the metadata tables show real Spring Batch understanding."
+    },
+    {
+      "question": "What is the difference between skip and retry, and when would you configure each?",
+      "contextIntro": "This probes the fault-tolerance policies — interviewers want the skip (skip bad records, continue) vs retry (retry transient failures within the chunk) distinction and their interaction.",
+      "detailedAnswer": "Skip is for permanently-bad records: a record that always fails (malformed data, constraint violation) is skipped so the job continues, and it's counted in the skip count (bounded by skipLimit). Retry is for transient failures: a temporary condition (a deadlock, a timeout) is retried a bounded number of times within the same chunk transaction before giving up; if retries are exhausted, the record either rolls back the chunk or is skipped depending on the combined policy. The two compose: you can retry transient exceptions and skip them after max retries, while permanently skipping data errors immediately. Skip/retry are declared on the fault-tolerant step (skip(...), retry(...)). Writers may need to buffer chunks to support skip on write errors (some writers re-write the whole chunk on retry).",
+      "trapWarning": "The naive answer is 'skip and retry are the same thing'. Skip abandons the record; retry re-invokes it. Another trap: configuring skip on everything hides real data problems — an unbounded skipLimit can silently discard thousands of bad records. Candidates who distinguish transient-vs-permanent failures and show the composed policy demonstrate real depth."
+    }
+  ]
+}

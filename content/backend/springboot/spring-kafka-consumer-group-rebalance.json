@@ -1,0 +1,68 @@
+{
+  "id": "spring-kafka-consumer-group-rebalance",
+  "title": "Spring Kafka: @KafkaListener, Consumer Rebalancing, Offset Commits",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Kafka 3.x / Kafka 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "kafka",
+    "kafka-listener",
+    "consumer-group",
+    "rebalance",
+    "offset"
+  ],
+  "prerequisites": [
+    "Kafka topics, partitions, consumer groups",
+    "Spring Boot basics"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A newspaper has several delivery routes (partitions) and a team of delivery drivers (a consumer group). Each driver is assigned some routes. When a new driver joins or an old one leaves, the dispatcher re-assigns all the routes so everyone is balanced (rebalance). Each driver keeps a bookmark of the last house they delivered to (offset). If the driver dies mid-route, the next driver must know where to start — and here's the tricky part: if the driver updates the bookmark only AFTER delivering (at-least-once), a crash between delivery and bookmark means a house gets the paper twice; if they update BEFORE delivering (at-most-once), a crash means a house is skipped. There's no perfect option.",
+    "junior": "Spring Kafka consumes messages with @KafkaListener(topics = \"orders\", groupId = \"order-service\"). Configure with KafkaListenerContainerFactory (concurrency = consumers per listener). Offsets are committed automatically by default (auto.offset.reset, enable.auto.commit) — for at-least-once semantics. For exactly-once-ish processing, use manual ack: AckMode.MANUAL and acknowledge(). Handle rebalances with ConsumerRebalanceListener (onPartitionsRevoked/Assigned) if you need state cleanup or final offset commit. Errors: @RetryableTopic for retries with dead-letter topics, ErrorHandler / SeekToCurrentErrorHandler for failure handling.",
+    "senior": "Architecturally, @KafkaListener is backed by a MessageListenerContainer (KafkaMessageListenerContainer) that runs one or more KafkaConsumer instances (per concurrency) and polls records, invoking the listener method. Consumer groups coordinate partition assignment via the group coordinator: each consumer in a group owns a subset of partitions; when members join/leave or partitions change, a REBALANCE reassigns partitions. Offset commits tell Kafka how far a consumer has processed: auto-commit (every auto.commit.interval.ms), or manual ack. At-least-once vs at-most-once vs exactly-once depend on when you commit relative to processing. Rebalances are the failure window where uncommitted offsets get reprocessed (at-least-once) or messages are skipped (at-most-once).",
+    "underTheHood": "The listener container holds a KafkaConsumer (from the consumer factory) which subscribes to topics; poll() returns records, and the container invokes the listener (possibly on the consumer thread) and then commits offsets per the AckMode. The consumer group protocol: each consumer sends JoinGroup; the group coordinator (a broker) elects a leader that computes the partition assignment (range/round-robin/sticky) and sends it to members. On rebalance, the coordinator sends a rebalance in progress; consumers must stop processing and rejoin (the container's listener invokes onPartitionsRevoked before, onPartitionsAssigned after). Offsets are committed to the __consumer_offsets internal topic. With manual ack, the app calls acknowledge() after processing; the container commits the acked offsets. Errors can trigger SeekToCurrentErrorHandler to re-seek unprocessed offsets and retry."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring/Kafka concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Auto-commit at-least-once vs manual ack with error handling",
+    "summary": "Default auto-commit gives at-least-once but can lose the offset on crashes and cannot react to failures; manual ack with retry gives control.",
+    "legacyOrBad": {
+      "label": "Default auto-commit listener",
+      "snippet": "@KafkaListener(topics = \"orders\", groupId = \"svc\")\npublic void on(Order o) { // ❌ OLD: auto-commit, no failure handling\n  process(o);\n}",
+      "fullFile": {
+        "filename": "OrderListenerLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.kafka.annotation.KafkaListener;\n\n// ❌ OLD: Default auto-commit. The offset is committed periodically\n// regardless of whether processing succeeded. If process() throws,\n// the record is LOST (the offset already advanced) — no retry, no\n// dead-letter, and crashes between poll and commit cause reprocessing\n// (at-least-once). For a payment/order system, silently dropping a\n// failed message is a data-integrity bug.\npublic class OrderListenerLegacy {\n  @KafkaListener(topics = \"orders\", groupId = \"order-svc\")\n  public void onOrder(Order order) {\n    process(order); // ❌ OLD: if this throws, the message is effectively lost\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Manual ack + retryable topic",
+      "snippet": "@RetryableTopic // ✅ NEW: retries + dead-letter\n@KafkaListener(topics = \"orders\", groupId = \"svc\")\npublic void on(Order o, Acknowledgment ack) {\n  process(o);\n  ack.acknowledge(); // ✅ NEW: commit only after success\n}",
+      "fullFile": {
+        "filename": "OrderListener.java",
+        "language": "java",
+        "code": "import org.springframework.kafka.annotation.KafkaListener;\nimport org.springframework.kafka.annotation.RetryableTopic;\nimport org.springframework.kafka.support.Acknowledgment;\n\n// ✅ NEW: Manual acknowledgement + retryable topics give control over\n// delivery semantics.\npublic class OrderListener {\n  // ✅ NEW: retries go to -retry topics, then a dead-letter topic after\n  // max attempts — no silent message loss.\n  @RetryableTopic(attempts = \"4\", autoCreateTopics = \"true\")\n  @KafkaListener(topics = \"orders\", groupId = \"order-svc\")\n  public void onOrder(Order order, Acknowledgment ack) {\n    try {\n      process(order); // ✅ NEW: business logic\n      ack.acknowledge(); // ✅ NEW: commit offset only after success\n    } catch (Exception e) {\n      // exception propagates → retry / dead-letter per @RetryableTopic\n      throw e;\n    }\n  }\n}\n\n// Configuration: spring.kafka.listener.ack-mode=MANUAL\n// This gives at-least-once WITH retries — a failed record is retried\n// and ultimately parked in a dead-letter topic instead of being lost."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens to uncommitted offsets during a consumer rebalance, and how does it affect delivery semantics?",
+      "contextIntro": "This is the critical Kafka reliability question — interviewers want the rebalance window and its effect on at-least-once vs at-most-once, which determines whether messages duplicate or are lost.",
+      "detailedAnswer": "During a rebalance, partitions are reassigned from one consumer to another. A consumer that processed records but had not yet committed their offsets loses those uncommitted positions: when the new owner of the partition starts, it resumes from the last committed offset, so the records between the last commit and the rebalance are PROCESSED AGAIN — this is the at-least-once duplication window. If instead you committed offsets BEFORE processing (at-most-once), a rebalance skips records that were committed but not processed — message loss. There is no way to get exactly-once without extra machinery (idempotent processing or the transactional exactly-once API). This is why the ack/commit timing is the central design decision: with at-least-once, you must make processing idempotent to tolerate replays.",
+      "trapWarning": "The naive answer is 'rebalance just redistributes partitions'. It also reopens the delivery window — uncommitted records replay. Another trap: assuming auto-commit means 'commit after each message' — it commits on a timer (auto.commit.interval.ms), so a crash can replay far more than one record. Candidates who tie offset timing to the delivery guarantees show real Kafka understanding."
+    },
+    {
+      "question": "What is the difference between at-least-once, at-most-once, and exactly-once, and how does Spring Kafka's ack mode map to them?",
+      "contextIntro": "This tests the delivery semantics model — interviewers want the commit-timing trade-offs and which configuration produces which guarantee, plus how exactly-once is actually achieved.",
+      "detailedAnswer": "At-least-once: commit AFTER processing — if a crash happens between processing and commit, the record replays (duplicates possible). At-most-once: commit BEFORE processing — a crash after commit skips the record (loss possible). Exactly-once: each record is processed exactly once despite failures — Kafka achieves this with the transactional producer/consumer (the read-process-write cycle is atomic across the input offset and output writes via a transaction), or with idempotent downstream writes keyed by record id. In Spring Kafka: AUTO ack (default) with processing before the timer commit is effectively at-least-once; MANUAL ack lets you control the commit point; AckMode.RECORD commits after each record (at-least-once, more precise). Exactly-once additionally requires idempotence in your processing or the transactional EOS API, since a redelivery can still re-run a non-idempotent side effect.",
+      "trapWarning": "The naive answer is 'exactly-once is automatic in Kafka'. It requires the transactional exactly-once semantics AND idempotent sinks. Another trap: confusing ack-mode with enable.auto.commit — MANUAL ack disables auto-commit and hands the commit decision to you; forgetting to acknowledge means offsets never advance and records replay indefinitely. Candidates who map ack modes to the delivery guarantees show real depth."
+    }
+  ]
+}

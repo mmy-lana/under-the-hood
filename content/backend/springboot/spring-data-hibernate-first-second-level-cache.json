@@ -1,0 +1,68 @@
+{
+  "id": "spring-data-hibernate-first-second-level-cache",
+  "title": "Hibernate First-Level (PersistenceContext) vs Second-Level Cache",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Hibernate 6.x / Spring Boot 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "hibernate",
+    "first-level-cache",
+    "second-level-cache",
+    "persistence-context",
+    "caching"
+  ],
+  "prerequisites": [
+    "JPA entities and sessions",
+    "Understanding of caching and transactions"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A teacher has a clipboard that she carries around for the whole lesson: if a student asks for the same fact twice, she checks her clipboard first — no need to run to the library again. The clipboard is private to her and lasts only for the lesson. The school also has a shared library shelf: once a fact is written there, ANY teacher can read it, and it lasts beyond a single lesson. The clipboard is automatic and free; the shared shelf needs to be set up and configured.",
+    "junior": "Hibernate's first-level cache is the PersistenceContext (the Session/EntityManager): every entity loaded within a transaction is cached there, keyed by (entity class, id). Repeated loads of the same entity in the same transaction return the cached instance — no duplicate SQL. It's automatic and cleared when the session closes. The second-level cache (L2) is a shared, process-level cache (configured with a provider like Ehcache/Redis): entities cached in L2 are shared across sessions and can survive transaction boundaries, avoiding DB round trips for repeat reads. Enable with @Cacheable on entities (hibernate.cache.use_second_level_cache=true).",
+    "senior": "Architecturally, L1 is not a cache in the performance sense — it's the identity map of the PersistenceContext: it guarantees that within one transaction, an entity id maps to ONE instance (identity), which is required for JPA semantics (and why repeated find returns the same object). L2 is a true cache shared across sessions; it stores entity data (or collections/query results) and is configured with a CacheRegionFactory (e.g. Ehcache). L2 has invalidation semantics: when an entity is modified/evicted, the region is invalidated so other sessions reload. L2 only helps for read-heavy, long-lived data; it adds invalidation complexity and stale-data risk.",
+    "underTheHood": "L1 is implemented by the PersistenceContext (StatefulPersistenceContext) holding entity keys (EntityKey → EntityEntry). find(id) checks the context first; a hit returns the same managed instance (no SQL). L2 (SessionFactory-level) is an EntityRegionAccessStrategy backed by the configured region factory; entity load goes: L1 → L2 → DB. L2 stores dehydrated entity state (or the entity itself if caching entities) and uses a timestamp/version-based update to invalidate. On flush, dirty entities are written to the DB and their L2 regions are evicted. The cache concurrency strategy (read-write, nonstrict-read-write, transactional) determines how updates propagate. Query caches (if enabled) cache query result ids and must be invalidated when any entity in the query's space changes."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Hibernate concern.",
+    "angular": "N/A — Hibernate concern.",
+    "vue": "N/A — Hibernate concern.",
+    "svelte": "N/A — Hibernate concern."
+  },
+  "codeComparison": {
+    "title": "Repeated loads in a transaction vs L2-cached reads across transactions",
+    "summary": "L1 dedupes within one transaction automatically; L2 shares cached entities across transactions and sessions to avoid repeated DB reads.",
+    "legacyOrBad": {
+      "label": "Repeated find without L2",
+      "snippet": "Order o1 = repo.findById(1L).orElseThrow(); // ❌ OLD: SQL\nOrder o2 = repo.findById(1L).orElseThrow(); // ❌ OLD: SQL again (no L2)",
+      "fullFile": {
+        "filename": "OrderServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\n\n@Service\npublic class OrderServiceLegacy {\n  private final OrderRepository repo;\n\n  public OrderServiceLegacy(OrderRepository repo) {\n    this.repo = repo;\n  }\n\n  @Transactional\n  public void touchOrderTwice() {\n    // ❌ OLD: within ONE transaction, the second find hits the L1\n    // (PersistenceContext) — fine. But across transactions / requests\n    // (or if the session is fresh), every find is a DB round trip:\n    Order o1 = repo.findById(1L).orElseThrow(); // ❌ OLD: SQL (new tx)\n    Order o2 = repo.findById(1L).orElseThrow(); // ❌ OLD: SQL again\n    // For a hot entity read by thousands of requests, this hammering\n    // the DB is the cost that a second-level cache removes.\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "@Cacheable second-level cache",
+      "snippet": "@Entity\n@Cacheable // ✅ NEW: share this entity across sessions via L2\npublic class Order { ... }",
+      "fullFile": {
+        "filename": "Order.java",
+        "language": "java",
+        "code": "import jakarta.persistence.Entity;\nimport org.hibernate.annotations.Cache;\nimport org.hibernate.annotations.CacheConcurrencyStrategy;\n\n// ✅ NEW: mark the entity cacheable so reads are served from the\n// shared second-level cache across transactions (configured with\n// spring.jpa.properties.hibernate.cache.use_second_level_cache=true\n// and a provider such as Ehcache).\n@Entity\n@Cacheable // ✅ NEW: opt into L2 caching\n@Cache(usage = CacheConcurrencyStrategy.READ_WRITE) // ✅ NEW: strategy\npublic class Order {\n  // ... fields\n}\n\n// ✅ NEW: repeated findById across transactions now hits L2 after the\n// first load — no DB round trip for the cached entity.\n// When the entity is updated and flushed, Hibernate invalidates its\n// L2 region so other sessions reload fresh data.\n\n// Note: L1 (PersistenceContext) still provides identity within a\n// transaction automatically; L2 is the cross-session shared cache."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the first-level cache, and why is it more of a correctness feature than a performance cache?",
+      "contextIntro": "This tests the PersistenceContext identity-map semantics — interviewers want to distinguish the JPA-required identity guarantee from a cache meant for performance.",
+      "detailedAnswer": "The first-level cache is the PersistenceContext (backed by the Session/EntityManager): it holds every entity loaded or persisted in the current transaction, keyed by entity type and id. Its primary role is the IDENTITY MAP: within one transaction, there is exactly one Java instance per (entity, id) — calling find twice returns the same object, and two loads never produce two conflicting instances of the same row. This identity guarantee is required by JPA (it's what makes the persistence context coherent). The performance benefit (avoiding duplicate SQL for repeated loads in the same transaction) is secondary. The cache is scoped to the transaction/session — it is cleared when the session closes, so it provides no cross-request benefit, which is why the second-level cache exists.",
+      "trapWarning": "The naive answer is 'L1 is a cache to make reads faster'. Its essential job is identity/consistency within the transaction; the read-dedup is incidental. Another trap: assuming L1 persists across requests — it's bound to the session (transaction), so each request/transaction starts fresh. Candidates who mention the identity map and transaction scoping show real Hibernate understanding."
+    },
+    {
+      "question": "What are the risks of the second-level cache, and how does Hibernate keep it consistent?",
+      "contextIntro": "This probes the consistency model — interviewers want the invalidation/eviction semantics and the stale-data risks that make L2 a deliberate choice, not a default.",
+      "detailedAnswer": "The second-level cache is a shared cache across sessions, so consistency is the central concern. Hibernate invalidates/evicts the relevant cache region when an entity is modified or deleted through Hibernate (on flush). But the risks: (1) stale data if the DB is changed outside Hibernate (direct SQL, another application instance without a shared/distributed cache) — L2 is not notified, so reads serve stale entities; (2) the cache concurrency strategy matters — READ_WRITE uses soft locks for updates, NONSTRICT_READ_WRITE allows stale reads during updates, TRANSACTIONAL requires JTA; (3) the query cache (if enabled) caches result identifiers and is invalidated more aggressively, and its benefit is limited. Because of these, L2 is only worth enabling for read-heavy, rarely-updated, shared entities, and a distributed cache (Redis) is needed in multi-node deployments.",
+      "trapWarning": "The naive answer is 'L2 always makes things faster'. It adds invalidation overhead and stale-data risk; for frequently-updated entities it can hurt or serve stale data. Another trap: enabling the query cache without understanding that it caches only ids (entities still come from L2/L1/DB) and is invalidated on ANY update in the query's table space, which can make it nearly useless or harmful. Candidates who describe the invalidation model and multi-node caveats show real depth."
+    }
+  ]
+}

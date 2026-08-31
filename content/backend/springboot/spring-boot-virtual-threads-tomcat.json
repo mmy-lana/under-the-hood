@@ -1,0 +1,68 @@
+{
+  "id": "spring-boot-virtual-threads-tomcat",
+  "title": "Spring Boot 3.2+ Virtual Threads with Embedded Tomcat",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Boot 3.2+ / JDK 21+",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "spring-boot",
+    "virtual-threads",
+    "tomcat",
+    "loom",
+    "threading"
+  ],
+  "prerequisites": [
+    "Spring Boot MVC basics",
+    "Understanding of threads and Project Loom virtual threads"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel used to assign one dedicated employee per guest for the whole stay — with 200 employees, only 200 guests could be served at once. Now they use a new system: a few permanent employees take turns doing each guest's tasks — when a guest's task is waiting on the phone, the employee notes it and immediately serves another guest. Guests are now just little task lists, so thousands can be 'served' at once with the same staff. The hotel's front desk line needs to be told to use the new system.",
+    "junior": "Spring Boot 3.2+ supports virtual threads for the web stack: set spring.threads.virtual.enabled=true and the embedded Tomcat uses virtual threads per request instead of a fixed thread pool. Requires JDK 21+. This lets the app handle far more concurrent requests without tuning max-threads (Tomcat's default 200 platform threads becomes effectively unlimited virtual threads). Virtual threads are cheap — millions can exist. Blocking code (JDBC, RestTemplate) no longer wastes a platform thread; the carrier thread is freed while the virtual thread blocks. For Spring MVC, this is the main benefit: thread-per-request with virtual threads.",
+    "senior": "Architecturally, virtual threads are JVM-managed threads scheduled on a small pool of carrier threads (ForkJoinPool). When a virtual thread blocks on I/O (socket read, JDBC), the JVM parks it and the carrier thread runs another virtual thread — removing the 1:1 thread-per-connection cost. Spring Boot 3.2's spring.threads.virtual.enabled=true configures the web server (Tomcat/Jetty/Undertow) to use a virtual-thread-per-task executor instead of a bounded platform thread pool. This is 'thread-per-request without the thread-per-request cost'. Caveats: pinned threads (synchronized blocks or native calls pin a virtual thread to a carrier), thread-local-heavy code (memory), and CPU-bound work doesn't benefit.",
+    "underTheHood": "Tomcat's connector uses an Executor to run request processing; Spring Boot, when virtual threads are enabled, sets that executor to a VirtualThreadPerTaskExecutor (each request gets a new virtual thread). Virtual threads run on the JVM's carrier thread pool (a ForkJoinPool sized to CPU count); blocking operations (socket reads via NIO, synchronized, LockSupport.park) unmount the virtual thread from the carrier so the carrier continues with other work. Pinning: if a virtual thread enters a synchronized block or a native method that blocks, it cannot be unmounted — it stays on the carrier, which reduces parallelism. JDK 21+ also has reentrant locks that avoid pinning. Spring's support also covers @Async and the virtual executor for other task types."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring/Tomcat concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Fixed Tomcat thread pool vs virtual threads",
+    "summary": "A fixed pool (default 200) caps concurrency and forces tuning; virtual threads lift the cap so blocking handlers no longer exhaust the pool.",
+    "legacyOrBad": {
+      "label": "Default platform thread pool",
+      "snippet": "server.tomcat.threads.max=200 # ❌ OLD: bounded pool — saturation under blocking load",
+      "fullFile": {
+        "filename": "application.properties",
+        "language": "properties",
+        "code": "# ❌ OLD: The default Tomcat pool has 200 platform threads. Each\n# concurrent request (especially one doing blocking I/O like JDBC or\n# a downstream HTTP call) holds a thread. Under load, 200 slow\n# requests saturate the pool, the queue fills, and new requests wait\n# (or time out) — you must keep tuning max/min/queue and the OS can\n# only host so many platform threads anyway.\nserver.tomcat.threads.max=200\nserver.tomcat.threads.min-spare=10\nserver.tomcat.accept-count=100"
+      }
+    },
+    "modernOrGood": {
+      "label": "Virtual threads enabled",
+      "snippet": "spring.threads.virtual.enabled=true # ✅ NEW: virtual-thread-per-request",
+      "fullFile": {
+        "filename": "application.properties",
+        "language": "properties",
+        "code": "# ✅ NEW: One property switches the embedded server to virtual\n# threads (JDK 21+). Each request runs on a fresh virtual thread;\n# blocking I/O unmounts it from the carrier thread instead of\n# occupying a platform thread. No pool tuning needed — the limit is\n# effectively memory, not thread count.\nspring.threads.virtual.enabled=true\n\n# For the application executor (async tasks):\nspring.application.task.execution.virtual.enabled=true\n\n# Note: with virtual threads, thread-pool tuning properties become\n# mostly irrelevant for the web layer; CPU-bound work still consumes\n# carrier threads and needs parallelism, not more threads."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is thread pinning, and why does it reduce the benefits of virtual threads in Spring Boot apps?",
+      "contextIntro": "This is the key Loom limitation — interviewers want the pinning mechanism and its practical triggers (synchronized, native calls), because Spring code often hits it.",
+      "detailedAnswer": "Pinning happens when a virtual thread blocks while holding a monitor (inside a synchronized block) or when it calls a native method that blocks. In those cases, the JVM cannot unmount the virtual thread from its carrier thread (the lock is associated with the OS thread), so the carrier thread is blocked along with the virtual thread — defeating the whole point of virtual threads for that code path. If many virtual threads pin, the small carrier pool is exhausted and throughput drops back toward platform-thread behavior. In Spring apps, pinning triggers include legacy synchronized blocks in shared code, synchronized Collections, some JDBC drivers, and native crypto calls. The mitigation: prefer ReentrantLock (JVM-supported, non-pinning) over synchronized where practical, and check for pinning with -Djdk.tracePinnedThreads=full.",
+      "trapWarning": "The naive answer is 'virtual threads eliminate all blocking costs'. Pinning is the exception that keeps a carrier thread occupied. Another trap: assuming JDBC automatically benefits — the DB call itself blocks the virtual thread fine, but a synchronized driver or connection pool can pin. Candidates who describe the monitor-based pinning and the trace flag show real Loom understanding."
+    },
+    {
+      "question": "When would virtual threads NOT help, and what should you still consider in a Spring Boot app?",
+      "contextIntro": "This tests the honest limits — interviewers want to know where virtual threads don't apply (CPU-bound work, thread-locals, native code) and what remains important.",
+      "detailedAnswer": "Virtual threads help I/O-bound, blocking-heavy code — the typical Spring MVC request path. They do NOT speed up CPU-bound work: CPU-bound tasks still occupy a carrier thread for their full duration, so you need parallelism matching cores, not more virtual threads (a virtual thread per CPU task just adds scheduling overhead). ThreadLocal-heavy code is a concern: each virtual thread carries its ThreadLocals (Spring and libraries use them, e.g. transaction synchronization, security context), and with millions of virtual threads that's memory and copy cost; ScopedValue is the future replacement. Native code and synchronized blocks can pin (see the pinning gotcha). Also, exactly-once concurrency limits (e.g. a max 5 concurrent calls to a legacy system) still need a semaphore/bulkhead — virtual threads don't remove the need for explicit concurrency bounds.",
+      "trapWarning": "The naive answer is 'virtual threads fix all concurrency problems'. They don't bound CPU parallelism or remove the need for semaphores/bulkheads around external rate limits. Another trap: assuming ThreadLocal cost is negligible at scale — per-virtual-thread ThreadLocals multiply with request count. Candidates who enumerate the CPU/pinning/ThreadLocal caveats show real engineering judgment."
+    }
+  ]
+}

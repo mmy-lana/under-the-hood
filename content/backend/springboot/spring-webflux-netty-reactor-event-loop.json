@@ -1,0 +1,70 @@
+{
+  "id": "spring-webflux-netty-reactor-event-loop",
+  "title": "Spring WebFlux: Project Reactor Mono/Flux & Netty EventLoop",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring WebFlux / Reactor 3.x / Netty",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "webflux",
+    "reactor",
+    "netty",
+    "event-loop",
+    "mono",
+    "flux",
+    "reactive"
+  ],
+  "prerequisites": [
+    "Spring MVC basics",
+    "Understanding of async I/O and event loops"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant has two service models. The old one: every order gets a dedicated waiter who stands with the table until every dish is served — many waiters, each idle most of the time. The new one: a few very efficient waiters handle many tables at once — they take an order, move on, and come back when the dish is ready. The kitchen sends a little bell when food is done. With the efficient waiters, the same staff serves far more tables because nobody stands around waiting.",
+    "junior": "Spring WebFlux is the reactive stack: controllers return Mono<T> (0-1 values) or Flux<T> (0-N values) instead of blocking values. It runs on Netty (default) with a small number of event-loop threads handling many concurrent requests via non-blocking I/O. The reactive pipeline: return Mono.just(data).map(...).flatMap(service::call).map(...); — nothing blocks; the request completes when the publisher emits. Use WebClient (reactive) instead of RestTemplate. WebFlux shines for I/O-bound apps with many concurrent requests; it does NOT speed up CPU-bound work (still needs parallel schedulers).",
+    "senior": "Architecturally, WebFlux replaces the thread-per-request model with an event-loop model: Netty's event loop threads multiplex thousands of connections using non-blocking I/O (epoll/kqueue). Reactor's Mono/Flux are lazy publisher types that compose a reactive chain; operators (map, flatMap, zip) build a subscription graph, and data flows through on the event-loop thread. Blocking calls inside the chain defeat the model — they stall the event loop, blocking ALL requests on that thread. Long blocking work must be offloaded to a bounded elastic/parallel scheduler. This enables high concurrency with low thread count, but requires end-to-end non-blocking code (driver, client, DB).",
+    "underTheHood": "Netty's EventLoopGroup (e.g. NioEventLoopGroup with 2×cores threads) runs the reactor: each event loop thread owns a selector and processes I/O events for many channels. When a request arrives, Netty decodes HTTP and hands the request to Reactor Netty's HttpServer, which emits a Mono<HttpServerRequest>; WebFlux's WebHandler subscribes and routes to the handler method. The Mono/Flux chain is a subscriber-driven pull model: subscription flows down, emissions flow up through operators, each operator is a publisher/subscriber pair. The request thread is not tied to the response — the response is written when the publisher completes (possibly on a different thread). Schedulers (parallel, boundedElastic) are Reactor's thread pools; parallel is for CPU work, boundedElastic for blocking I/O offload."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side WebFlux concern.",
+    "angular": "N/A — WebFlux concern.",
+    "vue": "N/A — WebFlux concern.",
+    "svelte": "N/A — WebFlux concern."
+  },
+  "codeComparison": {
+    "title": "Blocking MVC controller vs reactive WebFlux controller",
+    "summary": "MVC blocks a thread per request; WebFlux composes a non-blocking chain that frees the event loop while I/O is in flight.",
+    "legacyOrBad": {
+      "label": "Blocking controller (thread per request)",
+      "snippet": "@GetMapping(\"/order/{id}\")\npublic Order get(@PathVariable long id) {\n  User u = userClient.get(id); // ❌ OLD: blocks a thread\n  return orderService.findByUser(u); // ❌ OLD: blocks again\n}",
+      "fullFile": {
+        "filename": "OrderControllerLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.web.bind.annotation.*;\n\n// ❌ OLD: The thread-per-request model. Each concurrent request holds\n// a thread while it waits on blocking calls (HTTP client, DB). With\n// 200 threads and each request spending 100ms waiting on I/O, the app\n// saturates around 2000 req/s regardless of CPU — most threads are\n// idle, just parked on I/O. Tomcat's default 200 threads cap\n// concurrency, and queues build up under load.\n@RestController\npublic class OrderControllerLegacy {\n  @GetMapping(\"/order/{id}\")\n  public Order get(@PathVariable long id) {\n    User u = userClient.get(id); // ❌ OLD: blocking HTTP — thread parked\n    return orderService.findByUser(u); // ❌ OLD: blocking DB — thread parked\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Reactive WebFlux controller",
+      "snippet": "@GetMapping(\"/order/{id}\")\npublic Mono<Order> get(@PathVariable long id) {\n  return userClient.get(id) // ✅ NEW: non-blocking\n    .flatMap(orderService::findByUser); // ✅ NEW: composed, non-blocking\n}",
+      "fullFile": {
+        "filename": "OrderController.java",
+        "language": "java",
+        "code": "import org.springframework.web.bind.annotation.*;\nimport reactor.core.publisher.Mono;\n\n// ✅ NEW: The reactive chain is non-blocking end to end. The event\n// loop thread initiates the I/O, is freed while it's in flight, and\n// resumes when the data arrives. Thousands of concurrent requests\n// share a handful of event-loop threads.\n@RestController\npublic class OrderController {\n  private final UserClient userClient; // reactive WebClient\n  private final OrderService orderService;\n\n  @GetMapping(\"/order/{id}\")\n  public Mono<Order> get(@PathVariable long id) {\n    return userClient.get(id) // ✅ NEW: Mono<User>, non-blocking\n        .flatMap(orderService::findByUser) // ✅ NEW: Mono<Order>\n        .map(order -> order.withTimestamp(now())); // ✅ NEW: transform\n  }\n\n  // ⚠️ IMPORTANT: never block inside the chain (Thread.sleep,\n  // blocking DB/HTTP). Offload blocking work instead:\n  //   .publishOn(Schedulers.boundedElastic())\n}\n\n// For multiple values:\n// public Flux<Order> list() { return orderService.streamAll(); }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is blocking inside a WebFlux chain catastrophic, and how does it differ from blocking in MVC?",
+      "contextIntro": "This is the critical WebFlux concept — interviewers want the event-loop starvation mechanism and why the same blocking call that's merely 'wasteful' in MVC is fatal in the reactive model.",
+      "detailedAnswer": "In MVC, a blocking call parks one thread; with 200 threads, 200 concurrent blocking calls is the capacity limit but not a deadlock. In WebFlux, the event loop threads are SHARED across all connections: if a handler blocks (Thread.sleep, a blocking JDBC call, a blocking RestTemplate), it stalls that event-loop thread, and because that same thread serves hundreds of other connections, ALL of them are delayed — effectively freezing a large slice of the server. Netty has few event loops (typically 2×cores), so a handful of blocking handlers can starve the entire server. This is why the rule is: end-to-end non-blocking (reactive drivers, WebClient, reactive repositories), and if you must block (e.g. a legacy library), offload it with subscribeOn/publishOn(Schedulers.boundedElastic()) so the event loop is never blocked.",
+      "trapWarning": "The naive answer is 'blocking just costs one thread, same as MVC'. It stalls a shared event loop and every connection multiplexed on it. Another trap: assuming WebFlux makes CPU-bound work faster — it doesn't; CPU work still occupies the event loop and should run on the parallel scheduler. Candidates who describe event-loop starvation show real reactive understanding."
+    },
+    {
+      "question": "How does Reactor's subscription model work, and why is Mono/Flux 'lazy'?",
+      "contextIntro": "This probes the reactive pipeline mechanics — interviewers want the subscriber-driven pull model and why nothing executes until someone subscribes, which explains many WebFlux debugging surprises.",
+      "detailedAnswer": "Mono and Flux are lazy publishers: constructing them and chaining operators only BUILDS a description of the pipeline — nothing runs until a subscriber subscribes. On subscribe, the subscription flows DOWNWARD (from subscriber toward the source) as each operator requests data via the request(n) backpressure signal; then data flows UPWARD: the source emits, each operator processes and passes the result to the next subscriber. This pull-based model is what enables backpressure — consumers can request one element at a time, and producers respect the demand. In WebFlux, the framework subscribes to the returned Mono/Flux, drives it to completion, and writes the response. This laziness means side effects inside operators run at subscription time (possibly multiple times if re-subscribed), which is why operators should be pure and shared publishers should be cached.",
+      "trapWarning": "The naive answer is 'the code runs when the controller returns'. It runs only when the framework subscribes, and each subscription re-runs the chain — a Mono built inside a method that's called twice re-executes its source twice. Another trap: blocking inside a map() to 'wait for the value' — that's the event-loop starvation bug again; you should use flatMap to return a Mono. Candidates who explain the subscribe-drives-execution model show real Reactor depth."
+    }
+  ]
+}

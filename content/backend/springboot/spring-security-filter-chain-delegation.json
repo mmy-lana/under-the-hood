@@ -1,0 +1,68 @@
+{
+  "id": "spring-security-filter-chain-delegation",
+  "title": "Spring Security: DelegatingFilterProxy & SecurityFilterChain",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Security 6.x / Spring Boot 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "spring-security",
+    "filter-chain",
+    "delegating-filter-proxy",
+    "authentication",
+    "authorization"
+  ],
+  "prerequisites": [
+    "Spring Boot web basics",
+    "Understanding of servlet filters and security concepts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A building has a security checkpoint system with a series of gates in a fixed order. The first gate checks your badge, the next checks your floor clearance, and the last logs you in. The whole line of gates is a security chain. There's also a trick: the building's main entrance (the servlet container) doesn't know about these gates directly — it hands every visitor to a special door manager (DelegatingFilterProxy) that knows how to route them into the gate line. The building can even have multiple gate lines for different entrances.",
+    "junior": "Spring Security is implemented as a chain of servlet filters. The entry point is DelegatingFilterProxy, a servlet filter registered in the container that delegates to a Spring-managed FilterChainProxy bean. Inside, SecurityFilterChain defines an ordered list of security filters: authentication filters (UsernamePasswordAuthenticationFilter), authorization (AuthorizationFilter), CSRF, CORS, etc. In Spring Security 6 you configure with a SecurityFilterChain bean: @Bean SecurityFilterChain filterChain(HttpSecurity http) { return http.csrf(AbstractHttpConfigurer::disable).authorizeHttpRequests(a -> a.anyRequest().authenticated()).build(); }. Multiple chains can match different URL patterns.",
+    "senior": "Architecturally, DelegatingFilterProxy is the bridge between the servlet container and the Spring context: the container calls it as a plain filter, and it looks up the FilterChainProxy bean by name from the Spring ApplicationContext (enabling lazy init and Spring lifecycle). FilterChainProxy then determines which SecurityFilterChain matches the request (via RequestMatcher) and runs that chain's filters in order. Each filter does one job (authentication, CSRF token validation, security headers) and either continues the chain or short-circuits with a response. The chain is deeply ordered; filters run once per request; the SecurityContext is stored in a ThreadLocal-based context holder and propagated to the current request.",
+    "underTheHood": "DelegatingFilterProxy (registered in web.xml or via Spring Boot's auto-registration) delegates to FilterChainProxy. FilterChainProxy holds a List<SecurityFilterChain>; for each request it iterates the chains, finds the first whose RequestMatcher matches, and invokes filterChain.getFilters() sequentially. Filters include: SecurityContextHolderFilter (loads/saves the SecurityContext), CsrfFilter, UsernamePasswordAuthenticationFilter (for form login), BasicAuthenticationFilter, AuthorizationFilter (authorizes via AuthorizationManager), and ExceptionTranslationFilter (converts AccessDeniedException/AuthenticationException into 403/401 with entry points). Spring Boot auto-configures a default chain when no SecurityFilterChain bean exists. The SecurityContext is stored per-request and cleaned up after the chain completes."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring Security concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Default security config vs explicit SecurityFilterChain",
+    "summary": "Relying on defaults is opaque and often too restrictive; an explicit SecurityFilterChain bean makes the chain visible and tunable.",
+    "legacyOrBad": {
+      "label": "Relying on default security",
+      "snippet": "@SpringBootApplication\npublic class App { /* ❌ OLD: no SecurityFilterChain — defaults apply */ }",
+      "fullFile": {
+        "filename": "App.java",
+        "language": "java",
+        "code": "import org.springframework.boot.autoconfigure.SpringBootApplication;\n\n@SpringBootApplication\npublic class App {\n  // ❌ OLD: With spring-boot-starter-security on the classpath and no\n  // explicit configuration, Spring Boot auto-configures a default\n  // SecurityFilterChain that:\n  //   - requires authentication for EVERY request (default 401/login)\n  //   - enables CSRF, security headers, form login, and a generated\n  //     password logged at startup\n  // This is safe but opaque: a simple health endpoint also gets\n  // blocked, and developers often discover the behavior only when\n  // requests start failing with 401/403.\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Explicit SecurityFilterChain",
+      "snippet": "@Bean\nSecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n  // ✅ NEW: visible, ordered chain\n  return http.authorizeHttpRequests(a -> a\n      .requestMatchers(\"/public/**\").permitAll()\n      .anyRequest().authenticated())\n    .formLogin(Customizer.withDefaults())\n    .build();\n}",
+      "fullFile": {
+        "filename": "SecurityConfig.java",
+        "language": "java",
+        "code": "import org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.Customizer;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.web.SecurityFilterChain;\n\n@Configuration\n@EnableWebSecurity\npublic class SecurityConfig {\n  // ✅ NEW: The chain is explicit and ordered — public paths permit all,\n  // everything else requires authentication, form login is enabled.\n  @Bean\n  SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n    return http\n        .authorizeHttpRequests((auth) -> auth\n            .requestMatchers(\"/public/**\", \"/health\").permitAll() // ✅ NEW\n            .anyRequest().authenticated()) // ✅ NEW\n        .formLogin(Customizer.withDefaults()) // ✅ NEW\n        .build();\n  }\n\n  // ✅ NEW: multiple chains can be defined, matched by URL pattern\n  @Bean\n  SecurityFilterChain apiChain(HttpSecurity http) throws Exception {\n    return http\n        .securityMatcher(\"/api/**\") // ✅ NEW: this chain handles /api/**\n        .csrf(AbstractHttpConfigurer::disable)\n        .authorizeHttpRequests((auth) -> auth.anyRequest().permitAll())\n        .build();\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is DelegatingFilterProxy, and why does Spring Security need it rather than registering filters directly?",
+      "contextIntro": "This tests the container-to-Spring bridge — interviewers want the lifecycle and bean-lookup rationale, which explains why security filters are Spring-managed beans.",
+      "detailedAnswer": "DelegatingFilterProxy is a servlet filter (registered with the servlet container) that delegates all filtering to a Spring bean — by default the FilterChainProxy bean found in the ApplicationContext. The container only knows the proxy; the actual security filters live in the Spring context. This decouples the container lifecycle from Spring's: the proxy can be initialized before the Spring context is fully ready, and it lazily looks up the delegate bean when the first request arrives. It also lets the security chain use Spring features (DI, AOP, profiles) that a plain servlet filter cannot. FilterChainProxy then dispatches to the matching SecurityFilterChain. Without this bridge, the container would have no way to invoke Spring-managed, DI-dependent security filters in the correct order.",
+      "trapWarning": "The naive answer is 'DelegatingFilterProxy is just the first security filter'. It's a bridge that doesn't do security itself — it routes to the Spring FilterChainProxy. Another trap: thinking filters are registered directly in the container — they are beans managed by Spring and invoked via the proxy. Candidates who explain the lifecycle decoupling and bean delegation show real understanding."
+    },
+    {
+      "question": "How does FilterChainProxy decide which SecurityFilterChain to run, and why does filter order matter?",
+      "contextIntro": "This probes the chain resolution and ordering semantics — interviewers want the RequestMatcher selection and the per-filter ordering that makes authentication-before-authorization work.",
+      "detailedAnswer": "FilterChainProxy holds an ordered list of SecurityFilterChain beans. For each request, it iterates the chains and runs the FIRST one whose RequestMatcher matches the request (e.g. securityMatcher(\"/api/**\")); the remaining chains are skipped. This is why chain order matters: a broad matcher (anyRequest) placed first would swallow requests meant for a more specific chain. Within a chain, the filters execute in a strict documented order (e.g. SecurityContextHolderFilter early so later filters can read the authenticated principal, then CSRF, then authentication filters, then authorization last). This ordering guarantees that by the time authorization runs, authentication has already populated the SecurityContext. Breaking the order (or having overlapping matchers) silently changes security behavior.",
+      "trapWarning": "The naive answer is 'all chains run for every request'. Only the first matching chain runs. Another trap: defining a catch-all chain first (anyRequest) that shadows a more specific /api chain — requests hit the wrong chain and get wrong security rules. Candidates who describe the first-match selection and filter ordering show real Spring Security mastery."
+    }
+  ]
+}

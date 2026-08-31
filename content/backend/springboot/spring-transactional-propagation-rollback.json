@@ -1,0 +1,69 @@
+{
+  "id": "spring-transactional-propagation-rollback",
+  "title": "@Transactional: Propagation, Isolation, and Rollback Rules",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Framework 6.x / Spring Boot 3.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "spring-boot",
+    "transactional",
+    "propagation",
+    "isolation",
+    "rollback",
+    "jdbc"
+  ],
+  "prerequisites": [
+    "Spring dependency injection basics",
+    "Understanding of database transactions (ACID)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant writes every order in a master ledger. A transaction is a firm commitment: either the whole order is written (all dishes logged) or nothing is written (if the kitchen fails halfway, the page is torn out). The manager can also decide how orders relate: a new order can join an existing one (same page), pause and start a fresh page, or fail if there's already a page open. If any dish fails, the manager decides what counts as 'the order failed' — and by default, only serious problems (like a burnt kitchen) tear out the page, while small notes (like a typo) don't.",
+    "junior": "@Transactional on a method makes Spring manage a transaction around it: it begins before the method, commits after success, and rolls back on failure. @Transactional(readOnly = true) is for queries. Propagation controls how it interacts with an existing transaction: REQUIRED (default — join or create), REQUIRES_NEW (suspend and create a new one), NESTED (savepoint), MANDATORY (must exist). Isolation sets the database isolation level (READ_COMMITTED, etc.). Rollback rules: by default, rollback only on RuntimeException/Error, NOT checked exceptions — configure with rollbackFor = Exception.class.",
+    "senior": "Architecturally, @Transactional is implemented with a proxy: Spring wraps the bean in a proxy (JDK dynamic or CGLIB) that starts/commits/rolls back the transaction around the method invocation via a TransactionInterceptor (a PlatformTransactionManager). Key gotchas: self-invocation bypasses the proxy (calling this.save() inside the same bean skips the interceptor), and the transaction is bound to the thread via ThreadLocal (TransactionSynchronizationManager), so async or a different thread does NOT share the transaction. The rollback decision is made from the exception type: the interceptor checks rollback rules (rollbackFor, noRollbackFor) against the thrown exception.",
+    "underTheHood": "The TransactionInterceptor wraps the method in a TransactionAspectSupport flow: it obtains the transaction status via the PlatformTransactionManager (e.g. DataSourceTransactionManager for JDBC), which uses the DataSource's Connection: begin (setAutoCommit(false), start a new JDBC transaction), commit (connection.commit()), or rollback (connection.rollback()). Propagation is implemented by checking the current transaction context (ThreadLocal-bound TransactionSynchronizationManager resources): REQUIRES_NEW suspends the current transaction (save the current status, start a fresh connection/transaction) and resumes it after. NESTED uses a savepoint (JDBC 3.0). Isolation maps to Connection.setTransactionIsolation. The transaction is committed only when the outermost boundary completes successfully."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "No transaction (per-statement autocommit) vs @Transactional",
+    "summary": "Without @Transactional each statement commits separately (partial writes on failure); the annotation makes the whole method one atomic unit.",
+    "legacyOrBad": {
+      "label": "Multiple writes without a transaction",
+      "snippet": "void transfer(String from, String to, int amount) {\n  accountRepo.debit(from, amount);  // ❌ OLD: commits immediately\n  accountRepo.credit(to, amount);   // ❌ OLD: if this fails, debit stays\n}",
+      "fullFile": {
+        "filename": "TransferServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\n\n@Service\npublic class TransferServiceLegacy {\n  private final AccountRepository accountRepo;\n\n  public TransferServiceLegacy(AccountRepository accountRepo) {\n    this.accountRepo = accountRepo;\n  }\n\n  // ❌ OLD: No transaction. Each repository call runs in its own\n  // autocommit transaction: debit() commits immediately. If credit()\n  // throws, the money has already left the 'from' account — money is\n  // lost and the accounts are inconsistent. Partial writes are the\n  // classic consequence of missing @Transactional.\n  void transfer(String from, String to, int amount) {\n    accountRepo.debit(from, amount); // ❌ OLD: committed already\n    accountRepo.credit(to, amount); // ❌ OLD: failure leaves half-done state\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "@Transactional atomic method",
+      "snippet": "@Transactional\nvoid transfer(String from, String to, int amount) { // ✅ NEW: one atomic unit\n  accountRepo.debit(from, amount);\n  accountRepo.credit(to, amount);\n}",
+      "fullFile": {
+        "filename": "TransferService.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\nimport org.springframework.transaction.annotation.Transactional;\n\n@Service\npublic class TransferService {\n  private final AccountRepository accountRepo;\n\n  public TransferService(AccountRepository accountRepo) {\n    this.accountRepo = accountRepo;\n  }\n\n  // ✅ NEW: The whole method is one transaction. Spring opens a\n  // transaction before the call and commits only if everything\n  // succeeds; any RuntimeException rolls back both writes.\n  @Transactional // ✅ NEW: atomic boundary\n  void transfer(String from, String to, int amount) {\n    accountRepo.debit(from, amount);\n    accountRepo.credit(to, amount); // ✅ NEW: if this throws, debit rolls back\n  }\n\n  // For queries:\n  @Transactional(readOnly = true) // ✅ NEW: hints a read-only transaction\n  int balance(String account) {\n    return accountRepo.balance(account);\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does @Transactional not work when a method calls another @Transactional method on the same bean (self-invocation)?",
+      "contextIntro": "This is the classic Spring transaction gotcha — interviewers want the proxy model explanation, because self-invocation silently skips the transaction interceptor.",
+      "detailedAnswer": "@Transactional works through a proxy: Spring wraps the bean, and calls THROUGH the proxy get intercepted. When a method inside the same class calls another @Transactional method directly (this.someMethod()), the call goes to the raw target object, not through the proxy — so the transaction interceptor never runs, and the inner @Transactional is ignored (its transaction is not started/committed separately). This is why self-invocation breaks transactions, @Async, and other AOP-based annotations. Fixes: inject the bean into itself (self-injection to get the proxy), extract the method to another bean, use TransactionTemplate programmatically, or restructure so the call goes through the proxy. The transaction boundary is at the proxy, not the method.",
+      "trapWarning": "The naive answer is 'Spring creates a transaction for every @Transactional method'. Only calls that pass through the proxy get intercepted. Another trap: assuming an inner call 'joins' the outer transaction automatically — it only does if it goes through the proxy AND the propagation is REQUIRED; self-invocation skips it entirely. Candidates who mention the proxy and self-injection fix show real Spring experience."
+    },
+    {
+      "question": "Why does Spring roll back on RuntimeException but not checked exceptions, and how do you change that?",
+      "contextIntro": "This tests the rollback rule semantics — interviewers want the default behavior rationale and the rollbackFor/noRollbackFor configuration that production code needs.",
+      "detailedAnswer": "By default, the transaction interceptor rolls back only on unchecked exceptions (RuntimeException and Error), not checked exceptions (Exception subclasses). The rationale is a convention: checked exceptions typically represent expected, recoverable business conditions (e.g. 'insufficient funds'), for which the business code intends to handle and continue — auto-rolling back would be surprising. Unchecked exceptions represent programming/system errors where the transaction state is unreliable. To override, use rollbackFor = SomeCheckedException.class (roll back on that checked exception) and noRollbackFor = SomeRuntimeException.class (don't roll back on that unchecked one). Production code frequently needs rollbackFor = Exception.class to treat all failures as transactional failures.",
+      "trapWarning": "The naive answer is 'Spring rolls back on any exception'. It rolls back only RuntimeException/Error by default — a checked exception leaves the transaction to be committed (if nothing else failed). Another trap: throwing an exception after a repository write and expecting automatic rollback — if it's a checked exception and you didn't set rollbackFor, the partial write COMMITS. Candidates who can state the default and the override attributes show real transactional knowledge."
+    }
+  ]
+}

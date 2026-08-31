@@ -1,0 +1,69 @@
+{
+  "id": "spring-aop-pointcuts-aspects",
+  "title": "Spring AOP: Pointcut Expressions & Advice Types",
+  "category": "backend",
+  "subcategory": "springboot",
+  "versionContext": "Spring Framework 6.x / AspectJ",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "spring",
+    "aop",
+    "pointcut",
+    "aspect",
+    "advice",
+    "proxy",
+    "aspectj"
+  ],
+  "prerequisites": [
+    "Spring bean lifecycle and proxies",
+    "Understanding of cross-cutting concerns (logging, transactions)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel has a concierge who adds a note to every room-service order: 'deliver at 7pm, check the guest's name, then log it in the book'. Instead of training every waiter to remember these steps, the hotel writes the note once and applies it automatically to every order that matches a rule ('all room-service orders'). If an order doesn't match the rule, the note isn't applied. The note is the advice; the rule is the pointcut; the book where notes are written is the aspect.",
+    "junior": "Spring AOP lets you add behavior (advice) to methods matching a rule (pointcut) without modifying them. Common uses: logging, transactions, auditing, security. Define an @Aspect class with @Before, @After, @AfterReturning, @AfterThrowing, or @Around advice. Pointcut expressions select methods: execution(* com.example.service.*.*(..)), within, @annotation, @within, bean. Example: @Around(\"@annotation(LogExecution)\") around any method annotated @LogExecution. Spring AOP uses proxies (JDK dynamic for interfaces, CGLIB for classes), so it only intercepts calls through the proxy — self-invocation is not intercepted.",
+    "senior": "Architecturally, Spring AOP is proxy-based AOP (not full AspectJ weaving): an advisor (pointcut + advice) is applied by creating a proxy around the target bean. The ProxyFactory chooses JDK dynamic proxies (interface-based) or CGLIB (class-based) and applies method interceptors. Pointcuts are evaluated by matching the method signature (and annotations) at proxy-invocation time. @Around gives full control: proceed() invokes the target method. Because it's proxy-based, limitations follow: only public method calls through the proxy are advised; self-invocation, final classes/methods (CGLIB can't proxy final), and calls to other beans' internals bypass advice. AspectJ (compile-time or load-time weaving) is needed for non-proxy scenarios.",
+    "underTheHood": "Spring creates a proxy (JdkDynamicAopProxy or CGLIB Enhancer) that implements the bean's interfaces (or subclass). The proxy holds a list of Advisors (ordered); when a matched method is invoked, the proxy builds an interceptor chain (MethodInterceptor) wrapping the method invocation: for @Around, the interceptor calls the aspect method, which calls pjp.proceed() → the next interceptor → eventually the target method. Pointcut matching uses AspectJExpressionPointcut, which parses the expression and matches the method's declaring class + signature + annotations. @Aspect beans are processed by AnnotationAwareAspectJAutoProxyCreator, which wraps eligible beans after their creation. The same proxy machinery implements @Transactional and @Async."
+  },
+  "rosettaStone": {
+    "react": "N/A — server-side Spring concern.",
+    "angular": "N/A — Spring concern.",
+    "vue": "N/A — Spring concern.",
+    "svelte": "N/A — Spring concern."
+  },
+  "codeComparison": {
+    "title": "Manual logging in every method vs @Around aspect",
+    "summary": "Copy-pasting timing/logging code into every method is repetitive and drifts; an aspect applies it uniformly to every matched method.",
+    "legacyOrBad": {
+      "label": "Manual timing in each method",
+      "snippet": "public Order placeOrder(...) {\n  long start = System.nanoTime(); // ❌ OLD: repeated in every method\n  try { ... } finally {\n    log.info(\"placeOrder took {}ms\", (System.nanoTime() - start) / 1_000_000);\n  }\n}",
+      "fullFile": {
+        "filename": "OrderServiceLegacy.java",
+        "language": "java",
+        "code": "import org.springframework.stereotype.Service;\n\n@Service\npublic class OrderServiceLegacy {\n  private static final Logger log = LoggerFactory.getLogger(OrderServiceLegacy.class);\n\n  // ❌ OLD: timing/logging is copy-pasted into every method. Each new\n  // method must remember to add the boilerplate; the metric name is\n  // hard-coded per method; and the timing code obscures the logic.\n  public Order placeOrder(String sku, int qty) {\n    long start = System.nanoTime(); // ❌ OLD\n    try {\n      return doPlace(sku, qty);\n    } finally {\n      log.info(\"placeOrder took {}ms\", (System.nanoTime() - start) / 1_000_000); // ❌ OLD\n    }\n  }\n\n  public Order cancelOrder(long id) {\n    long start = System.nanoTime(); // ❌ OLD: again\n    try {\n      return doCancel(id);\n    } finally {\n      log.info(\"cancelOrder took {}ms\", (System.nanoTime() - start) / 1_000_000); // ❌ OLD\n    }\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "@Around timing aspect",
+      "snippet": "@Aspect\n@Component\npublic class TimingAspect {\n  @Around(\"execution(* com.example.service.*.*(..))\") // ✅ NEW\n  public Object time(ProceedingJoinPoint pjp) throws Throwable {\n    long start = System.nanoTime();\n    try { return pjp.proceed(); }\n    finally { log.info(\"{} took {}ms\", pjp.getSignature().getName(), (System.nanoTime() - start) / 1_000_000); }\n  }\n}",
+      "fullFile": {
+        "filename": "TimingAspect.java",
+        "language": "java",
+        "code": "import org.aspectj.lang.ProceedingJoinPoint;\nimport org.aspectj.lang.annotation.Around;\nimport org.aspectj.lang.annotation.Aspect;\nimport org.springframework.stereotype.Component;\n\n// ✅ NEW: One aspect times EVERY method matching the pointcut — no\n// boilerplate in the business methods, uniform metrics, and a single\n// place to change the behavior.\n@Aspect\n@Component\npublic class TimingAspect {\n  private static final Logger log = LoggerFactory.getLogger(TimingAspect.class);\n\n  // ✅ NEW: pointcut — any public method on any class in the service\n  // package; @Around gives full control (pjp.proceed() runs the target).\n  @Around(\"execution(* com.example.service..*(..))\") // ✅ NEW\n  public Object time(ProceedingJoinPoint pjp) throws Throwable {\n    long start = System.nanoTime();\n    try {\n      return pjp.proceed(); // ✅ NEW: invoke the target method\n    } finally {\n      log.info(\"{} took {}ms\",\n          pjp.getSignature().toShortString(),\n          (System.nanoTime() - start) / 1_000_000);\n    }\n  }\n}\n\n// Other advice types:\n// @Before(\"...\") — run before; @AfterReturning — after success;\n// @AfterThrowing — after exception; @After — finally-style."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why doesn't Spring AOP intercept self-invocation, and what are the proxy limitations?",
+      "contextIntro": "This is the defining Spring AOP gotcha — interviewers want the proxy model explanation and the concrete limitations (public methods, self-calls, final classes) that come with proxy-based AOP.",
+      "detailedAnswer": "Spring AOP works by wrapping the target bean in a proxy; only method calls that go THROUGH the proxy are intercepted. When a method on the same bean calls another advised method directly (this.someMethod()), the call executes on the raw target object — the proxy is bypassed, so the advice (and @Transactional/@Async) does not run. Additional limitations of proxy-based AOP: only PUBLIC method invocations through the proxy are advised (private/protected calls and calls on the raw object are not); CGLIB cannot proxy final classes or final methods; JDK dynamic proxies only work for interface-declared methods. Workarounds: inject the proxy into itself (self-injection), move the advised method to another bean, or use AspectJ compile-time/load-time weaving for full interception.",
+      "trapWarning": "The naive answer is 'Spring AOP intercepts every method call'. It intercepts proxy-mediated public calls only. Another trap: thinking @Transactional inside the same bean is exempt — it's exactly the self-invocation case that silently skips the transaction. Candidates who explain the proxy boundary and the self-injection fix show real Spring experience."
+    },
+    {
+      "question": "What is the difference between @Around and the other advice types, and when would you choose @Before/@After instead?",
+      "contextIntro": "This tests the advice semantics — interviewers want to know what @Around can do that the others can't (controlling the invocation, changing the return value, handling exceptions) and when the simpler types suffice.",
+      "detailedAnswer": "@Around is the most powerful: it wraps the method call entirely. You control whether and when the target runs (pjp.proceed()), can change the arguments, transform or replace the return value, catch exceptions, and short-circuit (not call proceed at all). The other advice types are non-controlling hooks: @Before runs before the method (can't stop it or change the result), @After runs after (like finally, regardless of outcome), @AfterReturning runs only after a successful return and can inspect the return value, @AfterThrowing runs only after an exception. Choose @Around when you need to modify behavior (timing, retries, caching, transaction boundaries); use the simpler types for pure observation (logging, auditing, validation) where you don't need to alter the invocation.",
+      "trapWarning": "The naive answer is 'use @Around for everything because it's most powerful'. Overusing @Around makes aspects harder to read and easier to break (forgetting pjp.proceed() swallows the call). Another trap: thinking @AfterReturning can change the return value — it can only read it (returning a different value from an @AfterReturning advice has no effect in Spring AOP). Candidates who map each advice to its control level show real understanding."
+    }
+  ]
+}
