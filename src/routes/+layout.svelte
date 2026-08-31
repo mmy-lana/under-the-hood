@@ -1,11 +1,15 @@
 <script lang="ts">
   import '../app.css';
+  import { setContext } from 'svelte';
   import { page } from '$app/state';
   import HeaderNav from '$lib/components/organisms/HeaderNav.svelte';
   import SidebarToC from '$lib/components/organisms/SidebarToC.svelte';
   import SearchPalette from '$lib/components/molecules/SearchPalette.svelte';
   import { allTopics, searchIndex } from '$lib/content';
   import { isCmdK } from '$lib/utils/keyboard';
+
+  /** Context key shared with the homepage so its hero search can open the palette. */
+  export const SEARCH_OPEN_KEY = 'uth:search-open';
 
   interface LayoutProps {
     children: import('svelte').Snippet;
@@ -17,6 +21,12 @@
   let searchOpen = $state(false);
 
   const activeId = $derived(page.params.id);
+
+  // Homepage (no active topic) spans full width: desktop ToC hidden, mobile
+  // drawer untouched.
+  const isHome = $derived(!activeId);
+
+  setContext<() => void>(SEARCH_OPEN_KEY, openSearch);
 
   // Close the drawer when the route changes (navigation via sidebar links).
   $effect(() => {
@@ -59,7 +69,13 @@
   <HeaderNav onnav={openDrawer} onsearch={openSearch} />
 
   <div class="mx-auto flex max-w-screen-2xl gap-6 px-3 sm:px-4 xl:gap-8">
-    <SidebarToC topics={allTopics} activeId={activeId} open={drawerOpen} onclose={closeDrawer} />
+    <SidebarToC
+      topics={allTopics}
+      activeId={activeId}
+      open={drawerOpen}
+      onclose={closeDrawer}
+      hideDesktop={isHome}
+    />
     <main id="main" tabindex="-1" class="min-w-0 flex-1 px-1 py-6 sm:px-2 sm:py-8">
       {@render children()}
     </main>

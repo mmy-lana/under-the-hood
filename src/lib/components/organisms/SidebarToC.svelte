@@ -9,9 +9,15 @@
     activeId?: string;
     open: boolean;
     onclose: () => void;
+    /**
+     * Hides the desktop persistent sidebar (e.g. on the homepage so the main
+     * content spans full width). The mobile off-canvas drawer is NEVER
+     * affected — the hamburger menu keeps opening it on every screen size.
+     */
+    hideDesktop?: boolean;
   }
 
-  let { topics, activeId, open, onclose }: SidebarToCProps = $props();
+  let { topics, activeId, open, onclose, hideDesktop = false }: SidebarToCProps = $props();
 
   let drawerEl = $state<HTMLElement | null>(null);
   let previouslyFocused: HTMLElement | null = null;
@@ -49,9 +55,9 @@
 
   // On navigation (activeId change) auto-expand ONLY the new active subcategory
   // and collapse the rest. $effect.pre runs before DOM update → no flash.
+  // autoOpenMap() reads activeId, so this effect re-runs on navigation.
   // Does NOT read openSubcats → user toggles persist until the next navigation.
   $effect.pre(() => {
-    activeId; // track
     openSubcats = autoOpenMap();
   });
 
@@ -175,11 +181,13 @@
 </aside>
 
 <!-- Desktop: persistent sticky sidebar -->
-<aside
-  class="hidden w-72 shrink-0 xl:block"
-  aria-label="Table of contents"
->
-  <nav class="sticky top-[calc(var(--hdr-h)+1rem)] max-h-[calc(100dvh-var(--hdr-h)-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-surface p-3">
-    {@render Tree()}
-  </nav>
-</aside>
+{#if !hideDesktop}
+  <aside
+    class="hidden w-72 shrink-0 xl:block"
+    aria-label="Table of contents"
+  >
+    <nav class="sticky top-[calc(var(--hdr-h)+1rem)] max-h-[calc(100dvh-var(--hdr-h)-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-surface p-3">
+      {@render Tree()}
+    </nav>
+  </aside>
+{/if}
