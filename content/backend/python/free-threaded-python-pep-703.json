@@ -1,0 +1,58 @@
+{
+  "id": "free-threaded-python-pep-703",
+  "title": "Free-Threaded Python (PEP 703): GIL Removal and Per-Object Locking",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.13+ / 3.14 (free-threaded build)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "pep-703", "free-threading", "no-gil", "cpython", "concurrency", "multithreading"],
+  "prerequisites": ["CPython GIL architecture", "Thread safety & race conditions"],
+  "progressiveExplaining": {
+    "eli5": "For 30 years, Python had a single master lock (the GIL) that forced all threads to wait in line. In modern free-threaded Python (Python 3.13+ with `--disable-gil`), that master lock is removed. Multiple threads running pure Python code can now execute on all your CPU cores at the exact same time.",
+    "junior": "Free-threaded Python (introduced experimentally in Python 3.13 via PEP 703 and built with `--disable-gil`) allows standard Python threads (`threading.Thread`) to execute in true parallel across multiple CPU cores without being blocked by the Global Interpreter Lock (GIL). You can check if the GIL is disabled using `import sys; sys._is_gil_enabled()`.",
+    "senior": "Architecturally, PEP 703 replaces the single global mutex with three low-level runtime synchronization primitives: (1) **Biased Reference Counting** (single-threaded objects update local refcounts without atomics, falling back to atomic increments only when shared across threads), (2) **Deferred / Immortal Reference Counting** (modules and top-level functions never update refcounts), and (3) **Thread-Safe Allocator** (mimalloc replaces pymalloc). The cyclic GC operates in stop-the-world mode using thread attachment states.",
+    "underTheHood": "In free-threaded builds (`python3.13t`), `PyObject` headers replace the single `ob_refcnt` with a 32-bit `ob_ref_local` and 32-bit `ob_ref_shared`. The owning thread mutates `ob_ref_local` with non-atomic instructions. Foreign threads update `ob_ref_shared` with atomic instructions. Dicts and lists use fine-grained per-object locks (`PyMutex`, a 1-byte futex lock) during reads and writes to prevent internal memory corruption."
+  },
+  "rosettaStone": {
+    "python": "CPython `--disable-gil` (free-threaded build with biased reference counting).",
+    "java": "JVM multi-threaded platform threads running without interpreter locks.",
+    "go": "Go GMP scheduler running goroutines across multiple OS threads.",
+    "rust": "Rust `std::thread` executing safe parallel code via `Send`/`Sync`."
+  },
+  "codeComparison": {
+    "title": "GIL-Locked Threading (Standard Python) vs True Parallel Multi-Threading (Python 3.13t)",
+    "summary": "Standard Python threads run sequentially on 1 core; free-threaded Python achieves true linear multi-core scaling.",
+    "legacyOrBad": {
+      "label": "Standard CPython (GIL Enabled)",
+      "snippet": "python3.13 app.py # ❌ CPU-bound threads serialize on 1 core",
+      "fullFile": {
+        "filename": "parallel_benchmark.py",
+        "language": "python",
+        "code": "# In Standard Python 3.13: Spawning 4 threads runs on 1 CPU core at 100% load\n# Total execution time equals sequential run time (~4.0s).\nimport threading, time\n\ndef heavy_work():\n  sum(i * i for i in range(15_000_000))\n\nstart = time.perf_counter()\nthreads = [threading.Thread(target=heavy_work) for _ in range(4)]\nfor t in threads: t.start()\nfor t in threads: t.join()\nprint(f'Standard Python Time: {time.perf_counter() - start:.2f}s')"
+      }
+    },
+    "modernOrGood": {
+      "label": "Free-Threaded Python 3.13t (GIL Disabled)",
+      "snippet": "python3.13t parallel_benchmark.py # ✅ NEW: Runs in parallel across 4 cores (~1.1s)",
+      "fullFile": {
+        "filename": "parallel_benchmark.py",
+        "language": "python",
+        "code": "# In Free-Threaded Python 3.13t (python3.13t):\n# All 4 threads execute in parallel across 4 CPU cores at 400% CPU utilization!\n# Total execution time drops to ~1.1s.\nimport threading, time, sys\n\nprint('GIL Enabled:', getattr(sys, '_is_gil_enabled', lambda: True)())\n\ndef heavy_work():\n  sum(i * i for i in range(15_000_000))\n\nstart = time.perf_counter()\nthreads = [threading.Thread(target=heavy_work) for _ in range(4)]\nfor t in threads: t.start()\nfor t in threads: t.join()\nprint(f'Free-Threaded Time: {time.perf_counter() - start:.2f}s')"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Does removing the GIL make Python thread-safe for user code?",
+      "contextIntro": "This is the most critical conceptual trap regarding PEP 703.",
+      "detailedAnswer": "**NO.** Removing the GIL only makes the *Python C runtime and interpreter internals* thread-safe. **User-level race conditions still exist.** If two threads mutate a shared Python dictionary or list without a `threading.Lock`, they can overwrite each other's data (lost updates). While the interpreter won't crash with memory corruption (due to internal `PyMutex` locks), your application business logic still requires explicit synchronization locks.",
+      "trapWarning": "Removing the GIL eliminates interpreter serialization, but increases the necessity of `threading.Lock` in user code."
+    },
+    {
+      "question": "What is 'Biased Reference Counting' in PEP 703?",
+      "contextIntro": "Checks understanding of high-performance concurrent memory management.",
+      "detailedAnswer": "Using pure atomic instructions (`LOCK XADD`) for every reference count increment/decrement would cause a 40%+ performance slowdown on single-threaded code. **Biased Reference Counting** assigns ownership of an object to the thread that created it. The owning thread updates a local non-atomic reference count with zero locking overhead. Only when another thread accesses the object does it fall back to an atomic shared reference count.",
+      "trapWarning": "Biased reference counting ensures single-threaded Python code incurs only a ~5-10% performance penalty in free-threaded builds."
+    }
+  ]
+}

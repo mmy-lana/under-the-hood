@@ -1,0 +1,58 @@
+{
+  "id": "type-hints-and-typing-module",
+  "title": "Typing Engine: TypeVar, Generic, Protocol, and get_type_hints",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "typing", "typevar", "protocol", "generics", "structural-typing", "pydantic"],
+  "prerequisites": ["Python Type Annotations (PEP 484)", "OOP Abstract Base Classes"],
+  "progressiveExplaining": {
+    "eli5": "In standard Python, duck typing means 'if it walks like a duck and quacks like a duck, it is a duck'. `typing.Protocol` is how you describe the duck to your code editor without writing a shared parent class: 'any object that has a `quack()` method is allowed here'.",
+    "junior": "Python type hints (PEP 484) provide static typing for IDEs and linters (Mypy, Pyright). In modern Python (3.12+), you can define generics using the native syntax `class Stack[T]:` (replacing `TypeVar('T')`). `typing.Protocol` enables **Structural Subtyping** (static duck typing): any class that implements the methods declared in the protocol matches the type without explicit inheritance. `typing.get_type_hints()` allows runtime inspection of annotations.",
+    "senior": "Architecturally, Python separates type hinting into **Static Type Analysis** (Mypy/Pyright checking ASTs before execution) and **Runtime Reflection** (Pydantic, FastAPI, and dataclasses inspecting `__annotations__` at runtime). `typing.Protocol` eliminates rigid nominal inheritance, allowing third-party classes to satisfy interfaces without inheriting from shared base classes. In Python 3.12 (PEP 695), generic type parameters are evaluated lazily via the `type` statement: `type Point[T] = tuple[T, T]`.",
+    "underTheHood": "When Python evaluates a class with type annotations, it stores them in the class `__annotations__` dictionary (as strings under `from __future__ import annotations` or as raw objects). `typing.get_type_hints(cls)` resolves stringified forward references against the module's global namespace. Protocols use a custom metaclass (`_ProtocolMeta`) that overrides `__subclasscheck__` and `__instancecheck__` using runtime method signature comparison."
+  },
+  "rosettaStone": {
+    "python": "`class Renderable(Protocol): def render(self) -> str: ...`.",
+    "typescript": "`interface Renderable { render(): string; }` (structural typing).",
+    "go": "`type Renderable interface { Render() string }` (implicit interfaces).",
+    "rust": "`trait Renderable { fn render(&self) -> String; }`."
+  },
+  "codeComparison": {
+    "title": "Nominal Inheritance (ABC) vs Structural Typing (Protocol)",
+    "summary": "ABCs require rigid class inheritance; `Protocol` allows any class with matching methods to satisfy the type statically.",
+    "legacyOrBad": {
+      "label": "Nominal ABC Inheritance",
+      "snippet": "class Renderer(ABC): @abstractmethod def render(self): ... // ❌ Forces explicit subclassing",
+      "fullFile": {
+        "filename": "nominal_abc.py",
+        "language": "python",
+        "code": "from abc import ABC, abstractmethod\n\n# ❌ OLD: Nominal inheritance. Third-party classes from external libraries\n# cannot be passed to draw() unless they explicitly inherit from RendererABC!\nclass RendererABC(ABC):\n  @abstractmethod\n  def render(self) -> str:\n    pass\n\ndef draw(item: RendererABC):\n  print(item.render())\n\nclass ThirdPartyWidget: # Does NOT inherit from RendererABC\n  def render(self) -> str:\n    return '<div>Widget</div>'\n\n# Mypy error: Argument 1 to \"draw\" has incompatible type \"ThirdPartyWidget\"; expected \"RendererABC\""
+      }
+    },
+    "modernOrGood": {
+      "label": "Structural Protocol Typing (PEP 544)",
+      "snippet": "class Renderer(Protocol): def render(self) -> str: ... // ✅ NEW: Static duck typing",
+      "fullFile": {
+        "filename": "protocol_typing.py",
+        "language": "python",
+        "code": "from typing import Protocol\n\n# ✅ NEW: Protocol allows any class with a matching render() signature\n# to pass static type checking without explicit inheritance!\nclass Renderable(Protocol):\n  def render(self) -> str: ...\n\ndef draw(item: Renderable):\n  print(item.render())\n\nclass ThirdPartyWidget:\n  def render(self) -> str:\n    return '<div>Widget</div>'\n\n# ✅ Mypy / Pyright passes with 0 errors!\ndraw(ThirdPartyWidget())"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `from __future__ import annotations` (PEP 563) and standard annotations at runtime?",
+      "contextIntro": "Interviewers test your knowledge of annotation evaluation performance and runtime reflection.",
+      "detailedAnswer": "Normally, type annotations are evaluated as live Python expressions when the module loads (meaning `x: SomeClass` requires `SomeClass` to already be defined). With `from __future__ import annotations`, **all type annotations are stored as raw strings in `__annotations__` without being evaluated**. This prevents circular import errors and speeds up module load times, but requires runtime libraries (like Pydantic v1) to use `typing.get_type_hints()` to evaluate the strings.",
+      "trapWarning": "If using stringified annotations, accessing `obj.__annotations__['x']` directly returns the string `'SomeClass'` instead of the class object; always use `typing.get_type_hints()`."
+    },
+    {
+      "question": "How does `typing.runtime_checkable` work with `Protocol`?",
+      "contextIntro": "Checks knowledge of runtime `isinstance()` checks on structural protocols.",
+      "detailedAnswer": "By default, Protocols are strictly static (for Mypy/Pyright) and calling `isinstance(obj, MyProtocol)` will raise a `TypeError`. Decorating the protocol with **`@runtime_checkable`** allows `isinstance()` and `issubclass()` to inspect whether the object has the required method/attribute names at runtime.",
+      "trapWarning": "`@runtime_checkable` only checks method *existence*, not method *type signatures* or return types at runtime."
+    }
+  ]
+}

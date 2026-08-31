@@ -1,0 +1,58 @@
+{
+  "id": "decorators-functools-wraps",
+  "title": "Decorators: Closure Binding, Parameterized Wrappers, and functools.wraps",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "decorators", "functools", "wraps", "closures", "metaprogramming"],
+  "prerequisites": ["Python First-Class Functions and Closures", "Scope resolution (`*args`, `**kwargs`)"],
+  "progressiveExplaining": {
+    "eli5": "A decorator is like wrapping a gift in special paper. Before opening the gift (calling the function), the wrapping paper can check your name, ring a bell, or time how fast you open it. `functools.wraps` makes sure the label on the gift still shows your real name instead of the wrapping paper company's name.",
+    "junior": "A decorator is a function that takes another function as an argument and returns an augmented function: `@my_decorator def hello(): ...` is syntactic sugar for `hello = my_decorator(hello)`. Parameterized decorators require an extra outer function layer: `@repeat(num=3)`. Always use `@functools.wraps(fn)` on your wrapper function to preserve the original function's name (`__name__`), docstring (`__doc__`), and type annotations.",
+    "senior": "Architecturally, Decorators are compile-time syntactic transformations over callable objects. Without `@functools.wraps`, the wrapped function's introspection metadata (`__name__`, `__doc__`, `__annotations__`, `__module__`, `__qualname__`) is overwritten by the wrapper closure. `functools.wraps` copies these attributes and sets the `__wrapped__` attribute, which is essential for documentation generators (Sphinx), serialization (Pickle), and testing frameworks that inspect signatures.",
+    "underTheHood": "`@dec` syntax is evaluated at module load time during function definition (`MAKE_FUNCTION` bytecode). The returned wrapper is a closure object holding a reference to the wrapped function in its `__closure__` cell tuple. `functools.wraps` calls `functools.update_wrapper(wrapper, wrapped, assigned=WRAPPER_ASSIGNMENTS, updated=WRAPPER_UPDATES)`."
+  },
+  "rosettaStone": {
+    "python": "`@decorator` syntax with `functools.wraps(fn)`.",
+    "typescript": "TypeScript Method/Class Decorators (`@timing`).",
+    "java": "Java Annotations with Spring AOP `@Around` advice.",
+    "rust": "Rust attribute-like procedural macros (`#[trace]`)."
+  },
+  "codeComparison": {
+    "title": "Naive Decorator (Lost Metadata) vs functools.wraps Decorator",
+    "summary": "Naive decorators obliterate `__name__` and `__doc__`; `@functools.wraps` preserves metadata and the `__wrapped__` pointer.",
+    "legacyOrBad": {
+      "label": "Naive Decorator (Broken Metadata)",
+      "snippet": "def wrapper(*args, **kwargs): ... return wrapper // ❌ Overwrites __name__ with 'wrapper'",
+      "fullFile": {
+        "filename": "naive_decorator.py",
+        "language": "python",
+        "code": "# ❌ OLD: Omitting @wraps destroys function introspection.\n# Sentry, logging, and documentation tools see all functions as 'wrapper'!\ndef timer(fn):\n  def wrapper(*args, **kwargs):\n    return fn(*args, **kwargs)\n  return wrapper\n\n@timer\ndef calculate_tax(amount: float) -> float:\n  \"\"\"Calculates sales tax.\"\"\"\n  return amount * 0.2\n\nprint(calculate_tax.__name__) # ❌ Prints 'wrapper' instead of 'calculate_tax'!\nprint(calculate_tax.__doc__)  # ❌ Prints None instead of docstring!"
+      }
+    },
+    "modernOrGood": {
+      "label": "Production Decorator with @functools.wraps",
+      "snippet": "@functools.wraps(fn)\ndef wrapper(*args, **kwargs): ... // ✅ NEW: Preserves name, docstring & signature",
+      "fullFile": {
+        "filename": "clean_decorator.py",
+        "language": "python",
+        "code": "import functools\nimport time\n\n# ✅ NEW: Parameterized decorator preserving all metadata and __wrapped__ reference\ndef log_execution(prefix: str = 'LOG'):\n  def decorator(fn):\n    @functools.wraps(fn) # ✅ Preserves __name__, __doc__, __annotations__\n    def wrapper(*args, **kwargs):\n      start = time.perf_counter()\n      result = fn(*args, **kwargs)\n      print(f'[{prefix}] {fn.__name__} took {time.perf_counter() - start:.4f}s')\n      return result\n    return wrapper\n  return decorator\n\n@log_execution(prefix='METRICS')\ndef calculate_tax(amount: float) -> float:\n  \"\"\"Calculates sales tax.\"\"\"\n  return amount * 0.2\n\nprint(calculate_tax.__name__) # ✅ 'calculate_tax'\nprint(calculate_tax.__doc__)  # ✅ 'Calculates sales tax.'\nprint(calculate_tax.__wrapped__) # Access original unwrapped function!"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How can you access the original, un-decorated function if it was wrapped with `@functools.wraps`?",
+      "contextIntro": "Interviewers test your knowledge of `inspect` and un-wrapping hooks.",
+      "detailedAnswer": "Access the **`__wrapped__`** attribute: `original_fn = decorated_fn.__wrapped__`. `@functools.wraps` automatically attaches a reference to the original function on `__wrapped__`, allowing unit tests and dependency injectors to bypass middleware or timing wrappers during testing.",
+      "trapWarning": "If a function is decorated with multiple chained decorators, `__wrapped__` points to the immediately preceding wrapper; use `inspect.unwrap(fn)` to unwrap all chained layers completely."
+    },
+    {
+      "question": "Why does a parameterized decorator like `@repeat(num=3)` require three levels of nested functions?",
+      "contextIntro": "Checks mechanical understanding of decorator syntax evaluation.",
+      "detailedAnswer": "Because `@repeat(num=3)` is an immediate function call. Level 1 (`repeat(num=3)`) receives the decorator arguments and returns the actual decorator. Level 2 (`decorator(fn)`) receives the function to be decorated and returns the wrapper. Level 3 (`wrapper(*args, **kwargs)`) receives the runtime arguments when the decorated function is actually called.",
+      "trapWarning": "Writing only two levels for a parameterized decorator will pass the function to the parameter argument instead of the target function."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "dependency-injection-yield-cleanup",
+  "title": "FastAPI Dependency Injection: Depends() and yield Context Cleanup",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "dependency-injection", "depends", "yield", "cleanup", "database-session"],
+  "prerequisites": ["Python Generators (`yield`)", "FastAPI route handler basics"],
+  "progressiveExplaining": {
+    "eli5": "When a customer enters a bank, a clerk gives them a temporary security keycard. The customer does their business, and the moment they step out the exit door, the clerk takes the keycard back and shreds it. In FastAPI, `Depends()` with `yield` hands your function a database connection and guarantees it closes the connection when the request finishes, even if the request crashed with an error.",
+    "junior": "FastAPI uses `Depends()` to inject shared dependencies into route handlers: `def get_db(): db = Session(); try: yield db; finally: db.close()`. In your endpoint: `@app.get('/users') def list_users(db: Session = Depends(get_db)): ...`. The code before `yield` runs before the route handler, and the code after `yield` (or inside `finally`) is guaranteed to run after the response is sent, ensuring safe resource cleanup.",
+    "senior": "Architecturally, FastAPI resolves dependencies as a directed acyclic graph (DAG) per request. Sub-dependencies are memoized by default within a single request context (`use_cache=True`), ensuring that if three services depend on `get_db()`, only one database session is opened. Dependencies with `yield` are wrapped inside asynchronous context managers (`contextlib.asynccontextmanager`). If an unhandled exception occurs inside a route handler, FastAPI propagates the error into the generator (`generator.throw()`), ensuring `finally` blocks execute before error response serialization.",
+    "underTheHood": "In `fastapi.dependencies.utils`, `solve_dependencies` recursively walks the dependency tree. For `yield` dependencies, FastAPI wraps execution in an `AsyncExitStack`. It calls `next()` to retrieve the yielded value, passes it to the endpoint handler, and registers the remaining generator continuation on the `exit_stack`. After the response is dispatched by Starlette, the exit stack unwinds and flushes all generator teardowns."
+  },
+  "rosettaStone": {
+    "fastapi": "`db: Session = Depends(get_db)` with `yield db` in generator.",
+    "nestjs": "NestJS Request-scoped provider with `OnModuleDestroy` or `custom providers`.",
+    "spring": "Spring `@Transactional` / `PersistenceContext` session management.",
+    "express": "Express middleware attaching `req.db` and listening to `res.on('finish')`."
+  },
+  "codeComparison": {
+    "title": "Manual Try/Finally DB Connection vs FastAPI yield Dependency",
+    "summary": "Manual session management in every route leaks connections on unhandled errors; `Depends()` with `yield` guarantees clean teardown.",
+    "legacyOrBad": {
+      "label": "Manual Session Management",
+      "snippet": "db = Session(); try: ... finally: db.close(); // ❌ Boilerplate in every route handler",
+      "fullFile": {
+        "filename": "routes_manual.py",
+        "language": "python",
+        "code": "# ❌ OLD: Every route must manually manage session creation, commits, and teardown.\n# Forgetting a finally block leaks database connections in the connection pool.\nfrom fastapi import FastAPI, HTTPException\nfrom db import SessionLocal\n\napp = FastAPI()\n\n@app.get('/items/{item_id}')\ndef read_item(item_id: int):\n  db = SessionLocal()\n  try:\n    item = db.query(Item).filter(Item.id == item_id).first()\n    if not item:\n      raise HTTPException(status_code=404, detail='Item not found')\n    return item\n  finally:\n    db.close() # ❌ Repeated boilerplate everywhere"
+      }
+    },
+    "modernOrGood": {
+      "label": "FastAPI Depends() with yield",
+      "snippet": "def get_db(): db = SessionLocal(); try: yield db; finally: db.close(); // ✅ NEW: Auto-cleanup",
+      "fullFile": {
+        "filename": "routes_clean.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, Depends, HTTPException\nfrom sqlalchemy.orm import Session\nfrom db import SessionLocal\n\napp = FastAPI()\n\n# ✅ NEW: Reusable dependency with guaranteed context cleanup\ndef get_db():\n  db = SessionLocal()\n  try:\n    yield db\n  finally:\n    db.close()\n\n@app.get('/items/{item_id}')\ndef read_item(item_id: int, db: Session = Depends(get_db)):\n  # ✅ Clean business logic: db is injected and automatically closed after response!\n  item = db.query(Item).filter(Item.id == item_id).first()\n  if not item:\n    raise HTTPException(status_code=404, detail='Item not found')\n  return item"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the purpose of `use_cache=True` (the default) in FastAPI's `Depends()`?",
+      "contextIntro": "Interviewers test your knowledge of dependency memoization within a single request lifecycle.",
+      "detailedAnswer": "`use_cache=True` ensures that if a dependency function (e.g. `get_current_user` or `get_db`) is referenced multiple times across sub-dependencies within the same request, **FastAPI executes the dependency function only once** and caches its result for the duration of that specific request. If you need a dependency to execute a fresh calculation every time it is injected, set `Depends(my_func, use_cache=False)`.",
+      "trapWarning": "The cache is request-scoped; it never persists or leaks data across different HTTP requests."
+    },
+    {
+      "question": "What happens if an exception is raised inside a route handler when using a `yield` dependency?",
+      "contextIntro": "Checks understanding of error propagation in generator dependencies.",
+      "detailedAnswer": "FastAPI propagates the exception into the generator using `generator.throw(exception)`. If you have a `try...finally:` block around your `yield`, the `finally:` block is **guaranteed to execute**, ensuring database sessions close or transactions roll back even when an HTTP 500 error occurs.",
+      "trapWarning": "If you catch the exception inside the dependency (`except Exception:`) and do not re-raise it, you will accidentally swallow the route handler's exception."
+    }
+  ]
+}

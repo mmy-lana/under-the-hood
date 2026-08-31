@@ -1,0 +1,58 @@
+{
+  "id": "starlette-routing-and-middleware-stack",
+  "title": "Starlette Middleware Stack: ASGI Request Pipeline and Exception Handlers",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (Starlette / ASGI 3.0)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "starlette", "asgi", "middleware", "routing", "pipeline"],
+  "prerequisites": ["ASGI specification (`scope`, `receive`, `send`)", "FastAPI architecture"],
+  "progressiveExplaining": {
+    "eli5": "FastAPI is the friendly customer service desk at the front of a store, but Starlette is the actual building and hallway security system underneath. When an HTTP request walks in the door, Starlette passes it through concentric rings of security guards (middleware) before it ever reaches FastAPI's desk.",
+    "junior": "FastAPI is built directly on top of **Starlette**. Starlette handles the low-level ASGI request/response pipeline, HTTP routing, WebSockets, static file serving, and middleware. You add middleware using `@app.middleware('http')`: `async def add_process_time_header(request: Request, call_next): response = await call_next(request); return response`. Middleware executes in an onion-like stack (First-In, Last-Out).",
+    "senior": "Architecturally, FastAPI inherits Starlette's ASGI 3.0 interface (`async def app(scope, receive, send)`). Middleware in Starlette is structured as a stack of nested ASGI applications: each middleware wraps the inner application. Pure ASGI middleware (`BaseHTTPMiddleware` vs raw ASGI classes) intercept raw `scope` dictionaries before routing occurs. Exception handling in Starlette uses `ServerErrorMiddleware` and `ExceptionMiddleware` to map unhandled exceptions into HTTP responses before headers are committed.",
+    "underTheHood": "When Uvicorn dispatches an ASGI connection, it calls the outermost middleware app. The request flows down through `ServerErrorMiddleware` -> custom middleware -> `ExceptionMiddleware` -> `Router.app`. `Router` matches `scope['path']` against compiled regex routes, binds path parameters into `scope['path_params']`, and invokes the matched FastAPI endpoint handler."
+  },
+  "rosettaStone": {
+    "fastapi": "Starlette ASGI middleware `async def (request, call_next)`.",
+    "express": "Express middleware `(req, res, next)`.",
+    "nestjs": "NestJS Middleware / Interceptor pipeline.",
+    "spring": "Spring Security `FilterChain` and `OncePerRequestFilter`."
+  },
+  "codeComparison": {
+    "title": "Raw WSGI Interception vs Starlette ASGI Async Middleware",
+    "summary": "WSGI middleware blocked synchronous threads; Starlette ASGI middleware runs non-blocking asynchronous request/response pipelines.",
+    "legacyOrBad": {
+      "label": "Legacy WSGI Middleware (Flask)",
+      "snippet": "def __call__(self, environ, start_response): ... // ❌ Synchronous WSGI blocking",
+      "fullFile": {
+        "filename": "wsgi_middleware.py",
+        "language": "python",
+        "code": "# ❌ OLD: Synchronous WSGI middleware blocks worker threads\n# and cannot natively support WebSockets or async chunked streaming.\nclass TimingWSGIMiddleware:\n  def __init__(self, app):\n    self.app = app\n\n  def __call__(self, environ, start_response):\n    # Synchronous blocking interception:\n    return self.app(environ, start_response)"
+      }
+    },
+    "modernOrGood": {
+      "label": "Starlette Async ASGI Middleware",
+      "snippet": "@app.middleware('http') async def add_timing(req, call_next): ... // ✅ NEW: Non-blocking async",
+      "fullFile": {
+        "filename": "asgi_middleware.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, Request\nimport time\n\napp = FastAPI()\n\n# ✅ NEW: Non-blocking asynchronous Starlette middleware\n@app.middleware('http')\nasync def add_process_time_header(request: Request, call_next):\n  start_time = time.perf_counter()\n  \n  # Pass down the ASGI pipeline:\n  response = await call_next(request)\n  \n  process_time = time.perf_counter() - start_time\n  response.headers['X-Process-Time'] = f'{process_time:.4f}s'\n  return response"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the known performance drawback of Starlette's `BaseHTTPMiddleware` in high-throughput streaming applications?",
+      "contextIntro": "Interviewers test your knowledge of ASGI stream buffering gotchas.",
+      "detailedAnswer": "`BaseHTTPMiddleware` (which powers `@app.middleware('http')`) abstracts request/response streams by buffering and wrapping them in an internal task group. In high-concurrency or large streaming response workloads, this introduces memory overhead and context switching. For extreme performance or SSE/WebSocket streaming, write a **pure ASGI middleware class** implementing `async def __call__(self, scope, receive, send)` directly.",
+      "trapWarning": "`BaseHTTPMiddleware` can break background tasks or streaming responses if not carefully handled."
+    },
+    {
+      "question": "In what order does middleware execute when multiple `@app.middleware('http')` or `app.add_middleware()` calls are added?",
+      "contextIntro": "Checks precision regarding the onion-architecture middleware execution order.",
+      "detailedAnswer": "Middleware executes like an **onion**: the **last added middleware runs FIRST on the incoming request**, and runs **LAST on the outgoing response**. If you add Middleware A and then Middleware B (`app.add_middleware(A); app.add_middleware(B)`), the execution flow is: `Request -> B -> A -> Endpoint -> A -> B -> Response`.",
+      "trapWarning": "Placing authentication middleware before CORS middleware will cause preflight `OPTIONS` requests to fail with 401 Unauthorized."
+    }
+  ]
+}

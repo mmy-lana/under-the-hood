@@ -1,0 +1,58 @@
+{
+  "id": "bytecode-compilation-dis-module",
+  "title": "CPython Bytecode: .pyc Files, dis Disassembly, and the Eval Frame Loop",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "cpython", "bytecode", "dis-module", "pyc", "interpreter", "eval-frame"],
+  "prerequisites": ["Python Syntax and AST", "Stack-based Virtual Machines"],
+  "progressiveExplaining": {
+    "eli5": "Python doesn't run your human text directly. First, it compiles your words into compact, machine-readable byte instructions (like `LOAD_FAST` and `BINARY_OP`) saved in `.pyc` cache files. Then, an ultra-fast loop (the evaluation frame) reads those instructions one by one like a player piano reading holes in a music roll.",
+    "junior": "When Python imports a module, it compiles the source text into **Bytecode** and saves it in the `__pycache__/*.pyc` directory. You can inspect compiled bytecode instructions using the standard library `dis` module: `import dis; dis.dis(my_func)`. Common opcodes include `LOAD_FAST` (load local variable), `LOAD_GLOBAL`, `STORE_FAST`, `CALL`, and `RETURN_VALUE`. CPython executes bytecode using an internal stack-based virtual machine.",
+    "senior": "Architecturally, CPython is a **Stack-Based Virtual Machine**. Bytecode operates on an evaluation stack within a `PyFrameObject`. In modern Python (3.11+ / 3.12+), CPython introduced the **Specializing Adaptive Interpreter (PEP 659)**: inline bytecode instructions monitor runtime types and dynamically specialize hot opcodes into specialized fast variants (e.g. `BINARY_OP` specializes into `BINARY_OP_ADD_INT` or `BINARY_OP_ADD_FLOAT`), bypassing generic type dispatch.",
+    "underTheHood": "The core interpreter execution loop is located in `Python/ceval.c` inside `_PyEval_EvalFrameDefault`. It consists of a giant `switch(opcode)` dispatch table (or computed gotos). Operands are pushed and popped from the frame's value stack (`f_valuestack`). `.pyc` files contain a magic header (CPython version hash + timestamp) followed by the serialized `PyCodeObject` marshaled via `marshal.dumps()`."
+  },
+  "rosettaStone": {
+    "python": "CPython bytecode disassembler (`dis.dis()`) on stack-based VM.",
+    "java": "Java Virtual Machine (JVM) bytecode inspected via `javap -c`.",
+    "node": "V8 Ignition bytecode inspected via `node --print-bytecode`.",
+    "lua": "Lua virtual machine register-based bytecode."
+  },
+  "codeComparison": {
+    "title": "Python Source Code vs Compiled Bytecode Disassembly",
+    "summary": "Simple arithmetic compiles into stack-based bytecode instructions; `dis` reveals opcode specialization and local variable fastpaths.",
+    "legacyOrBad": {
+      "label": "High-Level Python Function",
+      "snippet": "def add(a, b): return a + b",
+      "fullFile": {
+        "filename": "math_source.py",
+        "language": "python",
+        "code": "# High-level Python function\ndef add(a: int, b: int) -> int:\n  return a + b\n\n# How does CPython actually execute this?\nimport dis\ndis.dis(add)"
+      }
+    },
+    "modernOrGood": {
+      "label": "Compiled Bytecode Disassembly (dis output)",
+      "snippet": "LOAD_FAST 0 (a) -> LOAD_FAST 1 (b) -> BINARY_OP 0 (+) -> RETURN_VALUE",
+      "fullFile": {
+        "filename": "bytecode_output.txt",
+        "language": "text",
+        "code": "  1           0 RESUME                   0\n\n  2           2 LOAD_FAST                0 (a)  # Push local 'a' onto evaluation stack\n              4 LOAD_FAST                1 (b)  # Push local 'b' onto evaluation stack\n              6 BINARY_OP                0 (+)  # Pop a and b, compute sum, push result\n             10 RETURN_VALUE                    # Return top of evaluation stack"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is accessing a local variable (`LOAD_FAST`) significantly faster than accessing a global variable (`LOAD_GLOBAL`) in Python bytecode?",
+      "contextIntro": "Interviewers test your knowledge of CPython's stack frame optimization.",
+      "detailedAnswer": "`LOAD_FAST` reads directly from a fixed-size C array pointer (`co_fastlocal`) inside the `PyFrameObject` using an integer index `O(1)` with zero hashing. `LOAD_GLOBAL` must perform a hash lookup on the module's `__dict__` dictionary, and if not found, perform a second hash lookup on the `builtins.__dict__` dictionary `O(2 * dict_lookup)`. This is why caching globals as local variables in hot loops is a classic optimization.",
+      "trapWarning": "In Python 3.11+, `LOAD_GLOBAL` uses inline caching to speed up repeated lookups, but `LOAD_FAST` is still strictly faster."
+    },
+    {
+      "question": "What is the Specializing Adaptive Interpreter (PEP 659) in Python 3.11+?",
+      "contextIntro": "Checks knowledge of modern Faster CPython JIT and interpreter optimizations.",
+      "detailedAnswer": "PEP 659 introduces **inline caching and opcode specialization**. When a generic instruction (like `BINARY_OP` or `LOAD_ATTR`) executes repeatedly with the same operand types (e.g. adding two integers), CPython replaces the generic opcode in memory with a specialized opcode (`BINARY_OP_ADD_INT`) that executes optimized C arithmetic directly, skipping generic `PyObject` type checking.",
+      "trapWarning": "If the types at that call site change later (de-optimization), CPython replaces the specialized opcode back with the generic adaptive opcode."
+    }
+  ]
+}

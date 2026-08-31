@@ -1,0 +1,58 @@
+{
+  "id": "descriptors-property-slot",
+  "title": "Descriptors: __get__, __set__, @property, and __slots__ Memory Savings",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "descriptors", "property", "slots", "memory-optimization", "attribute-lookup"],
+  "prerequisites": ["Python Classes and Attributes", "Python Data Model"],
+  "progressiveExplaining": {
+    "eli5": "By default, every Python object carries a heavy backpack (a dictionary `__dict__`) to hold its variables, which wastes tons of memory if you have 1,000,000 objects. `__slots__` throws away the heavy backpack and assigns a fixed, compact array of slots. Descriptors (and `@property`) are the smart valves controlling what can be put into those slots.",
+    "junior": "A Descriptor is an object attribute with binding behavior, defined by implementing `__get__`, `__set__`, or `__delete__`. `@property` is the most common built-in descriptor. Adding `__slots__ = ('x', 'y')` to a class tells Python not to create an instance `__dict__` or `__weakref__`, storing attributes in a compact C-level array and reducing per-instance memory consumption by 60-70%.",
+    "senior": "Architecturally, Descriptors are the core engine of Python's object model: methods, `@classmethod`, `@staticmethod`, and ORM fields are all descriptors. When `obj.attr` evaluates, `__getattribute__` checks: (1) Data Descriptors on the class, (2) Instance `__dict__`, (3) Non-Data Descriptors on the class, (4) Class attributes, (5) `__getattr__`. Using `__slots__` eliminates the instance `__dict__`, preventing dynamic attribute addition and speeding up attribute access.",
+    "underTheHood": "`__slots__` creates descriptor objects (`PyMemberDescrObject`) stored in the class `tp_members` table. Each slot represents a fixed memory offset inside the `PyObject` structure. Without `__slots__`, every instance allocates a ~100-byte `PyDictObject` plus hash tables; with `__slots__`, attributes are stored as contiguous pointers directly inside the allocated struct."
+  },
+  "rosettaStone": {
+    "python": "`__slots__ = ('name', 'age')` and Descriptor protocol (`__get__`/`__set__`).",
+    "csharp": "C# Auto-properties with backing fields (`public string Name { get; set; }`).",
+    "rust": "Rust struct fields with contiguous memory layout (zero dictionary overhead).",
+    "cpp": "C++ class member memory offsets."
+  },
+  "codeComparison": {
+    "title": "Memory-Heavy Instance __dict__ vs Compact __slots__",
+    "summary": "1,000,000 standard instances consume hundreds of megabytes of `__dict__` memory; `__slots__` cuts RAM usage by ~70%.",
+    "legacyOrBad": {
+      "label": "Standard Class with __dict__",
+      "snippet": "class Point: def __init__(self, x, y): self.x = x; self.y = y // ❌ 150 bytes per instance",
+      "fullFile": {
+        "filename": "point_dict.py",
+        "language": "python",
+        "code": "import sys\n\n# ❌ OLD: Standard class allocates a dynamic __dict__ for every single instance.\nclass PointDict:\n  def __init__(self, x, y):\n    self.x = x\n    self.y = y\n\n# 1,000,000 instances will consume ~150MB of RAM:\np = PointDict(1, 2)\nprint('Instance size + dict:', sys.getsizeof(p) + sys.getsizeof(p.__dict__)) # ~152 bytes"
+      }
+    },
+    "modernOrGood": {
+      "label": "Memory-Optimized __slots__",
+      "snippet": "__slots__ = ('x', 'y') // ✅ NEW: Eliminates __dict__, saves 70% RAM",
+      "fullFile": {
+        "filename": "point_slots.py",
+        "language": "python",
+        "code": "import sys\n\n# ✅ NEW: __slots__ eliminates __dict__, allocating fixed C-level struct offsets.\nclass PointSlots:\n  __slots__ = ('x', 'y') # Allocated as fixed memory pointers\n\n  def __init__(self, x, y):\n    self.x = x\n    self.y = y\n\n# 1,000,000 instances consume only ~48MB of RAM (70% savings!):\np = PointSlots(1, 2)\nprint('Instance size (0 dict):', sys.getsizeof(p)) # ~48 bytes\n# hasattr(p, '__dict__') is False!"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if a subclass inherits from a parent class with `__slots__`, but does not declare `__slots__` itself?",
+      "contextIntro": "Interviewers test your knowledge of inheritance rules with `__slots__`.",
+      "detailedAnswer": "If a subclass does not define its own `__slots__`, **it will create an instance `__dict__` anyway**, completely defeating the memory optimization for instances of the subclass. To preserve memory savings down an inheritance chain, **every subclass must explicitly declare `__slots__ = ()`** (or specify its additional slot attributes).",
+      "trapWarning": "Inheriting from a class with `__slots__` without declaring `__slots__` in the child silently restores `__dict__` allocation."
+    },
+    {
+      "question": "Why does a Data Descriptor override an instance attribute with the same name in `__dict__`?",
+      "contextIntro": "Checks mastery of Python's exact attribute lookup resolution order.",
+      "detailedAnswer": "Because of Python's strict attribute resolution priority implemented in `object.__getattribute__`. Data Descriptors define both `__get__` and `__set__`. Python checks Data Descriptors on the class *first* before checking the instance `__dict__`. This guarantees that properties with setters (`@property`) cannot be accidentally shadowed or bypassed by directly setting `obj.__dict__['prop'] = val`.",
+      "trapWarning": "Non-data descriptors (methods without setters) are checked *after* `__dict__`, which is why monkey-patching an instance method `obj.method = custom_fn` successfully overrides the class method."
+    }
+  ]
+}

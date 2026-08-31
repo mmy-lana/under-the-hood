@@ -1,0 +1,58 @@
+{
+  "id": "multiprocessing-vs-threading-ipc",
+  "title": "multiprocessing (Fork vs Spawn) vs threading vs concurrent.futures",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "multiprocessing", "threading", "concurrent-futures", "ipc", "fork-vs-spawn"],
+  "prerequisites": ["CPython Global Interpreter Lock (GIL)", "OS Processes vs Threads"],
+  "progressiveExplaining": {
+    "eli5": "Threading in Python is like having 4 chefs sharing one single pair of oven mitts (the GIL)—only one chef can touch the stove at a time, making it bad for heavy math. Multiprocessing is like renting 4 completely separate kitchens with their own stoves. They work in parallel, but sending a dish between kitchens requires packing it in a delivery box (pickling/IPC).",
+    "junior": "`threading` is suited for I/O-bound tasks (network, disk) where threads release the GIL during syscalls. `multiprocessing` bypasses the GIL entirely by spawning separate OS processes, enabling true multi-core CPU parallelism. `concurrent.futures.ProcessPoolExecutor` and `ThreadPoolExecutor` provide a unified `Future` interface. When creating processes, Python supports `'spawn'` (safe, default on macOS/Windows and Python 3.14+) and `'fork'` (fast on Linux, but causes deadlocks with threads).",
+    "senior": "Architecturally, `multiprocessing` trades shared-memory efficiency for multi-core parallelism. Communication between processes relies on IPC channels (Pipes, Unix domain sockets, SharedMemory) and serializes data via `pickle`. The start method is critical: `fork` copies the parent process's memory space immediately via OS Copy-on-Write, but copies mutex locks in locked states (leading to deadlocks if the parent had background threads). `spawn` boots a fresh Python interpreter process from scratch, safely importing modules and passing state via IPC.",
+    "underTheHood": "In `multiprocessing.Process.start()`, if using `fork`, CPython calls POSIX `fork(2)`. In `spawn`, it executes `subprocess` launching `python -c ... --multiprocessing-fork`, sets up duplex IPC pipes, and passes serialized parent state. Data passed via `Queue` or `Pipe` is serialized with `pickle.dumps()` and written across pipe file descriptors using `os.write()`."
+  },
+  "rosettaStone": {
+    "python": "`ProcessPoolExecutor` (multi-process) vs `ThreadPoolExecutor` (multi-thread).",
+    "node": "`worker_threads` (isolated V8 isolates) vs `child_process.fork()`.",
+    "go": "Goroutines multiplexed over OS threads across multiple CPU cores without GIL.",
+    "rust": "`std::thread` and Rayon data-parallel worker pools."
+  },
+  "codeComparison": {
+    "title": "GIL-Constrained Threading vs Multi-Core ProcessPoolExecutor",
+    "summary": "Threads cannot parallelize pure Python CPU loops under the GIL; `ProcessPoolExecutor` utilizes all CPU cores.",
+    "legacyOrBad": {
+      "label": "GIL-Blocked ThreadPool",
+      "snippet": "with ThreadPoolExecutor() as pool: pool.map(heavy_cpu, data) # ❌ 0% speedup on CPU work",
+      "fullFile": {
+        "filename": "thread_cpu.py",
+        "language": "python",
+        "code": "# ❌ OLD: ThreadPoolExecutor does NOT speed up CPU-bound operations in standard CPython\n# because the Global Interpreter Lock (GIL) serializes bytecode execution on 1 core.\nfrom concurrent.futures import ThreadPoolExecutor\nimport time\n\ndef heavy_cpu(n):\n  return sum(i * i for i in range(n))\n\nif __name__ == '__main__':\n  start = time.perf_counter()\n  with ThreadPoolExecutor(max_workers=4) as executor:\n    results = list(executor.map(heavy_cpu, [20_000_000] * 4))\n  print(f'Thread time: {time.perf_counter() - start:.2f}s') # No speedup compared to serial"
+      }
+    },
+    "modernOrGood": {
+      "label": "True Parallel ProcessPoolExecutor",
+      "snippet": "with ProcessPoolExecutor() as pool: pool.map(heavy_cpu, data) # ✅ NEW: Scales across all cores",
+      "fullFile": {
+        "filename": "process_cpu.py",
+        "language": "python",
+        "code": "# ✅ NEW: ProcessPoolExecutor spawns separate OS processes with independent GILs,\n# running CPU-bound calculations in parallel across all available CPU cores.\nfrom concurrent.futures import ProcessPoolExecutor\nimport time\nimport multiprocessing\n\ndef heavy_cpu(n):\n  return sum(i * i for i in range(n))\n\nif __name__ == '__main__':\n  # Set safe spawn method:\n  multiprocessing.set_start_method('spawn', force=True)\n  \n  start = time.perf_counter()\n  with ProcessPoolExecutor(max_workers=4) as executor:\n    results = list(executor.map(heavy_cpu, [20_000_000] * 4))\n  print(f'Process time: {time.perf_counter() - start:.2f}s') # 4x faster on 4 cores"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is the `fork` start method dangerous in multi-threaded Python applications, and why is `spawn` now the default?",
+      "contextIntro": "Interviewers test your deep understanding of POSIX process cloning and deadlocks.",
+      "detailedAnswer": "When a process calls `fork()`, POSIX duplicates only the calling thread into the child process; all other threads vanish. If any background thread in the parent (e.g. an internal logging thread, database pool, or C-extension lock) was holding a mutex lock at the moment of `fork()`, that lock remains permanently **locked** in the child process with no surviving thread to release it. Any child code attempting to acquire that lock will **deadlock forever**. `spawn` boots a clean new interpreter, avoiding lock inheritance.",
+      "trapWarning": "Never use `multiprocessing.set_start_method('fork')` in applications using multi-threaded libraries or gRPC."
+    },
+    {
+      "question": "Why can passing large objects (e.g. 5GB DataFrames) to a `multiprocessing.Queue` be slower than sequential execution?",
+      "contextIntro": "Checks knowledge of IPC serialization and pickling overhead.",
+      "detailedAnswer": "`multiprocessing` communicates over pipes using `pickle`. Serializing a 5GB object into bytes (`pickle.dumps`), copying it across an OS pipe socket, and deserializing it (`pickle.loads`) in the child process creates massive CPU memory copying overhead. For large datasets, use **`multiprocessing.shared_memory.SharedMemory`** or memory-mapped files (`mmap`) for zero-copy access.",
+      "trapWarning": "Large data passed as arguments to `multiprocessing` workers will spike memory and serialization latency."
+    }
+  ]
+}

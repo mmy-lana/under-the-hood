@@ -1,0 +1,58 @@
+{
+  "id": "asyncio-tasks-and-taskgroups",
+  "title": "Asyncio TaskGroup, ExceptionGroups, and Cooperative Cancel Scopes",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.11+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "asyncio", "taskgroup", "structured-concurrency", "exceptiongroup", "cancellation"],
+  "prerequisites": ["Python async/await coroutines", "Asyncio event loop basics"],
+  "progressiveExplaining": {
+    "eli5": "In older Python, launching multiple async tasks was like sending three kids to the store without a supervisor: if one got lost or failed, the other two kept wandering forever (orphaned tasks). `asyncio.TaskGroup` is a strict parent: it launches all tasks together, and if even one task trips and throws an error, it immediately calls all other tasks back home before reporting the combined errors.",
+    "junior": "`asyncio.TaskGroup` (introduced in Python 3.11) brings **Structured Concurrency** to Python, replacing `asyncio.gather()` and raw `asyncio.create_task()`. Using `async with asyncio.TaskGroup() as tg:`, you spawn tasks with `tg.create_task(coro())`. If any child task raises an exception, the TaskGroup automatically cancels all remaining running sibling tasks and groups all errors into an `ExceptionGroup` (handled using `except*`).",
+    "senior": "Architecturally, `TaskGroup` guarantees that no child task can outlive the lexical scope of its `async with` block. Traditional `asyncio.gather(*tasks, return_exceptions=False)` leaves sibling tasks executing in the background when one fails, causing task leaks and orphaned database connections. `TaskGroup` coordinates cancellation via cooperative `asyncio.CancelledError` propagation, awaiting all cancelled children before exiting the context manager.",
+    "underTheHood": "`TaskGroup` maintains a set of active `Task` objects. When a child task raises an unhandled exception, `TaskGroup` invokes `t.cancel()` on all sibling tasks in its set. It pauses in `__aexit__` using an internal `Future` until all tasks settle. It collects all uncaught exceptions (including cancellation errors) and raises a combined `ExceptionGroup` containing the composite error tree."
+  },
+  "rosettaStone": {
+    "python": "`async with asyncio.TaskGroup() as tg: tg.create_task(...)` with `except*`.",
+    "java": "Java 21 Project Loom `StructuredTaskScope.ShutdownOnFailure()`.",
+    "rust": "Tokio `JoinSet` or `futures::future::try_join_all`.",
+    "node": "`Promise.all()` (without automatic sibling cancellation)."
+  },
+  "codeComparison": {
+    "title": "asyncio.gather Orphan Leaks vs Structured asyncio.TaskGroup",
+    "summary": "`asyncio.gather` leaves sibling tasks running when one fails; `TaskGroup` cleanly cancels siblings and aggregates exceptions.",
+    "legacyOrBad": {
+      "label": "asyncio.gather (Orphaned Task Leak)",
+      "snippet": "await asyncio.gather(fetch_a(), fetch_b()); // ❌ If B fails, A continues running orphaned in background",
+      "fullFile": {
+        "filename": "gather_leak.py",
+        "language": "python",
+        "code": "import asyncio\n\nasync def slow_worker():\n  try:\n    await asyncio.sleep(10)\n    print('Slow worker completed (Orphaned!)')\n  except asyncio.CancelledError:\n    print('Cancelled')\n\nasync def failing_worker():\n  await asyncio.sleep(0.1)\n  raise ValueError('Worker failed!')\n\nasync def main():\n  # ❌ OLD: When failing_worker raises, gather() immediately raises ValueError,\n  # but slow_worker continues running in the background indefinitely!\n  await asyncio.gather(slow_worker(), failing_worker())\n\nasyncio.run(main())"
+      }
+    },
+    "modernOrGood": {
+      "label": "Structured asyncio.TaskGroup",
+      "snippet": "async with asyncio.TaskGroup() as tg: tg.create_task(a()); tg.create_task(b()); // ✅ NEW: Auto-cancels siblings",
+      "fullFile": {
+        "filename": "taskgroup_clean.py",
+        "language": "python",
+        "code": "import asyncio\n\nasync def slow_worker():\n  try:\n    await asyncio.sleep(10)\n    print('Slow worker completed')\n  except asyncio.CancelledError:\n    print('✅ Slow worker caught CancelledError and cleaned up!')\n\nasync def failing_worker():\n  await asyncio.sleep(0.1)\n  raise ValueError('Worker failed!')\n\nasync def main():\n  # ✅ NEW: TaskGroup automatically cancels slow_worker when failing_worker raises\n  try:\n    async with asyncio.TaskGroup() as tg:\n      tg.create_task(slow_worker())\n      tg.create_task(failing_worker())\n  except* ValueError as eg:\n    print(f'Caught grouped error: {eg.exceptions}')\n\nasyncio.run(main())"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does `except*` (PEP 654) differ from standard `except` when handling `ExceptionGroup`s?",
+      "contextIntro": "Interviewers test your knowledge of Python 3.11+ exception group pattern matching.",
+      "detailedAnswer": "Standard `except ValueError` cannot match inside an `ExceptionGroup` containing multiple disparate errors. **`except* ValueError as eg`** matches and extracts all matching `ValueError` exceptions from the group, allowing other handlers (e.g. `except* TypeError`) in the same `try/except*` block to simultaneously match and handle their respective errors from the same composite exception tree.",
+      "trapWarning": "You cannot mix traditional `except` and modern `except*` in the same `try` statement."
+    },
+    {
+      "question": "What happens if a child task inside a `TaskGroup` catches `asyncio.CancelledError` and refuses to terminate (swallows cancellation)?",
+      "contextIntro": "Checks knowledge of cooperative cancellation contracts in Python asyncio.",
+      "detailedAnswer": "If a task catches `asyncio.CancelledError` and continues executing without re-raising or returning, the `TaskGroup`'s `async with` block **will hang indefinitely** because `TaskGroup.__aexit__` strictly waits for every registered child task to finish before exiting.",
+      "trapWarning": "When catching `asyncio.CancelledError` for cleanup, always re-raise `raise` or return immediately after cleaning up resources."
+    }
+  ]
+}
