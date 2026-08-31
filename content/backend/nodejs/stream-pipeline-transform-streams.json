@@ -1,0 +1,68 @@
+{
+  "id": "stream-pipeline-transform-streams",
+  "title": "stream.pipeline: Promise Chaining, Backpressure, and Error Cleanup",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (stream.pipeline)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "streams",
+    "pipeline",
+    "transform-streams",
+    "backpressure",
+    "error-handling"
+  ],
+  "prerequisites": [
+    "Node.js streams basics (readable, writable, transform)",
+    "Understanding of backpressure"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A water plant has a series of pipes: a raw water intake, a filter, a heater, and a tap. The pipes are connected in a line, and water flows through at a pace set by the slowest section — if the heater is slow, the intake automatically slows down (backpressure) so nothing overflows or breaks. A supervisor (pipeline) watches the whole line: if any section bursts (errors), the supervisor shuts off ALL sections and cleans up the mess, then reports the failure. Without the supervisor, a burst in one section could leave the others still running, spraying water everywhere.",
+    "junior": "stream.pipeline connects streams and manages errors/cleanup: const { pipeline } = require('node:stream'); pipeline(readable, transform, writable, (err) => { ... }). It pipes one stream into another (or several), propagates errors from ANY stream to the callback, and destroys all streams on failure — preventing leaks. It also respects backpressure automatically (like .pipe but with proper cleanup). Use the promise version: const { pipeline } = require('node:stream/promises'); await pipeline(src, transform, dest);. Use it for file processing, HTTP streaming, and compression chains instead of chaining .pipe() manually.",
+    "senior": "Architecturally, pipeline is the correct way to compose streams because it handles the two things manual .pipe() chains get wrong: ERROR PROPAGATION and DESTRUCTION. If any stream in the chain errors, pipeline destroys every stream (calling destroy() which emits 'close'/runs cleanup) and invokes the callback with the first error. Backpressure is handled by the standard pipe machinery (each link respects the downstream's readableLength/highWaterMark). The promise version wraps the callback in a promise, rejecting on the first error. pipeline also accepts async generators and async functions as pipeline stages, and it can take a callback as the final stage. This makes multi-stage transforms (read → gunzip → parse → write) robust and leak-free.",
+    "underTheHood": "pipeline internally builds a linked chain: for each pair it calls readable.pipe(transform) and tracks the 'streams' array. It installs error handlers on EVERY stream; on the first error, it calls destroy(er) on all streams (which stops their flows, emits 'error'/'close', and releases resources). It also watches for premature close (a stream ending before its downstream) and destroys the chain. The callback fires exactly once (guarded against double-invocation). Backpressure: the pipe machinery pauses the source when the destination's buffer exceeds highWaterMark and resumes on 'drain'. The promise API wraps this with resolve on 'close'/finish and reject on error."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Manual .pipe() chain vs stream.pipeline",
+    "summary": "Manual piping leaks on errors (streams left open); pipeline destroys the whole chain and propagates the error.",
+    "legacyOrBad": {
+      "label": "Manual .pipe() chain",
+      "snippet": "readable.pipe(gunzip).pipe(parser).pipe(out); // ❌ OLD: errors not propagated",
+      "fullFile": {
+        "filename": "process.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A manual .pipe() chain. If gunzip or parser emits an error,\n// the error is NOT propagated to the rest of the chain: the writable\n// 'out' stays open, the readable may keep flowing, and the process can\n// hang or leak resources. You'd need to attach error handlers to EVERY\n// stream and manually destroy the chain — easy to miss.\nconst { createReadStream, createWriteStream } = require('node:fs');\nconst { gunzip } = require('node:zlib');\n\nconst readable = createReadStream('data.gz');\nconst out = createWriteStream('out.txt');\n\nreadable.pipe(gunzip).pipe(out); // ❌ OLD: no central error handling\n\n// If the file is corrupt, gunzip errors but out may never close.\n// Manual fix would be:\n// readable.on('error', ...); gunzip.on('error', ...); out.on('error', ...);\n// and coordinating destroy on each — error-prone boilerplate."
+      }
+    },
+    "modernOrGood": {
+      "label": "stream.pipeline with promise API",
+      "snippet": "await pipeline(createReadStream('data.gz'), gunzip(), out); // ✅ NEW",
+      "fullFile": {
+        "filename": "process.js",
+        "language": "javascript",
+        "code": "const { pipeline } = require('node:stream/promises');\nconst { createReadStream, createWriteStream } = require('node:fs');\nconst { gunzip } = require('node:zlib');\n\nasync function processFile() {\n  // ✅ NEW: one call composes the chain, respects backpressure, and on\n  // ANY stream error destroys the whole chain and rejects the promise.\n  await pipeline(\n    createReadStream('data.gz'), // ✅ NEW: source\n    gunzip(), // ✅ NEW: transform stage\n    createWriteStream('out.txt') // ✅ NEW: destination\n  );\n}\n\nprocessFile().catch((err) => {\n  console.error('processing failed:', err);\n  process.exitCode = 1;\n});\n\n// ✅ NEW: async generators as stages:\n// await pipeline(\n//   createReadStream('log.txt'),\n//   async function* (source) {\n//     for await (const chunk of source) yield chunk.toString().toUpperCase();\n//   },\n//   process.stdout\n// );\n\n// Callback form: pipeline(src, t, dest, (err) => { ... });"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does pipeline do that a chain of .pipe() calls doesn't, and why is error handling the key difference?",
+      "contextIntro": "This tests the stream-composition contract — interviewers want the destroy-on-error and single-callback semantics that make pipeline the safe default over manual piping.",
+      "detailedAnswer": "A .pipe() chain only connects the data flow and applies backpressure; it does NOT coordinate errors or cleanup. If a middle stream (e.g. a transform) emits an error, the error is not automatically forwarded to the downstream writable — the writable stays open, the source may keep pushing, and the process can hang or leak file handles/sockets. stream.pipeline installs error handlers on every stream in the chain: on the first error it calls destroy(er) on ALL streams (stopping flow, releasing resources, emitting 'close') and invokes the callback (or rejects the promise) exactly once with that error. It also handles premature stream close and unrefs/cleanup correctly. This is why pipeline is the recommended composition API: correctness under failure, which manual pipe chains lack.",
+      "trapWarning": "The naive answer is 'pipeline is just pipe with a callback'. The destroy-all-on-error semantics are the substance — manual chains leak on errors. Another trap: forgetting that pipeline destroys streams, so you can't reuse a stream in the chain after a pipeline run (destroyed streams can't be re-piped). Candidates who describe the destroy-and-cleanup contract show real understanding."
+    },
+    {
+      "question": "How does backpressure work in a pipeline, and what happens when the destination is slower than the source?",
+      "contextIntro": "This probes the flow-control mechanism — interviewers want the highWaterMark/drain pause-resume cycle and why it prevents memory blowup in long pipelines.",
+      "detailedAnswer": "Backpressure is enforced by the pipe machinery between each adjacent pair: a readable pauses when the writable's internal buffer is full (write() returns false when the buffered amount exceeds highWaterMark) and resumes when the writable emits 'drain'. In a pipeline, this propagates BACKWARD: if the final writable is slow, the preceding transform's buffer fills, so IT stops reading from the previous stream, and so on until the source pauses. This is what keeps memory bounded: data flows at the pace of the slowest stage rather than piling up in memory. pipeline preserves this by using the standard pipe flow-control between stages. Without it (e.g. manually writing without respecting the write() return value), memory grows unboundedly as the fast source outruns the slow sink.",
+      "trapWarning": "The naive answer is 'pipeline buffers everything'. It applies backpressure so memory stays bounded — data doesn't accumulate beyond the highWaterMark buffers. Another trap: assuming the promise resolves when the source ends — it resolves when the FINAL destination finishes writing (all data flushed and 'finish'/'close' emitted), so a slow sink delays resolution. Candidates who describe the drain/pause cycle and the backward propagation show real depth."
+    }
+  ]
+}

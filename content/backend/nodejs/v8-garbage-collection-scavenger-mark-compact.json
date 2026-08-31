@@ -1,0 +1,68 @@
+{
+  "id": "v8-garbage-collection-scavenger-mark-compact",
+  "title": "V8 GC: Scavenge (Semi-Space Young Gen) vs Mark-Sweep-Compact (Old Gen)",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (V8 GC, Orinoco)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "v8",
+    "garbage-collection",
+    "scavenger",
+    "mark-compact",
+    "memory"
+  ],
+  "prerequisites": [
+    "Node.js memory basics",
+    "Understanding of GC concepts (young/old generations)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A recycling center separates trash into a fast-sorting area (young generation) and a long-term storage area (old generation). Most items in the fast area are thrown away quickly — the sorter quickly copies the few keepers to a fresh fast area and discards the rest (scavenge). Items that survive several rounds are moved to long-term storage, which is cleaned much less often — but when it IS cleaned, the workers mark what's still needed and compact everything together (mark-compact). Fast cleaning happens constantly and cheaply; slow cleaning happens rarely.",
+    "junior": "V8 (the JS engine in Node.js) divides the heap into generations. The young generation uses a semi-space (from-space/to-space) collector called Scavenger: most objects die young, so it quickly copies surviving objects to the to-space and frees the from-space. Objects surviving multiple scavenges are promoted to the old generation. The old generation is collected with Mark-Sweep-Compact (when needed): mark reachable objects, sweep unreachable ones, and optionally compact to reduce fragmentation. The two generations are why Node memory usage grows in steps and why 'minor GC' (scavenge) is much cheaper than 'major GC'.",
+    "senior": "Architecturally, V8's young generation is a semi-space nursery: allocation is bump-pointer (fast), and a scavenge (minor GC) copies live objects from from-space to to-space, promotes survivors to the old generation after a threshold, and swaps the spaces. The old generation is managed by Orinoco (V8's concurrent GC): marking is incremental and concurrent (on background threads), sweeping is concurrent, and compaction is concurrent when enabled (--gc-global or the default incremental compaction). This keeps most GC work off the main thread, minimizing pauses. GC is triggered by allocation pressure (heap limits computed from --max-old-space-size) and scavenge by nursery fill.",
+    "underTheHood": "The young generation is two semi-spaces (each typically 1-8MB); allocation uses a bump pointer into from-space. On scavenge, the collector traces from roots (stack, registers, global handles) and copies live objects to to-space, updating references; survivors are aged and promoted to the old space after N scavenges (or if to-space would overflow). The old space uses a mark-bitmap and a marking worklist; marking runs concurrently with the mutator on helper threads (with write barriers recording old→young pointers via a remembered set — the 'store buffer'). Sweep frees unmarked pages; compaction moves objects to defragment. The main thread's pauses are the sum of the small mark steps, making V8's GC low-pause but with CPU overhead on helper threads."
+  },
+  "rosettaStone": {
+    "react": "N/A — V8 runtime concern.",
+    "angular": "N/A — V8 concern.",
+    "vue": "N/A — V8 concern.",
+    "svelte": "N/A — V8 concern."
+  },
+  "codeComparison": {
+    "title": "Allocation churn vs stable references",
+    "summary": "Creating short-lived objects per request triggers constant scavenges; reusing/long-lived structures reduce young-gen pressure.",
+    "legacyOrBad": {
+      "label": "Per-request allocation churn",
+      "snippet": "function handle(req) {\n  const result = { data: req.body.split(',').map(Number) }; // ❌ OLD: new objects per request",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Allocating fresh objects, arrays, and strings on every\n// request. Each request fills the young generation with garbage that\n// dies immediately — forcing constant scavenges. At high QPS the\n// minor-GC frequency rises, consuming CPU on the main thread and\n// adding latency spikes.\nfunction handle(req) {\n  // ❌ OLD: new array + new objects + string splits per request\n  const parts = req.body.split(','); // allocates a string array\n  const result = { data: parts.map(Number), ts: Date.now() };\n  return JSON.stringify(result); // another big string\n}\n\n// Every request: ~5-10 short-lived allocations. Under 10k req/s that\n// is 50-100k allocations/s the scavenger must process."
+      }
+    },
+    "modernOrGood": {
+      "label": "Reuse buffers/objects where practical",
+      "snippet": "// ✅ NEW: reuse buffers and avoid per-request temp strings where cheap",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Reduce young-gen pressure by reusing buffers and avoiding\n// needless intermediate allocations. The GC still runs, but less\n// often and with smaller nurseries to process.\nconst { Buffer } = require('node:buffer');\n\n// ✅ NEW: reuse a preallocated buffer for output instead of building\n// new strings per request (where the format allows)\nconst out = Buffer.alloc(256);\n\nfunction handle(req) {\n  // ✅ NEW: avoid split() when a simple parse suffices\n  const data = parseNumbers(req.body); // no temp string arrays\n\n  // ✅ NEW: write into the reused buffer rather than JSON.stringify\n  const len = out.write(`{\"data\":${data.join(',')}}`);\n  return out.subarray(0, len);\n}\n\n// Monitor: node --trace-gc (see 'Scavenge' vs 'Mark-Compact' events),\n// or use --trace-gc-verbose and heap snapshots to find allocation\n// hot spots. Raising --max-old-space-size reduces major-GC frequency."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between scavenge (minor GC) and mark-compact (major GC), and why is one much cheaper?",
+      "contextIntro": "This tests the generational model — interviewers want the semi-space copy vs old-gen mark/sweep/compact mechanics and the frequency/cost asymmetry that defines V8's pause profile.",
+      "detailedAnswer": "Scavenge is a minor GC on the young generation: a semi-space collector that copies the small set of surviving objects from from-space to to-space (and promotes survivors), then swaps the spaces. Because most objects die young, the survivor set is small, so scavenge is fast (a few ms or less) and frequent (happens as the nursery fills — often many times per second under allocation load). Mark-Compact is a major GC on the old generation: it marks all reachable objects from roots (tracing the whole heap), sweeps the unreachable ones, and optionally compacts (moving objects to defragment). It traverses the entire old heap, so it's much more expensive and much rarer (triggered by old-gen allocation pressure or heap-limit proximity). The asymmetry is why V8 uses a generational design: cheap frequent cleaning for short-lived garbage, expensive rare cleaning for long-lived data.",
+      "trapWarning": "The naive answer is 'GC pauses are always bad'. Minor GCs are cheap and frequent; major GCs are expensive and rare — tuning targets the major GCs. Another trap: assuming old-gen objects are never collected — they are, but only by major GC, so long-lived caches grow until a major GC reclaims them. Candidates who describe the two generations and their cost asymmetry show real V8 understanding."
+    },
+    {
+      "question": "How does V8 keep major GC pauses small given it must trace the whole heap?",
+      "contextIntro": "This probes the concurrent/incremental GC design (Orinoco) — interviewers want the mark-bitmap + background threads + write barriers that shift GC work off the main thread.",
+      "detailedAnswer": "V8's Orinoco GC is incremental and concurrent: marking runs in small increments interleaved with the mutator on the main thread, AND on dedicated helper (background) threads in parallel. The mark-bitmap records reachability; write barriers maintain a remembered set of old→young pointers (the store buffer) so the GC knows which old objects to re-scan when a young object is promoted. Sweeping is concurrent (frees pages on background threads), and compaction is also concurrent when enabled. The result: the main thread only pauses for short, bounded steps (the incremental mark slices and the roots scan), so total pause time is small even for large heaps — at the cost of extra CPU on helper threads and slightly higher total GC work. This is why Node apps with big heaps can still keep sub-50ms pauses.",
+      "trapWarning": "The naive answer is 'V8 stops the world for the whole major GC'. Modern V8 does most marking/sweeping concurrently; the pauses are the incremental slices. Another trap: thinking concurrent GC is free — it uses CPU on background threads, which can compete with your workload on multi-tenant machines. Candidates who describe the incremental marking and write barriers show real depth."
+    }
+  ]
+}

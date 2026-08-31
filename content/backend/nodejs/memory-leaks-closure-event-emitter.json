@@ -1,0 +1,68 @@
+{
+  "id": "memory-leaks-closure-event-emitter",
+  "title": "EventEmitter Listener Leaks, Unclosed Socket Handles, Memory Profiling",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (events, node --inspect)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "memory-leaks",
+    "eventemitter",
+    "listeners",
+    "heap-snapshot",
+    "profiling"
+  ],
+  "prerequisites": [
+    "Node.js EventEmitter basics",
+    "Understanding of V8 heap and garbage collection"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A club keeps a guest list for every gathering. If the club keeps ADDING guests to a list but never removes them when they leave (listeners added but never removed), the list grows forever — the club 'remembers' people who left. Similarly, if a room's door is left open (an unclosed socket or timer), the room can't be torn down. This is the leak: the club's guest list grows forever, 'remembering' things even though nothing uses them anymore. The inspector (the deep-dive tool) can list who's on the list and why they're still there.",
+    "junior": "Common Node.js memory leaks: EventEmitter listeners added but never removed (emitter.on('event', fn) without emitter.off in cleanup), global caches/arrays that grow unboundedly, closures capturing large objects that outlive their use, timers/intervals not cleared, and sockets/streams not closed. Symptoms: heap grows steadily, GC can't reclaim, process OOMs. Detect with: --max-old-space-size to cap, process.memoryUsage(), heap snapshots via node --inspect (Memory tab), and --trace-gc. Fix patterns: always remove listeners (once() or off() in finally), bound the cache, close handles, and null out references when done.",
+    "senior": "Architecturally, a leak is a retained reference from a live root (global, module scope, a long-lived object, an active handle) to memory that's no longer needed. EventEmitter stores listeners in its _events object; if the emitter outlives the listener's owner, the owner (and everything it captures) is retained — the classic leak is adding a listener inside a function that runs many times without ever removing it. Closures retain their entire captured scope (the environment), so a retained closure pins large objects. Unclosed handles (sockets, timers, file descriptors) keep the event loop alive and hold their buffers. Diagnosis: heap snapshots show retainer paths (the chain from root to the leaked object).",
+    "underTheHood": "V8's heap is traced from roots (global object, module scopes, active handles, the stack). A 'leak' in Node is usually not a GC bug — it's a root that keeps pointing at objects (a listener array, a global Map, a module-level array, an active timer/socket). EventEmitter's default max listeners is 10; exceeding it warns ('MaxListenersExceededWarning') — a signal of an accumulation. The inspector's heap profiler serializes the heap graph; the 'Retainers' view shows the reference path from the GC root to the object. Node --trace-gc shows GC frequency; steadily growing heap-after-GC indicates a leak. process.memoryUsage().heapUsed over time is the quick check."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Listener added per call vs removed with once()",
+    "summary": "Adding an EventEmitter listener in a loop without removing it accumulates closures; once() or explicit off() prevents the leak.",
+    "legacyOrBad": {
+      "label": "Listener accumulation",
+      "snippet": "function attach() {\n  emitter.on('data', (chunk) => processChunk(chunk)); // ❌ OLD: never removed",
+      "fullFile": {
+        "filename": "leak.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Each call to attach() adds a NEW listener to the shared\n// emitter, capturing the closure (including any state in its scope).\n// If attach() is called per request or per tick, the listener array\n// grows forever, and every retained listener keeps its closure (and\n// captured data) alive. The emitter (a long-lived root) pins all of\n// it — a classic, silent memory leak.\nconst emitter = new EventEmitter();\n\nfunction attach() {\n  emitter.on('data', (chunk) => {\n    processChunk(chunk); // ❌ OLD: closure retained forever\n  });\n}\n\n// Called repeatedly:\nfor (let i = 0; i < 1_000_000; i++) attach();\n// -> 1,000,000 listeners; Node warns MaxListenersExceeded after 10."
+      }
+    },
+    "modernOrGood": {
+      "label": "once() or explicit off() cleanup",
+      "snippet": "emitter.once('data', handler); // ✅ NEW: auto-removed after one fire\n// or: emitter.on('data', handler); ... emitter.off('data', handler);",
+      "fullFile": {
+        "filename": "leak.js",
+        "language": "javascript",
+        "code": "const { EventEmitter } = require('node:events');\nconst emitter = new EventEmitter();\n\nfunction processChunk(c) {}\n\n// ✅ NEW: once() removes the listener automatically after the first\n// emission — the listener can never accumulate.\nfunction attachOnce() {\n  emitter.once('data', (chunk) => processChunk(chunk)); // ✅ NEW\n}\n\n// ✅ NEW: for repeated events, keep a reference and remove it when the\n// owner is done (e.g. in a component/stream teardown):\nfunction attachManaged() {\n  const handler = (chunk) => processChunk(chunk);\n  emitter.on('data', handler);\n  // ... later, in cleanup:\n  emitter.off('data', handler); // ✅ NEW: explicit removal\n}\n\n// ✅ NEW: cap the emitter to surface regressions early:\n// emitter.setMaxListeners(100);\n// Node warns at 10 by default — treat the warning as a leak signal."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does a closure cause a memory leak, and what exactly does it retain?",
+      "contextIntro": "This tests the retention model — interviewers want the lexical-environment capture and how a retained closure pins an entire scope, not just the values used.",
+      "detailedAnswer": "A closure retains its lexical environment (the scope chain): every variable in the captured scopes that the closure could reference is kept alive as long as the closure lives, even if the closure only uses one small value. If the closure is stored in a long-lived structure (an EventEmitter listener, a global callback, a cache), it pins all captured objects — including large buffers, DOM/network state, or entire objects — for the lifetime of the holder. This is why 'I only use this one variable' doesn't prevent leaks: the compiler may keep the whole environment (or, with context allocation, the variables that escape). The leak is visible in a heap snapshot as a retainer path from a root through the closure to the large objects. The fix is to stop holding the closure (remove listeners, null references) or to minimize captured scope.",
+      "trapWarning": "The naive answer is 'closures leak only what they use'. They retain the captured environment — potentially much more. Another trap: assuming GC collects a closure whose owner is unreachable — if the owner (emitter/cache) is a root, the closure stays. Candidates who describe the retained scope and the root path show real V8/GC understanding."
+    },
+    {
+      "question": "How do you actually find and confirm a memory leak in a Node.js process?",
+      "contextIntro": "This probes the diagnostic workflow — interviewers want the heap-snapshot retainer analysis and the process-of-elimination that distinguishes leaks from normal growth.",
+      "detailedAnswer": "The workflow: (1) confirm growth — sample process.memoryUsage().heapUsed over time under steady load; a heap that grows and never comes back down after GC indicates a leak (vs a plateau = stable). (2) Find it — take heap snapshots (node --inspect, Chrome DevTools Memory tab, or the v8-profiler / heapdump packages) at two points, compare, and look for objects accumulating. (3) Analyze retainer paths — the Retainers view shows the reference chain from a GC root (module scope, global, active handle) to the leaking objects, revealing whether it's an EventEmitter listener array, a Map/Set cache, a closure, or an unclosed handle (socket/timer visible as active handles). Tools: --trace-gc to see GC behavior, --heapsnapshot-near-heap-limit for auto-snapshots, and --trace-warnings for the MaxListeners warning. The key is correlating the retained objects with the code path that created them.",
+      "trapWarning": "The naive answer is 'heap snapshots show the leak directly'. You must compare snapshots over time and interpret retainer paths — a snapshot alone just shows current allocation. Another trap: assuming GC 'fixed' the leak if heapUsed drops — a steady plateau is healthy; the leak is when the baseline keeps climbing between GCs. Candidates who describe the before/after comparison and retainer analysis show real debugging skill."
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "id": "worker-threads-sharedarraybuffer",
+  "title": "worker_threads: Isolate Separation vs MessagePort Communication",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (worker_threads)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "worker-threads",
+    "sharedarraybuffer",
+    "messageport",
+    "concurrency"
+  ],
+  "prerequisites": [
+    "Node.js event loop basics",
+    "Understanding of threads and shared memory"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A bakery has one main shop and several separate prep kitchens. Each prep kitchen has its own oven, its own pantry (its own storage), and its own staff — but they're all part of the same building (same process). Kitchens talk by sending finished goods through a dumbwaiter — messages are copied, so a cake sent is a copy, not the same cake. But they can also agree on a shared ingredient shelf that everyone can reach — the same shelf, same contents, visible to all kitchens at once.",
+    "junior": "worker_threads let you run JavaScript in parallel on separate threads: const worker = new Worker('./worker.js'); worker.postMessage(data); worker.on('message', ...). Each worker has its own V8 isolate (own JS heap, own event loop), so they run truly in parallel on multi-core machines — unlike the single main thread. Communication is via postMessage (structured clone, copying) or Transferable (ArrayBuffer/MessagePort, zero-copy by detaching). For shared memory: SharedArrayBuffer + Atomics let threads read/write the same bytes safely. Use workers for CPU-bound work (parsing, hashing, image processing) that would block the main thread.",
+    "senior": "Architecturally, each worker_thread is a separate V8 isolate with its own heap and event loop, sharing the process (and its OS resources). This gives true parallelism for CPU-bound JS — the main thread can't be parallelized, but workers can. Communication: postMessage uses structured clone (copy) by default; transferring an ArrayBuffer detaches it from the sender and hands the same backing store to the receiver (zero-copy). MessagePort is the underlying channel (workers have a parent port). SharedArrayBuffer provides shared memory with Atomics for synchronization. The trade-offs: memory overhead per isolate, and shared state requires discipline (Atomics or message passing).",
+    "underTheHood": "Each worker_thread is backed by a V8 Isolate and its own libuv loop/thread (or reuses a loop in the process for I/O). The parent creates a MessagePort pair; postMessage serializes the value (structured clone via V8 serializer, or transfers via detaching ArrayBuffer/moving MessagePort), and the receiver deserializes in its isolate. A SharedArrayBuffer is a single OS memory region mapped into both isolates' address spaces — writes are visible across threads; Atomics.* operations compile to atomic instructions (lock-prefixed on x86, LDXR/STXR on ARM) providing synchronization. The worker's lifetime is managed by the Worker object; terminate() can forcibly stop it. The pool of workers is application-managed (Node doesn't auto-pool them)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "CPU work on the main thread vs offloaded to a worker",
+    "summary": "Heavy CPU work blocks the event loop; a worker thread runs it in parallel and communicates via postMessage.",
+    "legacyOrBad": {
+      "label": "CPU-bound work on the main thread",
+      "snippet": "const result = expensiveParse(hugeData); // ❌ OLD: blocks the event loop",
+      "fullFile": {
+        "filename": "main.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Running a CPU-heavy operation on the main thread freezes\n// the entire process. While expensiveParse() runs (maybe 200ms), no\n// other request, timer, or event is processed — every user's request\n// waits. This is the classic 'event loop blocked' incident.\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  const result = expensiveParse(hugeData); // ❌ OLD: blocks all requests\n  res.end(result);\n}).listen(3000);\n\n// At 50ms of CPU per request, this server can only do ~20 req/s, and\n// a single slow request stalls everyone."
+      }
+    },
+    "modernOrGood": {
+      "label": "Worker thread offload",
+      "snippet": "const worker = new Worker('./parse-worker.js'); // ✅ NEW: parallel thread\nworker.postMessage(hugeData); // ✅ NEW: copy via structured clone",
+      "fullFile": {
+        "filename": "main.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: The CPU-heavy parse runs on a separate worker thread, so\n// the event loop stays free to serve other requests.\nconst { Worker } = require('node:worker_threads');\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  const worker = new Worker('./parse-worker.js'); // ✅ NEW: separate isolate\n  worker.postMessage(hugeData); // ✅ NEW: structured clone (or transfer)\n  worker.once('message', (result) => {\n    worker.terminate();\n    res.end(result);\n  });\n  worker.once('error', (err) => {\n    worker.terminate();\n    res.statusCode = 500;\n    res.end(String(err));\n  });\n}).listen(3000);\n\n// parse-worker.js:\n// const { parentPort, workerData } = require('node:worker_threads');\n// parentPort.on('message', (data) => {\n//   parentPort.postMessage(expensiveParse(data));\n// });"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How is a worker_thread different from a child_process, and when would you choose each?",
+      "contextIntro": "This tests the parallelism taxonomy — interviewers want the isolate-in-process vs separate-process distinction and the use cases (CPU-bound JS vs isolation/crash protection).",
+      "detailedAnswer": "A worker_thread is a separate V8 isolate inside the SAME process: it shares the process's memory space, file descriptors, and can use SharedArrayBuffer for zero-copy shared memory. It's the right tool for parallelizing CPU-bound JavaScript (parsing, crypto, image ops) while keeping the process single and communication cheap. A child_process is a completely separate OS process: its own memory space, its own V8 instance, communication only via IPC (serialized messages) — heavier to spawn, but it provides crash isolation (a child crash doesn't take down the parent), the ability to run non-JS binaries, and separate resource limits. Choose worker_threads for JS parallelism with shared memory; child_process for isolation, external programs, or when you want the OS to manage the boundary.",
+      "trapWarning": "The naive answer is 'workers are just lighter processes'. They share the process and can share memory (SharedArrayBuffer), which changes the correctness model (races) — processes can't corrupt each other. Another trap: assuming worker_threads make the main thread faster — they parallelize OFF the main thread; the main thread's own work is unchanged. Candidates who describe the isolate-vs-process boundary show real understanding."
+    },
+    {
+      "question": "What is the difference between postMessage copying, transferring, and SharedArrayBuffer, and when do you use each?",
+      "contextIntro": "This probes the communication mechanisms — interviewers want the structured-clone copy, the zero-copy transfer (detach), and the shared-memory option with its synchronization requirement.",
+      "detailedAnswer": "postMessage(value) by default STRUCTURE-CLONES the value: the receiver gets a deep copy in its own isolate — safe, but O(n) time and memory for large buffers. Transferring (postMessage(buffer, [buffer])) DETACHES the ArrayBuffer from the sender and hands the same backing store to the receiver — zero-copy O(1), but the sender loses access (byteLength becomes 0). SharedArrayBuffer creates a single shared memory region both threads can access concurrently — no copy at all, but writes are visible across threads and require Atomics for synchronization (or you get data races). Use: clone for small/config messages, transfer for one-way large buffers where the sender is done, SAB for genuinely shared state that both threads read/write concurrently (with Atomics).",
+      "trapWarning": "The naive answer is 'transfer and SAB are the same'. Transfer moves ownership (sender loses it); SAB shares ownership (both can use it anytime). Another trap: using SAB without Atomics for coordination — shared memory without synchronization is a data race, and Node can't detect it. Candidates who distinguish copy/transfer/share show real concurrency understanding."
+    }
+  ]
+}

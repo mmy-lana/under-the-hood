@@ -1,0 +1,68 @@
+{
+  "id": "unhandled-rejection-process-exit",
+  "title": "unhandledRejection vs uncaughtException: Event Loop Termination",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (unhandled rejection handling)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "unhandled-rejection",
+    "uncaught-exception",
+    "errors",
+    "process",
+    "exit"
+  ],
+  "prerequisites": [
+    "Node.js promises and async/await",
+    "Understanding of the event loop and process lifecycle"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A kitchen has two alarm bells. The first bell (uncaught exception) rings when a chef throws a hot pan across the room with no one to catch it — a sudden accident. The second bell (unhandled rejection) rings when a dish is ordered on a ticket and the kitchen sends back 'not available', but the waiter never reads the ticket — a late disappointment nobody handled. The building's rule: the first bell is so serious that the kitchen shuts down immediately; the second, by default, also shuts down the kitchen now (it used to just get ignored, which left the building in a messy state).",
+    "junior": "uncaughtException fires when an exception is thrown in synchronous code and never caught: process.on('uncaughtException', (err) => { ... }). unhandledRejection fires when a Promise rejects and no .catch() or try/catch (via await) handles it: process.on('unhandledRejection', (reason, promise) => { ... }). Since Node 15, an unhandled rejection CRASHES the process by default (before, it only warned). The recommended pattern: crash and restart (let the process manager restart you), or at most log and gracefully shut down — do NOT try to continue running after an uncaught exception because the state may be corrupt.",
+    "senior": "Architecturally, uncaughtException is a synchronous exception that escaped the call stack — the stack is unwound and the process is in an undefined state (locks may be held, invariants broken, middleware mid-flight). Continuing is unsafe, which is why the recommended action is to log and exit (or let it crash). unhandledRejection is an async error: a rejected Promise with no rejection handler. The rejection is detected at the microtask/checkpoint where the promise is found to have no handler; the event fires. Node's default (since v15) is to treat it like an uncaught error and terminate. The distinction matters because an unhandled rejection does NOT unwind a consistent stack — the app may be fine — but silently ignoring it leaves resources in a bad state.",
+    "underTheHood": "When a Promise rejects and no handler is attached by the time the microtask queue processes it (or by the end of the turn), V8 notifies Node via the unhandled_rejection hook; Node emits 'unhandledRejection'. The event loop then, by default, throws the reason as an uncaught error (which triggers 'uncaughtException' if a handler exists) and exits. The 'rejectionHandled' event fires if a handler is attached LATER (after the unhandled event). For uncaughtException, V8 reports the fatal error to the process; Node emits the event and, if no handler, prints the error and exits with code 1. Both events, if you handle them, require the 'if you handle it, you must still exit' discipline — resuming execution is unsupported and can corrupt state."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Silently ignoring a rejected promise vs handling it",
+    "summary": "An unhandled rejection crashes the process by default; attaching a catch (or handling the event) keeps the app from terminating unexpectedly.",
+    "legacyOrBad": {
+      "label": "Forgotten rejection handler",
+      "snippet": "async function run() {\n  const data = await fetchData(); // ❌ OLD: if fetchData rejects and no catch...\n  use(data);\n}",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: An awaited call without try/catch, or a .then() chain\n// without .catch(), leaves the rejection unhandled. Since Node 15 the\n// process CRASHES on unhandled rejections — a single missed catch\n// (e.g. in an event handler that fires asynchronously) can take down\n// the whole server.\nasync function load() {\n  const data = await fetchData(); // ❌ OLD: no try/catch\n  use(data);\n}\n\n// If fetchData() rejects, load()'s promise rejects, and if nothing\n// awaits load() with a catch, the rejection is unhandled → process\n// exits. Even with a global 'unhandledRejection' handler, the promise\n// is still broken — the correct fix is handling at the source."
+      }
+    },
+    "modernOrGood": {
+      "label": "Explicit rejection handling",
+      "snippet": "try {\n  const data = await fetchData(); // ✅ NEW: handled\n  use(data);\n} catch (err) {\n  log.error(err); // ✅ NEW: rejections handled at the source\n}",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Handle rejections at the source — try/catch around await,\n// or .catch() on the promise chain. This prevents the process crash\n// and keeps error paths explicit.\nasync function load() {\n  try {\n    const data = await fetchData(); // ✅ NEW: awaited inside try\n    use(data);\n  } catch (err) {\n    log.error('load failed', err); // ✅ NEW: handled\n    // optionally: retry or fall back\n  }\n}\n\n// ✅ NEW: For genuinely-unavoidable cases, a last-resort logger:\n// process.on('unhandledRejection', (reason, promise) => {\n//   log.fatal('unhandled rejection', reason);\n//   process.exit(1); // ⚠️ still exit — don't continue in an unknown state\n// });\n\n// ✅ NEW: same discipline for uncaughtException:\n// process.on('uncaughtException', (err) => {\n//   log.fatal('uncaught exception', err);\n//   process.exit(1); // restart via the process manager\n// });"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between unhandledRejection and uncaughtException, and why is continuing after them unsafe?",
+      "contextIntro": "This tests the error-model distinction — interviewers want the sync-vs-async error paths and the state-corruption rationale for the 'log and exit' guidance.",
+      "detailedAnswer": "uncaughtException is a synchronous exception that escaped the call stack — the stack unwound mid-operation, so locks, invariants, transaction state, or middleware may be left inconsistent. Continuing execution from that point is unsupported and can corrupt data or hang, so the guidance is to log the error and exit (letting the process manager restart). unhandledRejection is a rejected Promise with no handler — the rejection was detected asynchronously (at the microtask checkpoint). The app's synchronous state may be perfectly fine, but the code that produced the rejection intended to handle it, so continuing means that logic silently failed. Node's default (v15+) is to terminate on unhandled rejections, matching the uncaught-exception behavior. The shared rule: if you handle either event, you should still exit rather than resume, because you cannot know how far the failure propagated.",
+      "trapWarning": "The naive answer is 'just add a global handler and continue'. Resuming after uncaughtException is explicitly unsupported (undefined behavior); after unhandledRejection, the rejecting operation failed silently. Another trap: thinking catching an await inside one function protects the whole app — a promise that escapes (e.g. returned from an event handler nobody awaits) can still reject unhandled. Candidates who describe the state-corruption rationale show real understanding."
+    },
+    {
+      "question": "Why did Node change the default behavior for unhandled rejections, and what is the rejectionHandled event?",
+      "contextIntro": "This probes the evolution and the late-handler case — interviewers want the crash-by-default rationale and the subtle 'handled too late' scenario.",
+      "detailedAnswer": "Before Node 15, an unhandled rejection only printed a warning and the process continued. This hid bugs: a rejected promise with no handler meant some code path silently failed (a failed request, a lost write) while the app kept running, making failures invisible in production. Node changed the default to terminate the process (like an uncaught exception) so that silent async failures surface immediately and the orchestrator restarts the process. The 'rejectionHandled' event fires when a handler is attached to a promise AFTER the unhandledRejection event already fired (e.g. a .catch added later) — it lets you know the 'unhandled' report was a false alarm (the handler arrived late). This late-handling scenario is why the unhandled event can fire even for promises that eventually get caught — the check happens at the end of the current turn.",
+      "trapWarning": "The naive answer is 'a .catch anywhere fixes it'. If the catch is attached AFTER the turn where the rejection was detected, unhandledRejection still fired (and rejectionHandled then fires). Another trap: thinking the crash default can be safely disabled globally — suppressing it just re-hides the silent failures Node made visible. Candidates who describe the turn-based detection and the late-handler event show real depth."
+    }
+  ]
+}

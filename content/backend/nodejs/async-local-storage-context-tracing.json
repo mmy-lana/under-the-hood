@@ -1,0 +1,68 @@
+{
+  "id": "async-local-storage-context-tracing",
+  "title": "AsyncLocalStorage: Context Propagation Across Async/Await Hops",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (async_hooks)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "async-local-storage",
+    "async-hooks",
+    "context",
+    "tracing",
+    "request-id"
+  ],
+  "prerequisites": [
+    "Node.js async/await basics",
+    "Understanding of the event loop and async context"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A tour group at a museum has a guide who carries a clipboard with the group's ticket number. Every member of the group — even ones who wander to a different room and come back — can look at the guide's clipboard and read the ticket number (the context). The rule: the clipboard follows the group through every room and every wait, so no matter how the members scatter and regroup, they always know which tour they belong to. A family in another tour has their own clipboard — the numbers never mix.",
+    "junior": "AsyncLocalStorage lets you store data that follows the async context: const als = new AsyncLocalStorage(); als.run(store, () => { ... }); — inside the run callback (and any async work it spawns, no matter how many awaits), als.getStore() returns the store. It's the standard way to propagate request IDs, user IDs, and tracing contexts through async code without threading parameters through every function. It's built on async_hooks (the runtime's async context tracking). Use it for logging (inject the request id into every log line), error reporting, and per-request configuration. Node's built-in http server, database drivers, and frameworks (Fastify, NestJS) support or use it.",
+    "senior": "Architecturally, AsyncLocalStorage uses async_hooks under the hood: the runtime tracks every async resource (Promise, Timers, sockets, etc.) created within a run() context and associates that context with the async resource. When the async resource's callbacks execute (e.g. a Promise.then after await), the context is restored, so getStore() inside the continuation sees the same store. This makes request-scoped context available across arbitrary await hops without passing it explicitly. The implementation uses the async_hooks 'init'/'before'/'after' events (or the faster internal mechanism) to capture and restore the context map. There's a performance cost (context switching on every async boundary), so it should be used at boundaries (per request), not per microtask.",
+    "underTheHood": "AsyncLocalStorage maintains a context map keyed by async resource. When als.run(store, fn) is called, it creates a new context scope, associates the store with the current execution context, runs fn, and restores the previous context after. Every async resource created inside fn (via async_hooks' init hook) inherits the current context; when that resource's callback runs (before hook), the runtime switches the current context to the resource's stored one; after the callback, it restores. The public async_hooks API is 'raw', and AsyncLocalStorage is the safe, high-level wrapper. V8/Node also provide a faster internal 'AsyncContextFrame' mechanism in newer versions to reduce the overhead of context propagation."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Threading context through params vs AsyncLocalStorage",
+    "summary": "Passing requestId through every function is invasive and error-prone; AsyncLocalStorage makes it ambient across the whole async chain.",
+    "legacyOrBad": {
+      "label": "Manual context threading",
+      "snippet": "async function handler(req, res, requestId) {\n  await serviceA(requestId); // ❌ OLD: requestId passed everywhere\n  await serviceB(requestId);\n}",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Manually threading the requestId (or user, or trace id)\n// through every function. Every helper, service, and database call\n// must accept and forward it. Add a new piece of context and you edit\n// every signature. Miss one hop and logs/errors lose the correlation.\nasync function handler(req, res) {\n  const requestId = req.headers['x-request-id'];\n  await step1(requestId); // ❌ OLD\n  await step2(requestId); // ❌ OLD\n  await db.save({ id: requestId, ... }); // ❌ OLD: every layer polluted\n}\n\nasync function step1(requestId) {\n  log.info({ requestId }, 'step1'); // ❌ OLD: only works if passed\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "AsyncLocalStorage ambient context",
+      "snippet": "const als = new AsyncLocalStorage();\n// ✅ NEW: run per request; als.getStore() works anywhere in the async tree",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "const { AsyncLocalStorage } = require('node:async_hooks');\nconst als = new AsyncLocalStorage(); // ✅ NEW: context carrier\n\nhttp.createServer((req, res) => {\n  const store = { requestId: req.headers['x-request-id'] ?? crypto.randomUUID() };\n  // ✅ NEW: scope the context to this request's entire async tree\n  als.run(store, async () => {\n    await step1(); // ✅ NEW: no params — context is ambient\n    await step2();\n    res.end('ok');\n  });\n}).listen(3000);\n\nasync function step1() {\n  log.info({ requestId: als.getStore().requestId }, 'step1'); // ✅ NEW\n}\n\nasync function step2() {\n  const { requestId } = als.getStore(); // ✅ NEW: follows across awaits\n  await db.save({ id: requestId });\n}\n\n// Every await hop — timers, promises, streams, events — keeps the\n// store, so a logger helper can call als.getStore() anywhere."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does AsyncLocalStorage propagate context through awaits, and what are its limitations?",
+      "contextIntro": "This tests the async_hooks mechanism — interviewers want the resource-based context capture/restore and the honest gaps (worker_threads, detached callbacks, performance).",
+      "detailedAnswer": "AsyncLocalStorage captures the current context when an async resource (Promise, Timer, socket, stream) is CREATED within a run() scope, and restores it when that resource's callbacks execute — so the store is available across arbitrary await chains, setInterval callbacks, event handlers, and streams spawned in the same context. Limitations: it does NOT cross worker_threads (each worker has its own ALS store — you must re-establish context in the worker), it doesn't propagate to callbacks that escape the context in ways the runtime can't track (e.g. a Promise created before run() but resolved after), and there is a measurable performance cost (context switch at every async boundary — the async_hooks machinery is disabled when no ALS is active, so the cost only appears where ALS is used).",
+      "trapWarning": "The naive answer is 'ALS works across everything'. It does not cross worker_threads, and context captured in one async resource's creation doesn't magically apply to unrelated detached callbacks. Another trap: using ALS per microtask (e.g. inside a tight loop) — the overhead multiplies; the pattern is one run() per request boundary. Candidates who list the worker/performance caveats show real experience."
+    },
+    {
+      "question": "What is the difference between AsyncLocalStorage and the raw async_hooks API, and why prefer ALS?",
+      "contextIntro": "This probes the abstraction level — interviewers want the raw init/before/after events vs the high-level store API and the safety/ergonomics argument.",
+      "detailedAnswer": "The raw async_hooks API exposes lifecycle events: 'init' (an async resource was created), 'before' (its callback is about to run), 'after', 'destroy', and 'promiseResolve'. You build your own context tracking with these, which is powerful but dangerous: writing it wrong can cause context leaks (wrong store in callbacks), memory leaks (not tracking resource destruction), or infinite loops (async hooks that create async resources). AsyncLocalStorage is the high-level wrapper built on this machinery: it gives you run()/getStore()/enterWith() and handles the capture/restore and resource-lifetime bookkeeping correctly. The guidance is to always use AsyncLocalStorage instead of raw async_hooks for context propagation — raw async_hooks is for specialized tooling and comes with a stability warning.",
+      "trapWarning": "The naive answer is 'ALS is just a nicer API for async_hooks'. It's also a SAFER one — raw async_hooks misused can corrupt context or leak memory. Another trap: thinking you can freely combine raw async_hooks with ALS without interference — both use the same underlying resource-tracking machinery, and mixing them carelessly causes context bleed. Candidates who explain the raw-event model and the ALS safety wrapper show real depth."
+    }
+  ]
+}

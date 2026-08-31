@@ -1,0 +1,69 @@
+{
+  "id": "esm-vs-cjs-module-resolution",
+  "title": "ESM Static Graph Evaluation vs CommonJS Synchronous require Cache",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (ESM, CJS interop)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "esm",
+    "commonjs",
+    "modules",
+    "require",
+    "import",
+    "resolution"
+  ],
+  "prerequisites": [
+    "Node.js module basics",
+    "Understanding of module systems and caching"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two ways a library shelves books. CommonJS: a librarian fetches each requested book one at a time, and every book is shelved only after the previous one is fetched — the order is fixed, one after another, and each shelf can be changed even while others are being filled (dynamic). ESM: the librarian first reads the ENTIRE catalog and draws a map of all books and their cross-references BEFORE fetching any — the map is fixed and known up front (static). Because the map is complete first, the librarian can fetch books in the right dependency order and can even spot books that point to each other in a circle.",
+    "junior": "CommonJS (require) is synchronous and dynamic: require('./mod') executes the module on demand, in order, and caches the result in require.cache (subsequent requires return the cached module.exports). ESM (import) is static: imports are hoisted, the module graph is resolved before execution, and evaluation runs in dependency order (post-order). ESM supports top-level await, tree-shaking, and static analysis; CJS supports conditional requires and dynamic module paths. Node.js supports both (package.json \"type\": \"module\" makes .js files ESM). Interop: CJS can require ESM only in newer Node via dynamic import(); ESM imports CJS via default import of module.exports.",
+    "senior": "Architecturally, CJS is a synchronous loader: require() reads, compiles, and executes the module immediately, storing the exports in a cache keyed by resolved path; cycles are handled by the partial-exports cache (a module gets the unfinished exports if it's already in the cache). ESM separates LINKING from EVALUATION: the loader resolves and parses the whole graph first (static imports only), instantiates the module records with live bindings, then evaluates in post-order (dependencies first). Live bindings mean an ESM import of an exported binding sees updates to that binding, unlike CJS's copied exports. Top-level await blocks evaluation of the module's dependents until it resolves. These differences affect bundling, tree-shaking, and circular dependency behavior.",
+    "underTheHood": "CJS: the Module._load function resolves the specifier (path resolution + extensions), checks require.cache, if missing creates a Module, wraps the source in a function (exports, require, module, __filename, __dirname), and executes it synchronously. ESM: Node uses a loader (ESMLoader) that builds a module map; it parses each module's imports (static), creates Module Records with an environment of bindings, and evaluates in DFS post-order via the ESM executor. The interop layer (CJS → ESM) wraps CJS modules as default-exported namespaces; ESM → CJS creates synthetic named exports via cjs-module-lexer static analysis. `import` specifiers are URLs/resolved paths; bare specifiers resolve via node_modules. Node's module customization hooks (--experimental-loader) allow intercepting resolution."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js module system concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Conditional/dynamic loading: CJS vs ESM",
+    "summary": "CJS can require conditionally with dynamic paths; ESM imports are static and hoisted, requiring import() for dynamic cases.",
+    "legacyOrBad": {
+      "label": "CJS dynamic require",
+      "snippet": "const mod = require(condition ? './a' : './b'); // ❌ OLD: dynamic, synchronous",
+      "fullFile": {
+        "filename": "loader.cjs",
+        "language": "javascript",
+        "code": "// ❌ OLD: CommonJS allows fully dynamic, synchronous requires.\n// require() takes a runtime-computed path and executes immediately.\n// Flexible, but: it's synchronous (blocks the event loop while the\n// module loads), it cannot be statically analyzed (no tree-shaking),\n// and cycles are resolved with partial exports.\nfunction loadPlugin(name) {\n  return require(`./plugins/${name}`); // ❌ OLD: dynamic path + sync exec\n}\n\n// Conditional loading is trivial:\nconst logger = process.env.DEBUG ? require('./verbose') : require('./quiet');"
+      }
+    },
+    "modernOrGood": {
+      "label": "ESM static imports + dynamic import()",
+      "snippet": "import { helper } from './helper.js'; // ✅ NEW: static, hoisted\nconst mod = await import(`./plugins/${name}.js`); // ✅ NEW: async dynamic",
+      "fullFile": {
+        "filename": "loader.mjs",
+        "language": "javascript",
+        "code": "// ✅ NEW: ESM imports are static and hoisted — the loader resolves the\n// whole graph before executing anything, enabling tree-shaking and\n// deterministic dependency order.\nimport { helper } from './helper.js'; // ✅ NEW: static import\n\n// ✅ NEW: dynamic loading is async via import(), which returns a\n// promise of the module namespace (and supports top-level await).\nasync function loadPlugin(name) {\n  const mod = await import(`./plugins/${name}.js`); // ✅ NEW: async\n  return mod.default;\n}\n\n// ✅ NEW: top-level await in ESM:\n// const data = await fetchData();\n\n// Live bindings: if helper.js reassigns its exported binding, ESM\n// importers see the new value (CJS importers get the copied value at\n// require time)."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do ESM and CJS handle circular dependencies differently, and why is ESM's handling considered safer?",
+      "contextIntro": "This tests the module-graph semantics — interviewers want the link-then-evaluate model vs the partial-exports cache and the live-binding behavior.",
+      "detailedAnswer": "CJS resolves cycles via the require cache: when module A requires B and B requires A, B gets A's PARTIAL exports (the exports object as it exists at that moment, possibly incomplete); code that reads a not-yet-assigned export gets undefined at runtime. ESM handles cycles by separating linking from evaluation: the loader resolves and links the entire graph first, creating live bindings for every export BEFORE any module body runs. When evaluation reaches a cycle, a module that's already in-progress is skipped (not re-evaluated), and importers read the bindings, which hold the values once the exporting module finishes evaluating. Because bindings are live, an import of a cyclic dependency reads the final value (if accessed after the other module completes), avoiding the CJS undefined-export trap — though accessing a binding before its module evaluates still sees undefined.",
+      "trapWarning": "The naive answer is 'ESM forbids cycles'. It handles them via the in-progress skip and live bindings. Another trap: assuming CJS cycles are broken — they work but with partial exports, which is the classic 'got undefined' bug. Candidates who describe the link/evaluate split show real module-system understanding."
+    },
+    {
+      "question": "How does CJS-to-ESM interop work in Node, and what are the limitations?",
+      "contextIntro": "This probes the interop layer — interviewers want the default-export wrapping, the synthetic named exports, and the cases where interop silently surprises.",
+      "detailedAnswer": "When ESM imports a CJS module, Node loads the CJS module and exposes its module.exports as the DEFAULT export (import cjsMod from './cjs.js'). Named exports are ALSO synthesized when possible: Node uses cjs-module-lexer to statically analyze the CJS source and detect assignments like exports.foo = ... or module.exports = { foo, bar }, generating matching named exports. Limitations: dynamic exports (exports[key] = value) or module.exports reassignment with computed keys can't be statically detected, so named imports of those fail (only default works). Conversely, CJS can require ESM only through dynamic import() (require is synchronous and cannot await ESM evaluation); in older Node versions this throws ERR_REQUIRE_ESM. The mixed cases are where interop bugs surface.",
+      "trapWarning": "The naive answer is 'ESM can import CJS named exports freely'. Named exports work only when cjs-module-lexer can detect them statically; dynamic/assigned exports need the default import. Another trap: requiring ESM from CJS synchronously — it's impossible; you must use dynamic import(). Candidates who describe the lexer analysis and the sync/async boundary show real interop knowledge."
+    }
+  ]
+}

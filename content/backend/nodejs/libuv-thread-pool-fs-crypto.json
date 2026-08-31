@@ -1,0 +1,68 @@
+{
+  "id": "libuv-thread-pool-fs-crypto",
+  "title": "libuv Thread Pool: UV_THREADPOOL_SIZE for fs, dns, and crypto",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (libuv)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "libuv",
+    "thread-pool",
+    "uv_threadpool_size",
+    "fs",
+    "crypto"
+  ],
+  "prerequisites": [
+    "Node.js event loop basics",
+    "Understanding of blocking vs non-blocking I/O"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant has a small team of prep cooks in the back who do the slow jobs that can't be done at the front counter: chopping vegetables, slow-cooking stews (file reads, crypto, DNS lookups). The front waiter takes orders and calls the back cooks when a slow job arrives. The restaurant starts with 4 prep cooks, but if the menu has lots of slow dishes, you can hire more (UV_THREADPOOL_SIZE). If all the cooks are busy with slow stews, new slow jobs wait in line — so the front waiter stays fast, but the back kitchen can become the bottleneck.",
+    "junior": "Node.js runs JavaScript on a single thread (the event loop), but libuv provides a thread pool (default 4 threads) for operations that can't be done asynchronously by the OS: fs.readFile, crypto.pbkdf2/randomBytes/scrypt, dns.lookup, and zlib by default. These functions offload the blocking work to the pool, so the event loop isn't blocked. You can tune the pool size with the UV_THREADPOOL_SIZE environment variable (max 1024 in modern Node). If your app does heavy fs/crypto work, increasing the pool size can improve throughput; setting it too high adds context-switching overhead.",
+    "senior": "Architecturally, libuv's thread pool is a fixed-size work queue: the default is 4 threads (uv_threadpool_size, configurable via UV_THREADPOOL_SIZE, capped at 1024 since Node 12-ish; historically 128). When the event loop encounters a blocking operation in the fs/crypto/dns module, it enqueues a work request into the pool; a worker thread runs the operation and, on completion, posts the result back to the event loop via a callback (completing a pending request). The pool is shared across the whole process — ALL fs/crypto/dns operations in the app use the same 4 threads. Under heavy load, tasks queue and latency increases; the event loop stays responsive, but the pool becomes the throughput bottleneck.",
+    "underTheHood": "The thread pool is implemented in libuv (uv__work_submit): a work request (uv_work_t) is pushed onto a queue guarded by a mutex; an idle worker (uv_thread_create'd at init) pops it and runs the work_cb; on completion the worker calls uv__work_done, which posts to the loop's async handle so the main thread runs the after_work_cb (the JS callback) at the next loop iteration. Each worker thread is an OS thread with its own stack. uv_threadpool_size is read once at startup. Notably: network I/O (net, http, tcp) does NOT use the pool — it uses the event loop's non-blocking I/O (epoll/kqueue). Only fs/dns.lookup/crypto/zlib-style CPU-or-blocking work goes to the pool."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Blocking crypto on the event loop vs libuv pool offload",
+    "summary": "Synchronous crypto blocks the entire event loop; the async API offloads to the libuv thread pool, keeping the loop responsive.",
+    "legacyOrBad": {
+      "label": "Synchronous crypto (blocks the event loop)",
+      "snippet": "const hash = crypto.createHash('sha256').update(data).digest(); // ❌ OLD: blocks the event loop",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Synchronous crypto/hashing on the event loop. Every\n// request that computes a hash or runs pbkdf2Sync() BLOCKS the entire\n// process: no other request, timer, or event is processed until it\n// finishes. Under load, one slow sync op freezes all users.\nconst crypto = require('node:crypto');\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  const hash = crypto.createHash('sha256').update(req.url).digest('hex');\n  // ❌ OLD: runs on the main thread — blocks every other connection\n  res.end(hash);\n}).listen(3000);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Async crypto via the libuv pool",
+      "snippet": "crypto.pbkdf2(data, salt, 100_000, 64, 'sha512', (err, key) => { ... }); // ✅ NEW",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: The async crypto APIs offload to the libuv thread pool, so\n// the event loop stays free to serve other requests while the hashing\n// runs on a worker thread.\nconst crypto = require('node:crypto');\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  // ✅ NEW: runs on a libuv worker thread, not the event loop\n  crypto.pbkdf2(req.url, 'salt', 100_000, 64, 'sha512', (err, key) => {\n    res.end(key.toString('hex'));\n  });\n}).listen(3000);\n\n// ✅ NEW: tune the pool for heavy fs/crypto workloads:\n//   UV_THREADPOOL_SIZE=16 node server.js\n// (read at startup; defaults to 4, max 1024)"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Which operations use the libuv thread pool, and why doesn't network I/O use it?",
+      "contextIntro": "This tests the offload model — interviewers want the fs/dns/crypto/zlib boundary and the reason network I/O stays on the event loop.",
+      "detailedAnswer": "The libuv thread pool is used by operations that the OS cannot provide as non-blocking: fs (file reads/writes), dns.lookup, crypto (pbkdf2, scrypt, randomBytes for some sizes, hash on large inputs), and zlib by default. Network I/O (TCP, UDP, HTTP) does NOT use the pool because the OS offers true async I/O via epoll/kqueue (event-driven), which the event loop handles directly without threads. The distinction is whether the operation is a syscall that can be made non-blocking (network) vs blocking work that must be delegated to a thread (file system on most platforms, CPU-bound crypto). Understanding this explains why 'everything is async' in Node but only some things use threads.",
+      "trapWarning": "The naive answer is 'all async operations use the thread pool'. Network I/O uses the event loop's non-blocking I/O; only fs/dns/crypto/zlib-style work uses the pool. Another trap: assuming async fs means 'free' — it still consumes a pool thread; 4 concurrent large file reads saturate the pool and queue the 5th. Candidates who can list which modules use the pool show real understanding."
+    },
+    {
+      "question": "How does UV_THREADPOOL_SIZE affect performance, and what are the risks of setting it too high or too low?",
+      "contextIntro": "This probes the tuning trade-off — interviewers want the queueing behavior at the default of 4, the scaling benefit, and the overhead risk of too many threads.",
+      "detailedAnswer": "The default pool size is 4. If your workload is fs/crypto-heavy, 4 threads can become the bottleneck: 5+ concurrent heavy operations queue, and each waits for a free thread, adding latency (though the event loop stays responsive). Increasing UV_THREADPOOL_SIZE (e.g. to 16 or 32) lets more blocking operations run concurrently, improving throughput for parallel fs/crypto work. Risks: too many threads cause context-switching overhead and memory cost (each thread has a stack), and the benefit plateaus — beyond the number of cores, adding threads mainly adds overhead. Also, the pool is GLOBAL: one app's crypto can starve another module's fs work. For truly independent CPU-heavy work, worker_threads (separate isolates) are a better tool than just inflating the pool.",
+      "trapWarning": "The naive answer is 'bigger pool = always faster'. It scales until cores are saturated, then adds overhead; a huge pool (e.g. 1024) can thrash. Another trap: thinking the pool is per-module — it's process-global and shared. Candidates who mention the global sharing and the cores-based plateau show real depth."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "diagnostics-channel-tracing",
+  "title": "diagnostics_channel: In-Process Pub/Sub Performance Telemetry",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (diagnostics_channel)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "diagnostics-channel",
+    "tracing",
+    "telemetry",
+    "instrumentation",
+    "pub-sub"
+  ],
+  "prerequisites": [
+    "Node.js event emitters and async context",
+    "Understanding of instrumentation and tracing"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A building has a central announcement system with named channels ('elevator', 'power', 'water'). Anyone can subscribe to a channel and receive a message when something happens there — without the elevator or power systems knowing who's listening. The announcements are structured (a small card with the details), and subscribers can even modify the card before it's passed on (patching). The systems don't have to be modified to be observed — the announcement system is added alongside them.",
+    "junior": "diagnostics_channel is a built-in pub/sub API for instrumenting Node.js internals and libraries: const dc = require('node:diagnostics_channel'); const channel = dc.channel('my.event'); channel.publish({ id, duration }); and subscribe: channel.subscribe((message, name) => { ... }). Node's core (HTTP requests, net sockets, worker threads, tracing) publishes to built-in channels (e.g. 'http.client.request.start'), letting you observe internals without patching them. Use it for performance telemetry, tracing, and debugging — it's the lightweight, official alternative to monkey-patching. Unsubscribe with channel.unsubscribe(fn); the channel stores a Set of subscribers.",
+    "senior": "Architecturally, diagnostics_channel provides a named-channel message bus: publish(message) synchronously invokes all subscribers' callbacks for that channel. Its key feature is the ability to PATCH messages: a subscriber can return a modified object (or a true/false for a patched message) so the publisher's subsequent use of the message sees the change — this enables non-invasive instrumentation (e.g. enriching an HTTP request object with a trace id). The channel's hasSubscribers flag lets publishers skip expensive message construction when nobody is listening (zero-overhead when unobserved). Node core publishes to stable channels for HTTP, net, worker_threads, and child_process, so tools (tracing agents, APM) can hook in without forking Node.",
+    "underTheHood": "A Channel is an object with a subscribers Set and a publish method that iterates the set calling each subscriber(message, channelName). Messages are plain objects (mutable) passed by reference, so patching works by the subscriber mutating/returning. The hasSubscribers property is a fast boolean (a Set size check) that publishers use to avoid building payloads. Node core calls channel.publish() at instrumentation points (e.g. 'http.client.request.start', 'http.client.request.finish') with structured payloads (request, socket, etc.). Subscribers must be careful: exceptions in subscribers propagate to the publisher (like EventEmitter), and synchronous invocation means heavy subscribers slow the publisher."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Monkey-patching for telemetry vs diagnostics_channel",
+    "summary": "Patching core modules (http.get) is fragile and version-coupled; subscribing to built-in channels observes the same events safely.",
+    "legacyOrBad": {
+      "label": "Monkey-patching http for telemetry",
+      "snippet": "const orig = http.request;\nhttp.request = (...args) => { // ❌ OLD: fragile global patch",
+      "fullFile": {
+        "filename": "telemetry.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Monkey-patching core modules to add telemetry. Replacing\n// http.request globally breaks if another library also patches it,\n// breaks when Node's internals change, and doesn't observe internal\n// events (DNS, sockets, worker threads) that the patch can't reach.\nconst http = require('node:http');\nconst origRequest = http.request;\n\nhttp.request = (...args) => {\n  const start = process.hrtime.bigint();\n  const req = origRequest(...args); // ❌ OLD: fragile wrapper\n  req.on('response', () => {\n    logDuration(process.hrtime.bigint() - start);\n  });\n  return req;\n};\n\n// Problems: global mutation, version coupling, other patches conflict."
+      }
+    },
+    "modernOrGood": {
+      "label": "diagnostics_channel subscription",
+      "snippet": "const httpChannel = dc.channel('http.client.request.start');\nhttpChannel.subscribe((msg) => { ... }); // ✅ NEW: observe without patching",
+      "fullFile": {
+        "filename": "telemetry.js",
+        "language": "javascript",
+        "code": "const dc = require('node:diagnostics_channel');\n\n// ✅ NEW: Subscribe to Node's built-in channels — no patching, no\n// global mutation, works across versions.\nconst startChannel = dc.channel('http.client.request.start');\nconst finishChannel = dc.channel('http.client.request.finish');\n\nconst starts = new WeakMap();\n\nstartChannel.subscribe((message) => {\n  // ✅ NEW: message contains the request/socket context\n  starts.set(message.request, process.hrtime.bigint());\n});\n\nfinishChannel.subscribe((message) => {\n  const start = starts.get(message.request);\n  if (start) {\n    logDuration(message.request, process.hrtime.bigint() - start);\n  }\n});\n\n// ✅ NEW: custom channels for your own code:\n// const my = dc.channel('myapp.query');\n// my.publish({ sql, duration });\n// if (my.hasSubscribers) my.publish(expensivePayload); // skip when idle\n\n// Built-in channels include: 'http.client.request.start/finish',\n// 'net.client.connect', 'worker_threads.*', 'child_process.*'."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is message patching in diagnostics_channel, and when is it used?",
+      "contextIntro": "This tests the non-invasive instrumentation feature — interviewers want the publish-time mutation contract that lets subscribers enrich data before the publisher uses it.",
+      "detailedAnswer": "A subscriber can modify the published message object (or return a replacement) and, because messages are passed by reference and published synchronously, the PUBLISHER sees the mutation when it continues using the message after publish. This enables non-invasive enrichment: e.g. an APM subscriber to the 'http.client.request.start' channel can attach a trace id to the request object, and the core code that later uses that request object (or emits the matching finish message) carries the id — giving end-to-end correlation without patching Node. The contract: subscribers must not assume immutability, and the mutation affects all later subscribers and the publisher. Node's core publishes specifically to allow this pattern.",
+      "trapWarning": "The naive answer is 'patching replaces the message for subscribers only'. The mutation is visible to the publisher and subsequent subscribers (synchronous, by-reference). Another trap: heavy work in a subscriber blocks the publisher — subscribe callbacks run synchronously on the publishing thread, so slow subscribers add latency to the instrumented code path. Candidates who describe the by-reference mutation and the synchronous cost show real understanding."
+    },
+    {
+      "question": "How does diagnostics_channel differ from EventEmitter, and why does hasSubscribers matter for performance?",
+      "contextIntro": "This probes the design rationale — interviewers want the named-channel bus vs instance-bound emitter, and the zero-cost-when-unobserved property that makes core instrumentation acceptable.",
+      "detailedAnswer": "EventEmitter is instance-bound: you need a reference to the specific emitter object to subscribe, and it's designed for application events. diagnostics_channel uses GLOBAL named channels: any code can subscribe to 'http.client.request.start' without holding a reference to a specific object, which is what lets core and third-party libraries publish to channels unknown at their authoring time. The hasSubscribers flag is the performance key: Node core checks it before building the (potentially expensive) message payload and calling publish — when nobody is subscribed, the instrumentation cost is a single boolean check. This 'zero overhead when unobserved' property is why core can instrument hot paths (every HTTP request) without penalizing apps that don't use diagnostics.",
+      "trapWarning": "The naive answer is 'diagnostics_channel is just a global EventEmitter'. The patching contract and the hasSubscribers zero-cost design are the distinguishing features. Another trap: assuming subscribing is free — each subscriber runs synchronously per publish, so many subscribers multiply the cost on every event. Candidates who mention the global named-channel model and the zero-cost flag show real depth."
+    }
+  ]
+}

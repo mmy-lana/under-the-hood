@@ -1,0 +1,68 @@
+{
+  "id": "crypto-web-crypto-api-performance",
+  "title": "node:crypto Native OpenSSL Bindings vs Web Crypto API",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (node:crypto, globalThis.crypto)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "crypto",
+    "webcrypto",
+    "openssl",
+    "performance",
+    "subtle"
+  ],
+  "prerequisites": [
+    "Node.js crypto basics (hashes, HMAC, encryption)",
+    "Understanding of native bindings vs JS implementations"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A bank has two vaults. The first vault (node:crypto) is staffed by highly trained specialists (OpenSSL, native C code) who can do any kind of lock work — every algorithm, every mode — very fast. The second vault (Web Crypto) is a standard, strictly-regulated lock room (the browser standard API): it can do the common lock jobs well and is designed to be the same everywhere, but it follows a strict checklist (only certain algorithms, only certain key types). The bank uses the specialists for heavy internal work and the standard room for things that must work identically across the whole bank network.",
+    "junior": "Node has two crypto APIs. node:crypto (require('node:crypto')) wraps OpenSSL: crypto.createHash('sha256').update(data).digest('hex'), crypto.createHmac, crypto.pbkdf2, crypto.randomBytes, AES encrypt/decrypt. The Web Crypto API (globalThis.crypto.subtle) is the browser-standard API now available in Node: crypto.subtle.digest('SHA-256', data) returns a Promise of an ArrayBuffer, crypto.subtle.encrypt/decrypt, sign/verify, deriveKey. Differences: node:crypto is synchronous (or callback), returns Buffers, has many algorithms (md5, sha1, etc.); Web Crypto is async (Promise-based), works on ArrayBuffer/TypedArray, uses WebCrypto algorithm names ('SHA-256'), and only exposes the standardized algorithm set.",
+    "senior": "Architecturally, node:crypto is a thin JS wrapper over OpenSSL's EVP API — calls cross into native C (via N-API) and run the OpenSSL implementations, which are highly optimized assembly (e.g. AES-NI hardware acceleration). It's synchronous for convenience (blocking the event loop for large inputs) and exposes the full OpenSSL algorithm catalog. The Web Crypto API in Node is implemented on the same OpenSSL/V8 substrate (using BoringSSL-style abstraction via the crypto module), but it presents the standardized browser surface: async (Promise-based, so it does NOT block the event loop for large operations — it uses the thread pool), keyed operations require CryptoKey objects, and the algorithm set is restricted to the WebCrypto spec (SHA-*, AES-*, HMAC, RSA, ECDSA, PBKDF2).",
+    "underTheHood": "node:crypto's hash/encrypt calls invoke OpenSSL EVP functions directly on the main thread for sync APIs (the callback variants offload to the libuv thread pool). The WebCrypto implementation (in Node, built on OpenSSL EVP too) wraps operations in the async machinery: subtle.digest() returns a Promise and the underlying work runs in the thread pool, so large hashes don't block the loop. Keys: WebCrypto uses CryptoKey objects (with type/algorithm/usages) that wrap the OpenSSL key structs; key import/export converts between formats. Because both sit on OpenSSL, the actual algorithm performance is similar — the differences are the API shape (sync vs async), the algorithm allow-list, and the ergonomics (Buffer vs ArrayBuffer, hex vs base64url)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Synchronous node:crypto vs async Web Crypto",
+    "summary": "node:crypto hash is sync and blocks the event loop on large inputs; subtle.digest() is async and offloads, keeping the loop free.",
+    "legacyOrBad": {
+      "label": "Sync hashing a large buffer",
+      "snippet": "const hash = crypto.createHash('sha256').update(bigData).digest('hex'); // ❌ OLD: blocks",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "const crypto = require('node:crypto');\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  // ❌ OLD: hashing a large body synchronously blocks the event loop\n  // for the duration of the hash — other requests, timers, and events\n  // all wait. For a 100MB upload this is a visible freeze.\n  const hash = crypto\n    .createHash('sha256')\n    .update(bigData)\n    .digest('hex'); // ❌ OLD: runs on the main thread\n  res.end(hash);\n}).listen(3000);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Async Web Crypto digest",
+      "snippet": "const hash = await crypto.subtle.digest('SHA-256', bigData); // ✅ NEW: non-blocking",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "const http = require('node:http');\n\nhttp.createServer(async (req, res) => {\n  // ✅ NEW: subtle.digest returns a Promise; the heavy work runs off\n  // the main thread (thread pool), so the event loop stays responsive\n  // while the hash computes.\n  const hash = await crypto.subtle.digest('SHA-256', bigData); // ✅ NEW\n  res.end(Buffer.from(hash).toString('hex'));\n}).listen(3000);\n\n// ✅ NEW: node:crypto also has async/callback variants:\n// crypto.createHash('sha256').update(data).digest('hex') is sync;\n// use the stream/async path or WebCrypto for non-blocking hashing.\n\n// Choose by need:\n// - node:crypto: full algorithm set, Buffer ergonomics, sync simplicity\n// - Web Crypto: browser-compatible surface, async, standardized\n//   algorithms, CryptoKey-based key management."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the real performance difference between node:crypto and Web Crypto, and when does it matter?",
+      "contextIntro": "This tests the underlying implementation — interviewers want to know both sit on OpenSSL so raw throughput is similar, and the differences are API shape and blocking behavior, not raw speed.",
+      "detailedAnswer": "Both node:crypto and Web Crypto in Node are implemented on top of OpenSSL's EVP layer, so the actual cryptographic computation (AES, SHA, RSA) runs the same optimized native code — raw throughput is essentially identical for the same algorithm. The meaningful differences are: (1) BLOCKING — the sync node:crypto API runs on the main thread, so large operations block the event loop; Web Crypto is async and offloads (thread pool), so it doesn't. (2) API surface — node:crypto exposes the full OpenSSL catalog (including md5, sha1, rc4, etc.), while Web Crypto is restricted to the standardized set. (3) Ergonomics — Buffer/hex vs ArrayBuffer/base64url and CryptoKey objects. So 'Web Crypto is faster' is wrong in the raw-sense; it's non-blocking and standardized, which is often the more important property for servers.",
+      "trapWarning": "The naive answer is 'Web Crypto is faster because it's async'. Async changes blocking behavior, not raw throughput — both use OpenSSL. Another trap: assuming Web Crypto in Node behaves identically to browsers in every edge case — algorithm/key support may differ slightly by OpenSSL build. Candidates who explain the shared OpenSSL substrate show real understanding."
+    },
+    {
+      "question": "Why does Web Crypto restrict the algorithm set, and what does that mean for compatibility?",
+      "contextIntro": "This probes the standardization rationale — interviewers want the portability guarantee (browser + Node) and the security-driven algorithm allow-list.",
+      "detailedAnswer": "Web Crypto restricts to the algorithms standardized in the WebCrypto spec precisely so code written against it runs identically in browsers and in Node — a portability contract. The allowed set (SHA-1/256/384/512, AES-CBC/GCM/CTR, HMAC, RSA-OAEP/PSS, ECDSA/ECDH, PBKDF2, HKDF, Ed25519/X25519 in newer specs) covers the algorithms deemed safe and widely implemented; legacy/weak algorithms (MD5, RC4, DES) and Node-specific options are excluded. This means code that uses Web Crypto can be shared between client and server without rewriting, and the key-handling model (CryptoKey with usages and extractability) enforces safer defaults. The trade-off: you cannot do everything Web Crypto doesn't define — for those (e.g. scrypt, or Node-specific formats), you use node:crypto.",
+      "trapWarning": "The naive answer is 'Web Crypto is just node:crypto renamed'. It's a restricted, standardized subset with a different key model and async shape. Another trap: assuming Web Crypto code is automatically as fast as tuned OpenSSL calls — for exotic parameters or very large inputs the async overhead and key-conversion costs can matter. Candidates who describe the portability contract and the allow-list show real depth."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "child-process-spawn-exec-fork",
+  "title": "child_process: spawn Streaming vs exec Buffer vs fork IPC",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (child_process)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "child-process",
+    "spawn",
+    "exec",
+    "fork",
+    "ipc"
+  ],
+  "prerequisites": [
+    "Node.js streams and events",
+    "Understanding of OS processes and IPC"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A foreman has three ways to delegate work to another workshop. spawn: hand over a job and let the output flow back continuously like a conveyor belt (streaming) — good for big jobs. exec: hand over a job, wait until the other workshop finishes EVERYTHING, then receive the whole result in one box (buffered) — good for small jobs with small output. fork: hire a second foreman who speaks the same internal language (IPC messages) so they can coordinate constantly — good for splitting your own workshop's work. Each tool fits a different job size and communication need.",
+    "junior": "child_process runs OS processes: const { spawn, exec, execFile, fork } = require('node:child_process'). spawn(command, args) streams stdout/stderr (returning ChildProcess with .stdout/.stderr streams) — best for large output, no shell by default. exec(command, cb) runs through a shell and buffers all output (maxBuffer default 1MB, can OOM on large output) — best for simple commands with small output. execFile(file, args, cb) runs a binary directly (no shell). fork(modulePath) spawns a Node child with an IPC channel: child.send(msg) / process.on('message') for structured messaging. Use spawn for streams/large data, exec for quick shell commands, fork for Node-to-Node worker processes.",
+    "senior": "Architecturally, spawn is the low-level primitive: it creates the process and connects its stdio to streams, so you can pipe data and handle output incrementally (crucial for large outputs or long-running processes — no buffer limit). exec is a convenience wrapper over spawn that collects stdout/stderr into buffers and invokes the callback on exit; it also runs the command through /bin/sh (shell semantics — globs, pipes work), which adds injection risk if the command is built from user input. execFile skips the shell (safer, faster) for direct binaries. fork is spawn with an IPC channel (a socket pair) set up for the child; messages are serialized (V8 serializer) and delivered via events. All return ChildProcess with 'exit'/'error' events and a pid.",
+    "underTheHood": "spawn uses libuv's process spawn: it creates the OS process, sets up stdio pipes (uv_pipe) for stdout/stderr/stdin, and the streams are wired to the ChildProcess. exec is implemented on top of spawn with a shell (sh -c) and a buffer collector (using the maxBuffer option; exceeding it kills the process with ERR_CHILD_PROCESS_STDIO_MAXBUFFER). execFile spawns the binary directly (no shell). fork creates a child via spawn with an IPC channel (a unix socket / named pipe pair on Windows), giving child.send()/process.on('message') which serialize via the V8 serializer. The child is a full Node process with its own event loop. 'exit' fires when the process exits (after stdio closes); 'error' fires for spawn failures (bad executable)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "exec for large output vs spawn streaming",
+    "summary": "exec buffers everything and can blow maxBuffer; spawn streams, so output size doesn't matter.",
+    "legacyOrBad": {
+      "label": "exec for large output",
+      "snippet": "exec('cat hugefile.log', (err, stdout) => {\n  console.log(stdout.length); // ❌ OLD: buffers the whole file",
+      "fullFile": {
+        "filename": "run.js",
+        "language": "javascript",
+        "code": "const { exec } = require('node:child_process');\n\n// ❌ OLD: exec buffers ALL stdout into memory. For a command that\n// produces a lot of output (a large file, a verbose tool), the\n// default maxBuffer (1MB) is exceeded → the child is killed with\n// ERR_CHILD_PROCESS_STDIO_MAXBUFFER. Raising maxBuffer just moves the\n// limit and spikes memory.\nexec('cat hugefile.log', (err, stdout) => {\n  if (err) return console.error('failed:', err); // ❌ OLD: maxBuffer hit\n  console.log('bytes:', stdout.length); // ❌ OLD: whole output in memory\n});\n\n// exec is fine for small outputs (a version string); for anything\n// large or long-running, it's the wrong tool."
+      }
+    },
+    "modernOrGood": {
+      "label": "spawn streaming",
+      "snippet": "const child = spawn('cat', ['hugefile.log']); // ✅ NEW: streams output\nchild.stdout.on('data', (chunk) => processLine(chunk)); // ✅ NEW: incremental",
+      "fullFile": {
+        "filename": "run.js",
+        "language": "javascript",
+        "code": "const { spawn } = require('node:child_process');\n\n// ✅ NEW: spawn streams stdout/stderr — data flows as chunks, no\n// buffering limit, memory stays bounded regardless of output size.\nconst child = spawn('cat', ['hugefile.log']); // ✅ NEW: no shell, args array\n\nchild.stdout.on('data', (chunk) => {\n  processLine(chunk); // ✅ NEW: process incrementally\n});\n\nchild.stderr.on('data', (chunk) => {\n  console.error('stderr:', chunk.toString());\n});\n\nchild.on('error', (err) => {\n  console.error('failed to spawn:', err); // bad executable, etc.\n});\n\nchild.on('exit', (code, signal) => {\n  console.log('exited', code, signal);\n});\n\n// ✅ NEW: for Node-to-Node coordination, fork + IPC:\n// const child = fork('./worker.js');\n// child.send({ task: 'hash', data });\n// child.on('message', (result) => { ... });"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between exec and execFile, and why is shell injection a risk with exec?",
+      "contextIntro": "This tests the shell-interpretation boundary — interviewers want the sh -c semantics and the injection vector that exec introduces when command strings include user input.",
+      "detailedAnswer": "exec runs the command through a shell (/bin/sh -c on POSIX): the string is interpreted by the shell, so pipes, globs, and environment expansions work, and you can pass a single command string. execFile runs the binary DIRECTLY with an argument array, no shell — arguments are passed literally, so shell metacharacters have no special meaning. The security consequence: with exec, if the command string includes user input (exec('rm -rf ' + userInput)), the user can inject shell syntax ('; rm -rf /' or '$(...)') and execute arbitrary commands. execFile passes the input as a literal argument, so injection is impossible (the binary receives it verbatim). The guidance: use execFile (or spawn with an args array) for anything involving untrusted input; use exec only for fixed, trusted command strings.",
+      "trapWarning": "The naive answer is 'exec is fine if I quote the input'. Quoting is fragile and easily bypassed; the correct fix is no shell at all (execFile/spawn with an args array). Another trap: thinking execFile still interprets shell syntax — it doesn't, which is the point. Candidates who describe the sh -c boundary and the args-array pattern show real security awareness."
+    },
+    {
+      "question": "How does fork set up IPC, and how is it different from spawn for a Node child?",
+      "contextIntro": "This probes the Node-to-Node communication channel — interviewers want the message-passing model (send/on('message')), the serialization, and the process-model implications.",
+      "detailedAnswer": "fork is spawn specialized for Node children: it launches a new Node process running the given module and automatically creates an IPC channel (a pair of connected pipes/sockets). The parent calls child.send(message) and the child receives it via process.on('message'); the child sends back with process.send(message) and the parent listens via child.on('message'). Messages are serialized with the V8 serializer (structured-clone-like: supports most JS values, but not functions or class instances with methods). The child is a completely separate process with its own V8 heap and event loop — it does not share memory (unlike worker_threads). fork is the classic way to split CPU work into a separate process or run a long-lived helper that communicates incrementally.",
+      "trapWarning": "The naive answer is 'fork is a lighter worker'. It's a full separate OS process (like spawn) plus an IPC channel — heavier than a worker_thread. Another trap: sending non-serializable values (functions, circular structures beyond the serializer's support) — they fail or get mangled. Candidates who describe the IPC channel and the serialization boundary show real understanding."
+    }
+  ]
+}

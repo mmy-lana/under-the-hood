@@ -1,0 +1,68 @@
+{
+  "id": "http-parser-llhttp-overhead",
+  "title": "llhttp HTTP Parsing Engine, Keep-Alive Connections, Socket Pooling",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (llhttp)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "llhttp",
+    "http-parser",
+    "keep-alive",
+    "socket-pooling",
+    "http"
+  ],
+  "prerequisites": [
+    "Node.js HTTP client/server basics",
+    "Understanding of TCP connections and HTTP parsing"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A bank teller can process many customers on one open window (keep-alive): instead of closing the window after each customer and opening a new one, the window stays open and the next customer steps up. The teller also uses a very fast intake form scanner (llhttp) that reads each customer's form in a single glance. The bank also reuses its phone lines: instead of dialing a new line for every call, it keeps a pool of warm lines ready (socket pooling), so a new call picks an already-open line.",
+    "junior": "Node's HTTP parsing is done by llhttp, a C++ HTTP parser (TypeScript-compiled-to-C, low-level). It parses incoming HTTP requests/responses quickly with minimal allocation. Keep-alive: HTTP/1.1 connections stay open after a response (Connection: keep-alive), so multiple requests reuse one TCP connection — avoiding TCP handshake + TLS overhead per request. Node's http.Agent implements connection pooling for clients: it keeps free sockets in a pool, reuses them for subsequent requests to the same host, and creates new ones as needed (maxSockets, keepAlive, maxFreeSockets options). Server-side, Node also keeps connections alive for reuse.",
+    "senior": "Architecturally, llhttp is a state-machine HTTP parser written as TypeScript and compiled to C (fast, small, no regex/allocations per parse). It feeds the parsed headers to Node's HTTP implementation, which constructs the IncomingMessage/ServerResponse objects. Keep-alive is the protocol-level reuse of the TCP connection; the server must know when a request ends (Content-Length or chunked) to parse the next one on the same socket. The client Agent maintains per-origin free-socket pools: a request first tries to grab a free socket (faster — no handshake), else opens a new one up to maxSockets; sockets return to the pool on response end if keepAlive is enabled. This pooling is what makes many small requests to the same host cheap.",
+    "underTheHood": "llhttp compiles to a compact state machine (generated C) with a tokenizer that walks the input buffer; it emits callbacks for header names/values, request line, and body boundaries, avoiding per-parse object allocation in the hot path. The HTTP server loop: after a response is sent, if the connection is keep-alive, the parser resets and waits for the next request on the same socket. The Agent (http.Agent) tracks sockets per origin; free sockets sit in a pool keyed by host:port; when a request is made, the Agent pops a free socket or creates one (respecting maxSockets), and on response 'end' the socket is released back to the pool (if keepAlive) or destroyed. TLS adds a session cache for cheaper re-handshakes."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "New connection per request vs keep-alive + Agent pooling",
+    "summary": "Opening a fresh TCP connection per request pays handshake costs; keep-alive and the Agent's socket pool reuse connections.",
+    "legacyOrBad": {
+      "label": "One connection per request (no keep-alive)",
+      "snippet": "http.get(url, cb); // ❌ OLD: fresh TCP+TLS handshake per request",
+      "fullFile": {
+        "filename": "client.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Without keep-alive (Connection: close, or an Agent with\n// keepAlive disabled), every request opens a NEW TCP connection: DNS\n// (maybe), TCP handshake, and (for https) the TLS handshake — all\n// before the request even starts. For N sequential small requests to\n// the same host, that's N full handshakes: the dominant latency for\n// request-heavy clients.\nconst http = require('node:http');\n\nfunction fetchAll(ids) {\n  // ❌ OLD: each get() may open a fresh connection\n  for (const id of ids) {\n    http.get(`http://api.example.com/items/${id}`, (res) => {\n      // ...\n    });\n  }\n}\n\n// Default Agent: keepAlive disabled in older behavior → connections\n// close after each response. Latency dominated by handshakes."
+      }
+    },
+    "modernOrGood": {
+      "label": "Keep-alive + Agent pooling",
+      "snippet": "const agent = new http.Agent({ keepAlive: true, maxSockets: 10 }); // ✅ NEW",
+      "fullFile": {
+        "filename": "client.js",
+        "language": "javascript",
+        "code": "const http = require('node:http');\n\n// ✅ NEW: keepAlive keeps free sockets in the Agent's pool so\n// subsequent requests to the same host reuse the open connection — no\n// repeated TCP/TLS handshakes.\nconst agent = new http.Agent({\n  keepAlive: true, // ✅ NEW: reuse idle connections\n  maxSockets: 10, // ✅ NEW: cap concurrent sockets per origin\n  maxFreeSockets: 5, // ✅ NEW: keep a small pool of idle sockets\n});\n\nfunction fetchAll(ids) {\n  for (const id of ids) {\n    http.get({ hostname: 'api.example.com', path: `/items/${id}`, agent }, (res) => {\n      // ✅ NEW: the Agent reuses pooled sockets\n    });\n  }\n}\n\n// ✅ NEW: Node 20+ also has a fetch() (undici) with its own pooling,\n// and the globalAgent can be configured for all http requests.\n// Server-side, keep-alive is the default for HTTP/1.1 — the server\n// parses the next request on the same socket via llhttp."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does llhttp parsing differ from a regex or a JS parser, and why does that matter for performance?",
+      "contextIntro": "This tests the parser design — interviewers want the state-machine/no-allocation rationale and why HTTP parsing is a hot path worth optimizing in native code.",
+      "detailedAnswer": "llhttp is a state-machine parser written in TypeScript and compiled to C (it generates a compact C state table). It walks the input buffer byte-by-byte with a state machine, emitting callbacks as it recognizes the request line, headers, and body boundaries. Unlike a regex-based or JS-level parser, it avoids per-parse allocations, uses no backtracking, and is small enough to stay in cache. Since HTTP parsing runs for EVERY request, the parser is a critical hot path: a fast, allocation-light parser directly reduces per-request CPU and GC pressure. The state machine also handles streaming input correctly (partial headers, pipelined requests) by remembering its position between chunks.",
+      "trapWarning": "The naive answer is 'the parser is fast because it's in C'. The speed comes from the design (state machine, no allocation, no backtracking), and it's compiled from a high-level spec (TypeScript) — the C is generated. Another trap: thinking parsing overhead is negligible — for small requests (typical API calls), parsing can be a meaningful fraction of total request CPU; Node's investment in llhttp is precisely because it matters. Candidates who describe the state-machine design show real understanding."
+    },
+    {
+      "question": "How does keep-alive and socket pooling interact, and what are the risks of a poorly-tuned Agent?",
+      "contextIntro": "This probes the connection-management trade-offs — interviewers want the pool reuse benefit, the maxSockets queueing behavior, and the failure modes of misconfiguration.",
+      "detailedAnswer": "Keep-alive lets a client reuse an open connection for multiple requests, eliminating repeated TCP+TLS handshakes — the main latency win for many small requests. The Agent pools free sockets per origin; when a request arrives, it uses a free socket or opens a new one up to maxSockets. If all sockets are busy and maxSockets is reached, further requests QUEUE until a socket frees up — so a low maxSockets with slow responses creates a bottleneck. Risks: keepAlive without maxFreeSockets caps keeps too many idle sockets open (holding file descriptors and server resources); a high maxSockets can exhaust server connections or trigger per-host limits; and pooling is per-Agent, so creating a new Agent per request defeats the pooling entirely. The tuning trade-off is between reuse (fewer handshakes) and resource usage (open idle sockets).",
+      "trapWarning": "The naive answer is 'keepAlive is always better'. It holds idle sockets open and, if misconfigured (no maxFreeSockets cap), leaks descriptors on the client and keeps server connections occupied. Another trap: creating a new Agent per request — this bypasses pooling and re-introduces handshake costs. Candidates who describe the pool lifecycle and the queueing behavior show real depth."
+    }
+  ]
+}

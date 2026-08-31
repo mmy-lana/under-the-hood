@@ -1,0 +1,68 @@
+{
+  "id": "cluster-module-ipc-socket-passing",
+  "title": "cluster Module: Master-Worker Round-Robin IPC Socket Handoffs",
+  "category": "backend",
+  "subcategory": "nodejs",
+  "versionContext": "Node.js 20+ (cluster)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "nodejs",
+    "cluster",
+    "master-worker",
+    "ipc",
+    "round-robin",
+    "load-balancing"
+  ],
+  "prerequisites": [
+    "Node.js event loop and HTTP basics",
+    "Understanding of processes and load balancing"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel has a front desk (the master) that receives all phone calls and a row of identical clerks (workers), each with their own phone. The front desk's rule: hand each incoming call to the next clerk in a circle (round-robin), so no clerk gets overloaded. The clerks are identical copies — if one gets sick, the desk keeps sending calls to the others, and the manager can hire a fresh clerk to replace the sick one. The calls themselves are just handed over (the socket is passed to the worker); the desk doesn't answer them.",
+    "junior": "The cluster module lets you run multiple Node.js processes (workers) sharing the same server port, managed by a master process: const cluster = require('node:cluster'); if (cluster.isPrimary) { cluster.fork(); } else { http.createServer(...).listen(3000); }. Each worker is a full Node process (own event loop, own memory) — so you can use all CPU cores. The primary distributes incoming connections to workers. Workers communicate with the primary via IPC; a worker crash is detected (exit event) and can be re-forked. Cluster is the classic way to scale a Node server across cores without a separate load balancer.",
+    "senior": "Architecturally, the primary process listens on the shared port and distributes connections. On Linux (default), the distribution uses round-robin scheduling (cluster.SCHED_RR): the primary accepts a connection and hands the socket to a worker via IPC (passing the file descriptor through a unix domain socket). Each worker is an independent process with its own V8 isolate, event loop, and memory — so app state is not shared (use Redis/external store for shared state). The worker's server listens on the SAME port because the primary pre-binds it and passes connections. Windows and some platforms use SCHED_NONE (OS-level SO_REUSEPORT-style sharing) instead.",
+    "underTheHood": "The master creates a net server on the port. For SCHED_RR, it accepts a client connection (the raw handle) and sends it to the next worker via the IPC channel (a Unix domain socket), where the worker's cluster server receives the handle and emits a 'connection' event. The round-robin index advances per connection, distributing load evenly. The IPC is implemented with libuv's pipe handles carrying the fd (uv_write2 / sendmsg with SCM_RIGHTS). Worker lifecycle: cluster.fork() spawns a child_process; the 'exit' event fires on crash and you can refork (with backoff). Shared state across workers must go through the primary (message events) or an external store — workers do not share memory."
+  },
+  "rosettaStone": {
+    "react": "N/A — Node.js runtime concern.",
+    "angular": "N/A — Node.js concern.",
+    "vue": "N/A — Node.js concern.",
+    "svelte": "N/A — Node.js concern."
+  },
+  "codeComparison": {
+    "title": "Single-process server vs clustered multi-process",
+    "summary": "A single process uses one core; clustering forks workers so the server uses all cores.",
+    "legacyOrBad": {
+      "label": "Single process (one core)",
+      "snippet": "http.createServer(handler).listen(3000); // ❌ OLD: one process, one core",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A single Node process runs on ONE CPU core. Even on a\n// 16-core machine, 15 cores sit idle. CPU-bound requests (JSON\n// parsing, crypto, templating) serialize on the one event loop, so\n// throughput is capped at whatever one core can do.\nconst http = require('node:http');\n\nhttp.createServer((req, res) => {\n  const data = heavyWork(req.url); // CPU-bound\n  res.end(data);\n}).listen(3000);\n\n// Scaling requires either multiple processes (cluster) or external\n// load balancing across machines."
+      }
+    },
+    "modernOrGood": {
+      "label": "Cluster across cores",
+      "snippet": "if (cluster.isPrimary) {\n  for (let i = 0; i < os.cpus().length; i++) cluster.fork(); // ✅ NEW\n  cluster.on('exit', (w) => cluster.fork()); // ✅ NEW: auto-replace\n} else {\n  http.createServer(handler).listen(3000); // ✅ NEW: each worker on same port\n}",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "javascript",
+        "code": "const cluster = require('node:cluster');\nconst os = require('node:os');\nconst http = require('node:http');\n\nif (cluster.isPrimary) {\n  // ✅ NEW: fork one worker per CPU core\n  for (let i = 0; i < os.cpus().length; i++) {\n    cluster.fork(); // ✅ NEW: each worker is a full Node process\n  }\n  // ✅ NEW: replace crashed workers automatically\n  cluster.on('exit', (worker) => {\n    console.log(`worker ${worker.process.pid} died, restarting`);\n    cluster.fork();\n  });\n} else {\n  // ✅ NEW: workers share the same port via round-robin socket passing\n  http.createServer((req, res) => {\n    res.end(heavyWork(req.url));\n  }).listen(3000);\n}\n\n// ⚠️ Workers don't share memory — use Redis/external store for shared\n// session/cache state. In-process state (setInterval, in-memory\n// caches) is per-worker."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the cluster master hand connections to workers, and what is round-robin scheduling?",
+      "contextIntro": "This tests the socket-handoff mechanics — interviewers want the fd-passing over IPC and the SCHED_RR vs SCHED_NONE distinction that explains cross-platform behavior.",
+      "detailedAnswer": "With the default round-robin scheduling (cluster.SCHED_RR, used on Linux), the PRIMARY process binds the port and accepts every incoming connection. It then passes the raw socket (the file descriptor) to the next worker in rotation via IPC — implemented with libuv pipes and sendmsg/SCM_RIGHTS (fd passing over a Unix domain socket). The worker's net server receives the handle and emits a 'connection' event, so the worker handles the request without ever having bound the port itself. This distributes connections evenly. On Windows (and when SCHED_NONE is used), the OS shares the port across workers directly (SO_REUSEPORT semantics), and the kernel does the distribution. The round-robin approach gives Node control over balancing; SCHED_NONE relies on the OS.",
+      "trapWarning": "The naive answer is 'each worker binds the same port independently'. In SCHED_RR the master accepts and passes fds; only with SCHED_NONE do workers share via the OS. Another trap: assuming sticky sessions are automatic — round-robin can route a client's successive requests to different workers, so session state must live outside the process (Redis) or use sticky logic. Candidates who describe the fd-passing mechanism show real understanding."
+    },
+    {
+      "question": "What state is NOT shared across cluster workers, and how do you handle it?",
+      "contextIntro": "This probes the process-boundary implications — interviewers want the per-isolate memory model and the external-store pattern that clustering requires.",
+      "detailedAnswer": "Cluster workers are separate processes with separate V8 heaps: in-memory state (module-level variables, caches, in-process sessions, setInterval counters, sockets) is NOT shared. A request handled by worker 1 cannot read state that worker 2 set in memory. The patterns: use an external shared store (Redis, a database) for sessions, caches, and counters; route stateful traffic to the same worker via sticky sessions (checking a cookie/header and forcing the round-robin assignment) if you must keep in-process state; and use the primary as an IPC hub for simple cross-worker messages (process.send / cluster message events). This is the key architectural consequence of process-based scaling: everything shared must be externalized.",
+      "trapWarning": "The naive answer is 'cluster shares memory across workers'. Each worker is an isolated process — no shared heap. Another trap: relying on in-memory rate-limit counters or caches to be accurate — they're per-worker, so limits are N× off and caches are duplicated. Candidates who mention the external store and sticky-session patterns show real production experience."
+    }
+  ]
+}
