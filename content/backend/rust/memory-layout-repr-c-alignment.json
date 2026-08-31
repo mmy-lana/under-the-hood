@@ -1,0 +1,68 @@
+{
+  "id": "memory-layout-repr-c-alignment",
+  "title": "Memory Layout: Struct Padding, Field Reordering, #[repr(C)], #[repr(packed)]",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "memory-layout",
+    "repr-c",
+    "repr-packed",
+    "padding",
+    "alignment"
+  ],
+  "prerequisites": [
+    "Rust structs and types",
+    "Understanding of memory alignment and C ABI"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A parking lot has bays of different widths, and every car must be parked starting at a bay boundary that matches its width (alignment). A small car (1 unit) can park anywhere; a big truck (8 units) must start at an 8-unit boundary. If a lot lists a small car, a truck, and another small car, the truck's boundary rule forces a gap after the first small car — wasted space (padding). Rust by default rearranges the list to minimize gaps; the C-style arrangement keeps your exact order and the gaps that come with it.",
+    "junior": "Rust structs have a default layout: the compiler can REORDER fields to minimize padding (size = sum of field sizes, rounded up to alignment). The layout is unspecified by default — you can't rely on field order or offsets. #[repr(C)] gives C-compatible layout: fields in declaration order, with C's alignment/padding rules — required for FFI and for matching C structs. #[repr(packed)] removes padding (fields tightly packed) — saves memory but can cause unaligned access (and performance/UB issues on some platforms). #[repr(align(N))] forces a minimum alignment. Use std::mem::size_of and offset_of to check layouts.",
+    "senior": "Architecturally, the default Rust layout is the compiler's freedom: rustc (and LLVM) reorder fields to reduce padding while respecting each field's alignment, producing the smallest size for a struct of that shape (the 'optimal' layout, but NOT guaranteed stable). This is why repr(Rust) structs are not FFI-safe. #[repr(C)] pins the layout to the C rules: fields in order, each aligned to its type's alignment, with trailing padding to the struct's alignment. #[repr(packed)] sets all fields to alignment 1 (no padding) — this can make references to fields unaligned, which is UB when dereferenced on strict-alignment architectures (x86 tolerates it, ARM may trap). Choosing the right repr is a memory/FFI/performance trade-off.",
+    "underTheHood": "Field placement: each field is placed at an offset that is a multiple of its alignment. Struct alignment = max of field alignments (unless overridden). Default Rust layout runs a packing algorithm (the layout optimizer in rustc/LLVM) that orders fields to pack them; the result is unspecified and can change between versions. #[repr(C)] disables reordering and computes offsets exactly as C does. #[repr(packed)] forces every field to alignment 1, so a u32 field may sit at an odd offset; taking &field creates a reference with the (possibly unaligned) address — the compiler warns, and on strict-alignment targets dereferencing it is UB (use read_unaligned). #[repr(align(N))] raises the struct's alignment (useful for cache-line alignment, SIMD). size_of/align_of report the results."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Default repr(Rust) layout vs #[repr(C)]",
+    "summary": "The default layout reorders fields to pack tightly; #[repr(C)] preserves declaration order with C padding — needed for FFI.",
+    "legacyOrBad": {
+      "label": "Assuming field order for FFI",
+      "snippet": "struct Point { x: u8, y: u64, z: u8 } // ❌ OLD: order NOT guaranteed",
+      "fullFile": {
+        "filename": "layout.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: A repr(Rust) struct (the default) gives the compiler freedom\n// to REORDER fields. Here x: u8, y: u64, z: u8 — the default layout\n// will likely place x, z, then y (to avoid the 7-byte gap after each\n// u8 before the u64), so the in-memory offsets are NOT x@0,y@8,z@16.\n// If you pass this struct to C (or read it from a binary format)\n// assuming declaration order, you get garbage.\n#[repr(C)] // <-- missing → wrong assumption\nstruct Point {\n    x: u8,\n    y: u64,\n    z: u8,\n}\n\n// size_of::<Point>() under default layout: 16 (x,z packed, then y).\n// Under #[repr(C)]: 24 (x@0, pad to 8, y@8, z@16, pad to 24).\n// Passing the default-layout struct to C that expects the repr(C)\n// layout corrupts the data."
+      }
+    },
+    "modernOrGood": {
+      "label": "#[repr(C)] for FFI",
+      "snippet": "#[repr(C)]\nstruct Point { x: u8, y: u64, z: u8 } // ✅ NEW: C layout, field order fixed",
+      "fullFile": {
+        "filename": "layout.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: #[repr(C)] fixes the layout to C's rules: fields in\n// declaration order, each aligned to its type, trailing padding to the\n// struct alignment. This is the layout a C struct with the same\n// members would have, so FFI works.\n#[repr(C)] // ✅ NEW: FFI-safe layout\nstruct Point {\n    x: u8,\n    y: u64,\n    z: u8,\n}\n\n// size_of::<Point>() == 24 (x@0, 7 bytes padding, y@8, z@16,\n// 7 bytes trailing padding to align 8).\n\n// For a packed representation (protocol buffers, network packets):\n// #[repr(C, packed)]\n// struct Header { a: u8, b: u32, c: u8 } // no padding — 6 bytes\n// ⚠️ packed can cause unaligned field access — read with\n// ptr::read_unaligned on strict-alignment targets.\n\n// Check layouts:\n// std::mem::size_of::<Point>(), std::mem::align_of::<Point>(),\n// std::mem::offset_of!(Point, y)"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is the default Rust struct layout unspecified, and why does that matter for FFI?",
+      "contextIntro": "This tests the layout model — interviewers want the field-reordering freedom and why only #[repr(C)] provides the ABI guarantee C code needs.",
+      "detailedAnswer": "The default repr(Rust) layout gives the compiler (rustc + LLVM) the freedom to reorder fields and choose padding to minimize size — an optimization that can change between compiler versions. Because the layout is unspecified and unstable, passing such a struct across an FFI boundary is unsafe: the C side expects a specific layout (declaration order with C alignment/padding), and a reordered Rust struct would be misinterpreted. #[repr(C)] pins the layout to the C rules: exact field order, C alignment, and trailing padding — making the struct ABI-compatible. The same concern applies to serializing structs directly to bytes, reading binary formats, or relying on offset_of for a specific member. If you need a stable layout for any of those, use #[repr(C)] (or repr(packed)/repr(align) as appropriate).",
+      "trapWarning": "The naive answer is 'struct fields are in declaration order'. Rust's default layout is explicitly unspecified and may reorder. Another trap: thinking size_of alone tells you the layout — two different layouts can have the same size; offsets matter. Candidates who explain the reordering freedom and the FFI guarantee show real understanding."
+    },
+    {
+      "question": "What are the risks of #[repr(packed)], and why does Rust warn about references to packed fields?",
+      "contextIntro": "This probes the unaligned-access problem — interviewers want the alignment-1 consequence and the UB risk on strict-alignment architectures, plus the safe workaround.",
+      "detailedAnswer": "#[repr(packed)] forces every field to alignment 1 — no padding between fields, giving the smallest possible size. The consequence: fields can sit at unaligned offsets (e.g. a u32 at offset 1). Taking a reference to such a field (&s.field) creates a reference whose address is not aligned to the field's required alignment. On strict-alignment architectures (ARM, and x86 in some SIMD contexts), dereferencing an unaligned reference is undefined behavior — the compiler can miscompile or the CPU can fault. This is why Rust emits a warning when you take a reference to a packed field's member. The safe approach: read/write the field with read_unaligned/write_unaligned (or copy the struct to an aligned location). Use packed layouts deliberately for network/protocol structs and FFI, not casually for 'smaller structs'.",
+      "trapWarning": "The naive answer is 'packed just saves memory, no downside'. It introduces unaligned field access that is UB when dereferenced via a reference on strict-alignment targets. Another trap: thinking x86 makes it always safe — x86 tolerates unaligned loads for most instructions, but the UB contract still lets the optimizer assume alignment, and some operations (atomics, SIMD) fault. Candidates who explain the alignment-1 consequence and read_unaligned show real depth."
+    }
+  ]
+}

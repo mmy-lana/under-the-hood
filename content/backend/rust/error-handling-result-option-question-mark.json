@@ -1,0 +1,68 @@
+{
+  "id": "error-handling-result-option-question-mark",
+  "title": "Result<T, E> & Option<T>: The ? Operator Lowering and From Conversions",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "error-handling",
+    "result",
+    "option",
+    "question-mark",
+    "from"
+  ],
+  "prerequisites": [
+    "Rust enums, generics, and traits",
+    "Understanding of error propagation patterns"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Every task in a workshop returns either a finished part (Ok) or a 'failed - reason' slip (Err). Some tasks might not produce anything at all (Option: Some or None — e.g. 'is there a spare part?'). The foreman's shorthand: when a worker hands him a task, if it's a failure slip, he immediately stops and hands the SAME slip up the chain — without rewriting it (the ? operator). If the failure type doesn't match what the office expects, the office has a converter who translates it into the right slip format (the From conversion).",
+    "junior": "Option<T> (Some/None) and Result<T, E> (Ok/Err) are the standard way to handle optional and fallible operations in Rust. The ? operator propagates errors: fn read() -> Result<String, io::Error> { let s = fs::read_to_string(path)?; Ok(s) } — if the inner call returns Err, ? returns it from the function immediately. Option also supports ?: in a function returning Option<T>, None propagates. The From trait enables automatic error conversion: if your function returns Result<_, MyError> and a ? encounters an io::Error, the compiler inserts From::from(io::Error) -> MyError (if implemented). Use map, and_then, unwrap_or, match for handling without early returns.",
+    "senior": "Architecturally, Result and Option are zero-cost enums (a tagged union with a niche optimization where possible). The ? operator desugars to a match: match expr { Ok(v) => v, Err(e) => return Err(From::from(e)) } — so the conversion and early return are explicit. The From<io::Error> for MyError impl defines the conversion; this is what makes multi-error functions (combining io::Error and ParseIntError) ergonomic: each ? converts into your unified error type. thiserror and anyhow provide derive-based error types and boxed dynamic errors. The key design point: errors are VALUES, not control-flow exceptions — they must be handled or explicitly propagated, which makes error paths visible and testable.",
+    "underTheHood": "The ? desugaring (per the Rust reference) for Result: match result { Ok(v) => v, Err(e) => return Err(From::from(e)) } — the From::from call is the 'conversion' the compiler requires (the error type of the function must implement From<E> for every inner error). For Option: match option { Some(v) => v, None => return None }. Result and Option are enums with a niche: Option<&T> and Result<&T, E> are often the size of a single pointer (the null niche). This is zero-cost: no allocation, no exception machinery. The Try trait (now stabilized for Result/Option) is the generic mechanism behind ?. The compiler also uses the 'unreachable' knowledge from exhaustive matches to eliminate dead code."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Nested match error handling vs ? operator",
+    "summary": "Manually matching every error nests the code and obscures the happy path; ? flattens it into a linear flow with automatic conversion.",
+    "legacyOrBad": {
+      "label": "Nested matches (error pyramid)",
+      "snippet": "match fs::read_to_string(path) {\n  Ok(s) => match s.parse::<i32>() {\n    Ok(n) => Ok(n),\n    Err(e) => Err(e.into()), // ❌ OLD: manual conversion per level\n  },\n  Err(e) => Err(e.into()),\n}",
+      "fullFile": {
+        "filename": "error.rs",
+        "language": "rust",
+        "code": "use std::fs;\nuse std::io;\nuse std::num::ParseIntError;\n\n// ❌ OLD: Manual nested matching. Every fallible call nests another\n// level, the happy path is buried, and each error needs an explicit\n// conversion (e.into()). Adding a third fallible step triples the\n// nesting.\nfn read_number(path: &str) -> Result<i32, Box<dyn std::error::Error>> {\n    match fs::read_to_string(path) {\n        Ok(s) => match s.trim().parse::<i32>() {\n            Ok(n) => Ok(n),\n            Err(e) => Err(e.into()), // ❌ OLD: manual conversion\n        },\n        Err(e) => Err(e.into()), // ❌ OLD: manual conversion\n    }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "? operator with From conversion",
+      "snippet": "fn read_number(path: &str) -> Result<i32, Box<dyn std::error::Error>> {\n  let s = fs::read_to_string(path)?; // ✅ NEW: io::Error -> Box<dyn Error> via From\n  Ok(s.trim().parse::<i32>()?) // ✅ NEW: ParseIntError -> Box<dyn Error> via From\n}",
+      "fullFile": {
+        "filename": "error.rs",
+        "language": "rust",
+        "code": "use std::fs;\n\n// ✅ NEW: The ? operator flattens the flow. Each ? desugars to:\n//   match expr { Ok(v) => v, Err(e) => return Err(From::from(e)) }\n// so io::Error and ParseIntError are auto-converted into\n// Box<dyn std::error::Error> via the blanket From impl.\nfn read_number(path: &str) -> Result<i32, Box<dyn std::error::Error>> {\n    let s = fs::read_to_string(path)?; // ✅ NEW: auto-converts io::Error\n    Ok(s.trim().parse::<i32>()?) // ✅ NEW: auto-converts ParseIntError\n}\n\n// With a custom error type:\n// #[derive(thiserror::Error, Debug)]\n// enum AppError {\n//   #[error(\"io: {0}\")] Io(#[from] io::Error),\n//   #[error(\"parse: {0}\")] Parse(#[from] ParseIntError),\n// }\n// fn read_number(path: &str) -> Result<i32, AppError> {\n//   let s = fs::read_to_string(path)?;  // From<io::Error> via #[from]\n//   Ok(s.trim().parse::<i32>()?)        // From<ParseIntError> via #[from]\n// }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the ? operator lower to code, and what role does the From trait play in it?",
+      "contextIntro": "This tests the desugaring — interviewers want the exact match + early-return + From::from translation, which explains the type requirements of ?.",
+      "detailedAnswer": "The ? operator desugars to a match with an early return: for Result, match expr { Ok(v) => v, Err(e) => return Err(From::from(e)) }; for Option, match expr { Some(v) => v, None => return None }. The From::from(e) is the crucial part: the enclosing function's error type must implement From<the inner error type>, and the compiler inserts the conversion automatically. This is why ? composes across different error sources: each inner error type converts into your unified error type via its From impl. If no From impl exists, the code doesn't compile (a compile-time guarantee that error propagation is type-correct). The Try trait generalizes ? beyond Result/Option (for custom types implementing Try).",
+      "trapWarning": "The naive answer is '? just unwraps and returns the error'. The From conversion is mandatory and automatic — if the error types don't convert, it's a compile error, not a runtime surprise. Another trap: thinking ? can be used in any function — it requires the function to return Result/Option (or Try); a function returning a plain value cannot use ?. Candidates who explain the From requirement show real understanding."
+    },
+    {
+      "question": "Why are Option and Result considered 'zero-cost', and how does that differ from exceptions?",
+      "contextIntro": "This tests the cost model — interviewers want the enum representation, niche optimization, and the control-flow difference from exception-based error handling.",
+      "detailedAnswer": "Option<T> and Result<T, E> are plain enums (tagged unions): the tag + the payload, laid out with niche optimizations where possible — Option<&T> is one pointer (null is the None niche), Result<&T, E> can be one pointer too. There's no heap allocation and no exception/unwinding machinery: errors flow as values through normal control flow. The ? operator is a match + early return, compiled to a branch. This contrasts with exceptions: exceptions require runtime unwinding machinery, hidden control-flow edges, and (in some languages) allocation of exception objects; the compiler cannot optimize code paths as freely because any call might throw. Rust's value-based errors make error paths explicit, visible to the optimizer, and testable — at the cost of requiring programmers to handle or propagate them explicitly (no silent 'let it bubble up' without a type signature).",
+      "trapWarning": "The naive answer is 'errors are free'. The enum representation is cheap but not free (a branch per check), and multi-level propagation has some cost — but it's predictable and comparable to a success-path check, unlike exception overhead. Another trap: assuming Option/Result are heap-allocated — they are stack values, with niche optimization collapsing the size. Candidates who describe the enum layout and control-flow difference show real understanding."
+    }
+  ]
+}

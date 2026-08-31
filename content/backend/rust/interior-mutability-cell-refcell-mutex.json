@@ -1,0 +1,68 @@
+{
+  "id": "interior-mutability-cell-refcell-mutex",
+  "title": "Interior Mutability: Cell<T>, RefCell<T>, Mutex<T>, RwLock<T>",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x (std::cell, std::sync)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "interior-mutability",
+    "cell",
+    "refcell",
+    "mutex",
+    "rwlock"
+  ],
+  "prerequisites": [
+    "Rust ownership and borrowing",
+    "Understanding of shared vs mutable references"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A library has a rule: if you borrow a book to read, you may not scribble in it. But some books have a special binding: even while many people are reading it, a librarian can quietly update the pages inside. The librarian must be careful: if someone is currently reading a page, the update waits until they finish (checked at the moment of the update); if multiple librarians from different branches share the book, they must take turns with a special lock. The rule 'no scribbling while reading' still exists — it's just checked at a different time.",
+    "junior": "Rust's borrow checker normally forbids mutating a value while it's shared. Interior mutability provides a way to mutate through a shared reference, moving the check from compile time to runtime (or to a lock). Cell<T> (Copy types): get()/set() with no borrow tracking. RefCell<T>: borrow()/borrow_mut() with runtime checks (panics on double borrow). Mutex<T>: thread-safe with a lock (lock() returns a guard). RwLock<T>: many readers or one writer. Use Cell/RefCell for single-threaded interior mutability (e.g. counters, caches), Mutex/RwLock for shared state across threads.",
+    "senior": "Architecturally, interior mutability is the escape hatch that lets you mutate behind &T. Cell does this by always COPYING values in and out (no references to its content), so it's only for Copy types — no aliasing is ever observable. RefCell stores a borrow flag: borrow() increments a count (shared), borrow_mut() requires the count to be zero (exclusive); violation panics at runtime. Mutex wraps the value with a lock: only the guard (the mutable view) can touch it, and the lock is enforced by the OS/atomics. RwLock allows multiple readers but exclusive writers. These types are the building blocks for patterns the borrow checker cannot express (caches, graphs, self-referential structures).",
+    "underTheHood": "Cell<T> has no runtime cost beyond the copy itself (it's a plain value wrapper; set() is a memcpy). RefCell<T> uses an UnsafeCell<T> plus a Cell<BorrowFlag> (an isize that counts active borrows: negative = one mutable borrow, positive = shared borrow count); borrow/borrow_mut do an atomic-ish increment with a check and panic on conflict. UnsafeCell<T> is the primitive the language uses to bypass the aliasing rules — it's what enables mutation through shared references at all. Mutex<T> uses an atomic spinlock/futex (on Linux, a futex; the standard library's implementation uses an atomic state + OS wait) and returns a MutexGuard (a RAII type that unlocks on drop). RwLock uses a reader-writer lock primitive (often a variant of a shared mutex/futex) allowing concurrent readers."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Compile-time borrow error vs RefCell runtime borrow",
+    "summary": "Mutating through a shared reference is a compile error in safe Rust; RefCell moves the check to runtime and panics on violation.",
+    "legacyOrBad": {
+      "label": "Borrow checker rejection",
+      "snippet": "let x = &v; // ❌ OLD: cannot mutate through a shared reference at compile time",
+      "fullFile": {
+        "filename": "borrow.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: The borrow checker REJECTS mutating through a shared\n// reference at compile time:\n//   let mut v = Vec::new();\n//   let shared = &v;\n//   v.push(1); // error[E0502]: cannot borrow `v` as mutable because\n//             // it is also borrowed as immutable\n// This is the safe-Rust rule: no aliasing + mutation. But some\n// legitimate patterns (a cache, a graph, a callback that mutates\n// captured state) NEED mutation behind shared references — which is\n// what the interior-mutability types provide.\nfn main() {\n    let mut v = vec![1];\n    let _shared = &v;\n    // v.push(2); // ❌ OLD: compile error (E0502)\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "RefCell runtime-checked mutation",
+      "snippet": "let cell = RefCell::new(vec![1]);\ncell.borrow_mut().push(2); // ✅ NEW: runtime-checked exclusive borrow",
+      "fullFile": {
+        "filename": "borrow.rs",
+        "language": "rust",
+        "code": "use std::cell::RefCell;\n\n// ✅ NEW: RefCell moves the aliasing check from compile time to\n// runtime. You can hold shared references to the RefCell while\n// borrowing its contents mutably through borrow_mut().\nfn main() {\n    let cell = RefCell::new(vec![1]);\n\n    // ✅ NEW: exclusive borrow at runtime — the borrow flag is checked\n    cell.borrow_mut().push(2);\n\n    // Shared borrows are fine (multiple readers):\n    let a = cell.borrow();\n    let b = cell.borrow(); // ✅ NEW: two shared borrows OK\n    drop(a);\n    drop(b);\n\n    // ⚠️ Violation panics at runtime:\n    // let m = cell.borrow_mut();\n    // let n = cell.borrow_mut(); // panic: already mutably borrowed\n}\n\n// Cell for Copy types, RefCell for single-threaded, Mutex/RwLock for\n// sharing across threads."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between Cell and RefCell, and why can't Cell wrap non-Copy types?",
+      "contextIntro": "This tests the interior-mutability design — interviewers want the copy-in/copy-out mechanism and why RefCell (with borrows) is needed for types that can't be copied.",
+      "detailedAnswer": "Cell<T> works by replacing the value wholesale: get() copies the value out, set() copies a new value in. There are never references INTO the cell's content exposed to the caller — so there is no aliasing to manage, and no runtime borrow check is needed. This is only sound for Copy types (types that can be duplicated bit-for-bit); for non-Copy types (String, Vec), copying in and out would move the value, which is not possible through a shared reference. RefCell<T> instead exposes borrow()/borrow_mut() that hand out REFERENCES to the content, tracking how many are active with a runtime flag: multiple shared borrows are fine, a mutable borrow requires zero other borrows, and a violation panics. That's why RefCell handles non-Copy types: it never copies, it borrows.",
+      "trapWarning": "The naive answer is 'Cell and RefCell are interchangeable'. They have different mechanisms (copy vs borrow) and different type constraints (Copy vs any). Another trap: thinking RefCell's runtime check makes unsafe code unnecessary — it prevents borrow violations but the check is a panic, and using borrow_mut while a borrow is alive still causes a runtime failure, not a compile error. Candidates who explain the copy-vs-borrow distinction show real understanding."
+    },
+    {
+      "question": "How does Mutex relate to RefCell, and why is Mutex<T> Send while RefCell<T> is not?",
+      "contextIntro": "This probes the thread-safety boundary — interviewers want the lock-based vs borrow-flag mechanism and the auto-trait (Send/Sync) differences that make RefCell single-threaded only.",
+      "detailedAnswer": "Mutex<T> is the thread-safe analogue of RefCell: it provides exclusive mutable access to the inner value, but enforces exclusivity with a LOCK (atomic state + OS futex/semaphore) instead of a borrow flag, and it hands out a MutexGuard (RAII) that unlocks on drop. The key difference is in the auto-traits: RefCell<T> is !Sync (it's not safe to share across threads because the borrow flag is not atomic and a race would cause unsoundness), while Mutex<T> is Send + Sync when T is Send (the lock makes concurrent access safe). Cell<T> is also !Sync for the same reason. This is why shared mutable state across threads requires Mutex/RwLock (or atomics), and RefCell/Cell are strictly single-threaded. The compiler enforces this: you cannot share a RefCell across threads in safe code.",
+      "trapWarning": "The naive answer is 'Mutex is just a thread-safe RefCell'. The locking mechanism (OS-level mutual exclusion) vs the borrow flag is a real semantic difference, and the Send/Sync auto-trait split is what the compiler enforces. Another trap: thinking RwLock is always faster than Mutex — under writer-heavy or contended workloads, RwLock's reader-writer overhead can make it slower; benchmark rather than assume. Candidates who connect the types to their auto-traits show real concurrency understanding."
+    }
+  ]
+}

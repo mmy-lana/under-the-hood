@@ -1,0 +1,68 @@
+{
+  "id": "unsafe-rust-raw-pointers-miri",
+  "title": "Unsafe Rust: Raw Pointers (*const T, *mut T), Undefined Behavior, Miri",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "unsafe",
+    "raw-pointers",
+    "undefined-behavior",
+    "miri",
+    "soundness"
+  ],
+  "prerequisites": [
+    "Rust ownership, references, and lifetimes",
+    "Understanding of memory safety"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A toolbox has two kinds of labels. Safe tools: the toolbox's rules ensure you use them correctly (the safety system checks everything). Unsafe tools: the toolbox hands you the tool with a warning 'you're on your own — if you use it wrong, the whole workshop can catch fire' (undefined behavior). A raw pointer is such a tool: it's a bare address with no guarantee that it points to something valid. The toolbox still has a safety inspector (Miri) that can watch you use the tool in a test sandbox and shout 'you're about to break the rules!' before the fire starts.",
+    "junior": "unsafe blocks let you do things the compiler cannot verify: dereference raw pointers, call unsafe functions (FFI), access/modify static mut, implement unsafe traits, call unsafe methods. Raw pointers: *const T and *mut T. They can be null, dangling, and ignore borrow rules. Creating a raw pointer is safe; DEREFERENCING it is unsafe (must be in an unsafe block). Unsafe does NOT disable the borrow checker — it only unlocks these specific operations. Rules: ensure the pointer is valid and aligned, the data is initialized, and no aliasing rules are violated (unless using interior mutability properly). Use unsafe sparingly and document the invariants.",
+    "senior": "Architecturally, unsafe Rust is where you take responsibility for the aliasing and validity invariants the compiler normally enforces. The Rust Reference defines undefined behavior (UB): dereferencing a null/dangling/un-aligned pointer, creating an invalid value, violating aliasing (e.g. two mutable references to the same location), data races, calling a function with the wrong ABI, etc. UB is not 'a crash' — it's a contract that the compiler may assume never happens, so the optimizer can do anything (including making your program behave wrongly). The key mental model: unsafe code must uphold the invariants for SAFE code too — safe code can call into your unsafe functions and must never observe UB.",
+    "underTheHood": "Miri is an interpreter for Rust's abstract machine (it runs the MIR, not native code) that detects UB as it happens: out-of-bounds access, use-after-free (via Stacked Borrows / Tree Borrows aliasing models), uninitialized reads, invalid values, data races (in the data-race detector), and pointer provenance violations. It's the primary tool for testing unsafe code (cargo +miri test). Other tools: AddressSanitizer/Valgrind (native, catch memory errors but not all Rust-UB), and the compiler's own lint/checks. The Rust Reference and the Unsafe Code Guidelines Working Group define the exact UB rules, some still being formalized (especially aliasing/Stacked Borrows). Writing unsafe is about precisely documenting and upholding these invariants."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Safe reference API vs raw-pointer unsafe API",
+    "summary": "Safe code uses references with compiler guarantees; raw pointers require manual validity/aliasing checks inside unsafe blocks.",
+    "legacyOrBad": {
+      "label": "Dereferencing a raw pointer without validation",
+      "snippet": "let p: *const i32 = ptr; // ❌ OLD: no check that it's valid",
+      "fullFile": {
+        "filename": "raw.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: Dereferencing a raw pointer without verifying it points to a\n// valid, aligned, initialized value is undefined behavior. The\n// compiler cannot help — this is exactly the class of bug unsafe\n// introduces when used carelessly.\nfn read(p: *const i32) -> i32 {\n    unsafe { *p } // ❌ OLD: if p is null/dangling/misaligned → UB\n}\n\n// With a null pointer this crashes (or worse, does something\n// unpredictable under optimization). The fix is to VALIDATE before\n// dereferencing:\nfn read_safe(p: *const i32) -> Option<i32> {\n    if p.is_null() {\n        None\n    } else {\n        Some(unsafe { *p }) // still requires the caller to guarantee validity\n    }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Validated dereference with documented invariants",
+      "snippet": "// ✅ NEW: check null/alignment, document the lifetime contract\nif !p.is_null() && (p as usize) % align_of::<i32>() == 0 {\n    let v = unsafe { *p }; // ✅ NEW: invariants upheld\n}",
+      "fullFile": {
+        "filename": "raw.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: Safe-style wrapper that upholds the raw-pointer invariants\n// (non-null, aligned, pointing at a valid live value) and documents\n// the contract — so callers in SAFE code cannot trigger UB.\n\n/// SAFETY: `p` must be non-null, aligned, and point to a valid `i32`\n/// that remains alive (and unaliased) for the duration of the call.\nfn read_i32(p: *const i32) -> Option<i32> {\n    if p.is_null() {\n        return None; // ✅ NEW: null check\n    }\n    if (p as usize) % std::mem::align_of::<i32>() != 0 {\n        return None; // ✅ NEW: alignment check\n    }\n    Some(unsafe { *p }) // ✅ NEW: dereference with invariants met\n}\n\n// ✅ NEW: validate with Miri:\n//   cargo +nightly miri test\n// Miri runs the abstract machine and catches UB (dangling, unaligned,\n// uninitialized reads) in tests."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is undefined behavior in Rust, and why is it dangerous beyond just crashing?",
+      "contextIntro": "This tests the UB contract — interviewers want the optimizer's assumption model, not just 'it crashes', because UB can silently corrupt behavior under optimization.",
+      "detailedAnswer": "Undefined behavior is a set of actions the Rust abstract machine declares as having NO defined semantics: dereferencing null/dangling/misaligned pointers, reading uninitialized memory, creating invalid values (e.g. a bool that is neither 0 nor 1), violating aliasing rules (two &mut to the same location), data races, and calling functions with wrong ABIs. The danger: the compiler is allowed to assume UB never happens. Given that assumption, the optimizer can transform code in ways that are correct only if the assumption holds — so a subtle UB (like a dangling pointer in a cold path) can cause bizarre miscompilation in unrelated code, not just a crash. This is why UB is a soundness issue, not a reliability issue: it invalidates the entire program's guarantees. Miri and sanitizers exist to find it in testing before it ships.",
+      "trapWarning": "The naive answer is 'UB means it might crash'. UB means the compiler may assume it never happens and optimize accordingly — behavior is entirely unpredictable. Another trap: thinking a small unsafe block 'contains' the danger — UB from unsafe code can make even safe code behave wrongly because the optimizer's assumptions were violated globally. Candidates who explain the optimizer-assumption model show real soundness understanding."
+    },
+    {
+      "question": "How does Miri work, and why is it better at catching Rust UB than a native sanitizer?",
+      "contextIntro": "This probes the tooling — interviewers want the abstract-machine interpretation and the Rust-specific checks (aliasing, provenance, uninitialized reads) that native tools miss.",
+      "detailedAnswer": "Miri interprets the Rust MIR (mid-level intermediate representation) rather than executing native code. It implements the Rust abstract machine, so it can detect UB that native tools cannot see: reads of uninitialized memory (tracked per byte), pointer provenance violations (using a pointer to access memory it wasn't derived from), aliasing violations (via the Stacked Borrows or Tree Borrows model — e.g. using a shared reference to mutate), invalid enum/bool values, and data races (it includes a data-race detector for the concurrent interpreter). Native sanitizers (ASan, Valgrind) catch memory errors at the hardware/allocator level but miss the language-level UB (uninitialized reads, provenance, invalid values) that Miri models. That's why the Rust workflow is: run tests under Miri (cargo +miri test) for unsafe code, and use sanitizers in addition for native-level issues.",
+      "trapWarning": "The naive answer is 'sanitizers catch everything Rust can misbehave on'. Miri models language-level UB that native tools can't detect. Another trap: thinking Miri runs the optimized program — it interprets MIR (with its own semantics), so it may report issues that optimization would hide or miss performance-only behavior. Candidates who distinguish the abstract machine from native execution show real understanding."
+    }
+  ]
+}

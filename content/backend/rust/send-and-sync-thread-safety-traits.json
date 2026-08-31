@@ -1,0 +1,68 @@
+{
+  "id": "send-and-sync-thread-safety-traits",
+  "title": "Thread Safety: Auto-Traits Send and Sync Compile-Time Verification",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "send",
+    "sync",
+    "auto-traits",
+    "thread-safety",
+    "concurrency"
+  ],
+  "prerequisites": [
+    "Rust ownership and borrowing",
+    "Understanding of threads and shared state"
+  ],
+  "progressiveExplaining": {
+    "eli5": "An office has rules about who can carry sensitive files. Send: a file that can be safely carried from one office to another (moved between threads). Sync: a file that can be safely left on a shared desk where several offices read it at the same time (shared across threads). These rules are stamped on every item automatically by the building's safety system: most items are Send + Sync; a fragile item (like one with a fragile pointer) is not. The safety system refuses to let you break the rules — a build error, not a crash later.",
+    "junior": "Send and Sync are marker traits (auto-traits) that the compiler derives automatically. Send: a type can be moved to another thread safely (ownership transfer). Sync: a type can be shared by reference across threads (&T is Send). Most types are Send + Sync. Exceptions: Rc<T> is neither (not thread-safe); RefCell<T> and Cell<T> are Send but not Sync (single-threaded interior mutability); *const T/*mut T raw pointers are not Send/Sync by default (unsafe). Send/Sync are enforced at compile time: you cannot move a !Send value to another thread or share a !Sync value. You can implement them manually with unsafe impl for types you control (with responsibility for correctness).",
+    "senior": "Architecturally, Send means 'ownership can be transferred across threads safely' — the type does not rely on thread-local state or contain a non-thread-safe reference. Sync means '&T can be shared across threads' — effectively T is Send AND shared references are safe (no interior mutability without synchronization). These are auto-traits: the compiler computes them structurally (all fields must be Send/Sync, with overrides via negative impls). They are the compile-time guarantee behind std::thread::spawn (requires the closure to be Send) and Arc<T> (requires T: Send + Sync to share). The rules compose: Arc<Mutex<T>> is Send + Sync when T is Send; Rc<T> is neither because its reference count is not atomic.",
+    "underTheHood": "Send and Sync are implemented as marker traits with compiler-synthesized impls (auto traits): the compiler walks the type's fields and derives Send/Sync if all fields are. The key unsafe primitives override this: UnsafeCell<T> is !Sync (interior mutability without a lock is not shareable), raw pointers are !Send/!Sync by default (the compiler cannot know what they point to), and types like Mutex<T>, Arc<T>, AtomicUsize implement Send/Sync explicitly (via unsafe impl, guaranteeing the locking/atomic machinery). The thread::spawn bound (F: Send + 'static) and the Arc::new bound (T: Send + Sync + 'static) are enforced at compile time, so thread-safety bugs become compile errors rather than data races at runtime."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Sharing Rc across threads (compile error) vs Arc",
+    "summary": "Rc's non-atomic refcount makes it !Send/!Sync — a compile error; Arc uses atomic refcounting and is shareable.",
+    "legacyOrBad": {
+      "label": "Rc moved into a thread",
+      "snippet": "let rc = Rc::new(5);\nthread::spawn(move || { let _ = *rc; }); // ❌ OLD: compile error — Rc is !Send",
+      "fullFile": {
+        "filename": "send.rs",
+        "language": "rust",
+        "code": "use std::rc::Rc;\nuse std::thread;\n\n// ❌ OLD: Rc<T> is !Send (and !Sync): its reference count is a plain\n// field, not atomic, so moving it to another thread would let two\n// threads race on the refcount — a data race. The compiler REJECTS\n// this at compile time:\nfn main() {\n    let rc = Rc::new(5);\n    // error[E0277]: `Rc<i32>` cannot be sent between threads safely\n    let h = thread::spawn(move || {\n        let _ = *rc;\n    });\n    h.join().unwrap();\n}\n\n// This is the point: the failure is a COMPILE error, caught before\n// the program ever runs, instead of a runtime data race."
+      }
+    },
+    "modernOrGood": {
+      "label": "Arc for cross-thread sharing",
+      "snippet": "let arc = Arc::new(5); // ✅ NEW: atomic refcount, Send + Sync\nlet h = thread::spawn(move || { let _ = *arc; }); // ✅ NEW: compiles",
+      "fullFile": {
+        "filename": "send.rs",
+        "language": "rust",
+        "code": "use std::sync::Arc;\nuse std::thread;\n\n// ✅ NEW: Arc<T> uses an ATOMIC reference count, so it is Send + Sync\n// (when T: Send + Sync). Moving clones into threads is safe and\n// compiles.\nfn main() {\n    let arc = Arc::new(5); // ✅ NEW: thread-safe shared ownership\n    let h = thread::spawn(move || {\n        let _ = *arc; // ✅ NEW: safe read\n    });\n    h.join().unwrap();\n}\n\n// For mutable shared state, combine with a lock:\n// let shared = Arc::new(Mutex::new(0));\n// *shared.lock().unwrap() += 1; // Mutex<T> is Send+Sync when T is Send\n\n// If you need to send a !Send type (e.g. Rc), you must use a\n// different design (make it Send or wrap appropriately) — the\n// compiler will not let you cheat without unsafe."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between Send and Sync, and how are they related?",
+      "contextIntro": "This tests the two auto-trait semantics — interviewers want the move-vs-share distinction and the precise relationship (Sync ⇔ &T is Send), not just 'thread-safe markers'.",
+      "detailedAnswer": "Send means a value can be safely MOVED to another thread — ownership is transferred, and the receiver can use it exclusively. Sync means a value can be safely SHARED across threads — &T can be sent to another thread and read concurrently. The precise relationship: T: Sync is equivalent to &T: Send (if a shared reference to T can be sent, T is Sync). A type can be Send but not Sync (e.g. RefCell<T>: you can move it to another thread, but you cannot share &RefCell across threads because its borrow flag is non-atomic). A type can be neither (Rc). The guarantees are compile-time: thread::spawn requires the closure (including captured values) to be Send; sharing across threads requires the value to be Sync (or wrapped in a lock/Arc). These are the compile-time translation of 'no data races'.",
+      "trapWarning": "The naive answer is 'Send and Sync are the same thing'. Send = move across threads; Sync = share across threads, and the &T: Send equivalence is the precise relationship. Another trap: assuming all standard types are Send+Sync — Rc, RefCell, raw pointers, and *const T are not, by design. Candidates who state the &T: Send equivalence show real understanding."
+    },
+    {
+      "question": "How does the compiler derive Send and Sync, and when would you write an unsafe impl of them?",
+      "contextIntro": "This probes the auto-trait mechanics and the unsafe escape hatch — interviewers want the structural derivation and the responsibility contract of unsafe impl Send/Sync.",
+      "detailedAnswer": "Send and Sync are auto-traits: the compiler synthesizes the impl automatically by checking every field of the type — a struct is Send if all its fields are Send, and Sync if all fields are Sync (with negative impls overriding for types like UnsafeCell, Rc, raw pointers). You can write unsafe impl Send/Sync for a type you define when the compiler cannot prove it but YOU guarantee it's actually safe — e.g. a wrapper around raw pointers that you know are only accessed from one thread at a time. This is an unsafe contract: if your guarantee is wrong, you introduce data races that the compiler cannot catch. Safe code can rely on Send/Sync bounds without any special action; the unsafe impls are the escape hatch for FFI wrappers, thread-local primitives, and lock-free structures.",
+      "trapWarning": "The naive answer is 'unsafe impl Send makes my type thread-safe'. It only ASSERTS thread safety to the compiler; you are responsible for the actual safety — a wrong unsafe impl is a soundness hole (UB). Another trap: assuming the compiler derives Send/Sync only for simple structs — it's structural for all composed types (Vec<T>, Option<T>, Box<T> propagate the bounds of T). Candidates who describe the structural derivation and the unsafe-contract responsibility show real depth."
+    }
+  ]
+}

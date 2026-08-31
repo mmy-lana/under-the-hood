@@ -1,0 +1,68 @@
+{
+  "id": "atomics-and-memory-ordering",
+  "title": "std::sync::atomic: Relaxed, Acquire, Release, SeqCst Memory Ordering",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x (std::sync::atomic)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "atomics",
+    "memory-ordering",
+    "seqcst",
+    "acquire-release",
+    "concurrency"
+  ],
+  "prerequisites": [
+    "Rust ownership and shared state",
+    "Understanding of the C++ memory model concepts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two chefs share a whiteboard with a counter. The board is special: anyone can add 1 to the counter and it's never garbled (atomicity). But there's also a question of ORDER: if chef A writes a note on a paper pad and THEN updates the counter, will chef B, who reads the counter, necessarily see the note? With a strict rule, yes — everyone sees the same order. With a looser rule, the counter is correct but the note might not be seen in time. The middle rules say: 'when I publish, everything I wrote before is visible to whoever reads the board after me.'",
+    "junior": "Atomic types (AtomicUsize, AtomicBool, AtomicPtr) provide lock-free operations: load, store, fetch_add, compare_exchange. The ordering parameter controls memory visibility, not atomicity (which is always guaranteed): Relaxed (no ordering constraints), Acquire (used on loads: subsequent operations can't move before it), Release (used on stores: prior operations can't move after it), AcqRel (for read-modify-write), SeqCst (strongest: a single total order). Example: atomic.load(Ordering::Acquire) after another thread's atomic.store(v, Ordering::Release) guarantees the store's prior writes are visible. Use Relaxed for counters, Acquire/Release for message passing (publish a value, then release), SeqCst when you need a global order (rare, e.g. flags that coordinate multiple threads).",
+    "senior": "Architecturally, atomics provide atomicity at the hardware level (single CPU instructions like lock xchg, or LL/SC on ARM) plus a memory-ordering contract derived from the C++ memory model. Ordering is about when other threads observe the effects: Relaxed guarantees only atomicity (no reordering constraints), Acquire on a load prevents subsequent reads/writes from being reordered before it, Release on a store prevents prior reads/writes from being reordered after it, and the combination forms a happens-before edge: a Release store synchronizes-with an Acquire load that reads it. SeqCst imposes a single total order across all SeqCst operations, making it the easiest to reason about but the most expensive (requires full fences on weakly-ordered CPUs).",
+    "underTheHood": "On x86/TSO, Relaxed/Acquire/Release map to plain loads/stores (the hardware already orders them); SeqCst needs a StoreLoad barrier (mfence/locked op) for stores. On ARM/POWER (weak memory), Acquire loads use dmb ishld / ld.acq, Release stores use dmb ish / st.rel, and SeqCst uses full fences. The compiler (LLVM) is forbidden from reordering atomic operations past the ordering constraints. compare_exchange compiles to a CAS loop (lock cmpxchg on x86, LL/SC on ARM). The Rust atomics have no data-race possibility within safe code: &AtomicUsize can be shared across threads, and the atomicity is guaranteed by the hardware instruction — the ordering parameter only controls visibility of OTHER (non-atomic) memory."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust concurrency feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Relaxed counter vs Acquire/Release handoff",
+    "summary": "A relaxed counter is fine for stats; publishing a value with correctness requires Acquire/Release to make the data visible with the flag.",
+    "legacyOrBad": {
+      "label": "Using Relaxed for a message-publish flag",
+      "snippet": "READY.store(true, Ordering::Relaxed); // ❌ OLD: flag is atomic, but data may not be visible",
+      "fullFile": {
+        "filename": "atomics.rs",
+        "language": "rust",
+        "code": "use std::sync::atomic::{AtomicBool, Ordering};\n\n// ❌ OLD: Publishing data with a Relaxed flag. The flag store is\n// atomic, but Relaxed gives NO ordering guarantee — the reader who\n// sees READY == true is NOT guaranteed to see the DATA written before\n// it. On a weak-memory CPU (ARM), the reader may observe stale data.\nstatic READY: AtomicBool = AtomicBool::new(false);\nstatic mut DATA: [u8; 8] = [0; 8];\n\nfn writer() {\n    unsafe { DATA.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]) }\n    READY.store(true, Ordering::Relaxed); // ❌ OLD: no ordering edge\n}\n\nfn reader() -> bool {\n    if READY.load(Ordering::Relaxed) { // ❌ OLD: may see stale DATA\n        return unsafe { DATA[0] == 1 };\n    }\n    false\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Release store + Acquire load",
+      "snippet": "READY.store(true, Ordering::Release); // ✅ NEW: prior writes visible\nREADY.load(Ordering::Acquire); // ✅ NEW: sees everything before the Release",
+      "fullFile": {
+        "filename": "atomics.rs",
+        "language": "rust",
+        "code": "use std::sync::atomic::{AtomicBool, Ordering};\n\n// ✅ NEW: Release/Acquire creates a happens-before edge. When the\n// reader's Acquire load observes the writer's Release store, ALL\n// writes the writer performed BEFORE the Release (the DATA copy) are\n// guaranteed visible.\nstatic READY: AtomicBool = AtomicBool::new(false);\nstatic mut DATA: [u8; 8] = [0; 8];\n\nfn writer() {\n    unsafe { DATA.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]) }\n    READY.store(true, Ordering::Release); // ✅ NEW: publish data + flag\n}\n\nfn reader() -> bool {\n    if READY.load(Ordering::Acquire) { // ✅ NEW: acquires the published data\n        return unsafe { DATA[0] == 1 }; // ✅ NEW: guaranteed to see the copy\n    }\n    false\n}\n\n// Use Relaxed only for pure counters (stats) where no other data is\n// being coordinated:\n// COUNTER.fetch_add(1, Ordering::Relaxed);\n// SeqCst is for global-order coordination (rare); prefer the cheaper\n// Acquire/Release when the pattern is publish/consume."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between atomicity and memory ordering, and how does Relaxed still prevent data races?",
+      "contextIntro": "This tests the fundamental model — interviewers want the hardware-instruction vs visibility distinction, because mixing them up is the most common atomics error.",
+      "detailedAnswer": "Atomicity means a single operation (load, store, fetch_add, CAS) happens indivisibly — no torn reads/writes; this is guaranteed by the hardware instruction (lock-prefixed or LL/SC) regardless of the ordering parameter. Memory ordering is a SEPARATE concern: it governs how the operation's effects become visible relative to OTHER memory operations across threads. Relaxed gives atomicity but no ordering — the operation is indivisible and the value is eventually consistent, but there's no happens-before edge, so other (non-atomic) memory written before/after may not be observed in order. In safe Rust, using an Atomic (even Relaxed) cannot cause a data race on the atomic itself — the type is Send/Sync and the operation is atomic. The ordering parameter only affects visibility of surrounding memory; a Relaxed flag can still be used safely for a 'set once' signal IF no other data depends on it.",
+      "trapWarning": "The naive answer is 'Relaxed is unsafe or buggy'. Relaxed is sound for the atomic value itself; the danger is using it to coordinate OTHER data visibility. Another trap: assuming SeqCst is always required — over-using it adds full-fence cost on weak-memory CPUs; Acquire/Release covers publish/consume patterns correctly and cheaper. Candidates who separate atomicity from ordering show real understanding."
+    },
+    {
+      "question": "How does Acquire/Release create a happens-before edge, and when is SeqCst genuinely necessary?",
+      "contextIntro": "This probes the synchronizes-with relationship — interviewers want the edge semantics and the rare cases where a total order is required.",
+      "detailedAnswer": "A Release store synchronizes-with an Acquire load when the load reads the value written by the store (the classic 'sees the flag' pattern). This creates a happens-before edge: everything the writing thread did BEFORE the Release store is ordered before everything the reading thread does AFTER the Acquire load — making the published data visible. SeqCst goes further: all SeqCst operations across all threads form a single total order (as if there were one global clock), which makes reasoning simpler but requires stronger barriers (StoreLoad fences on x86, full fences on ARM). SeqCst is genuinely necessary when multiple threads coordinate through multiple atomics and you need a consistent global ordering of those operations (e.g. certain lock-free protocols, mutex/futex implementations). For the common single-publish/consume pattern, Acquire/Release is correct and cheaper.",
+      "trapWarning": "The naive answer is 'SeqCst is always the safe choice'. It's only 'safe' in the sense of being the strongest ordering; it has real cost and is rarely needed — correct Acquire/Release patterns are cheaper and equally sound. Another trap: thinking Acquire/Release works like a mutex — it orders memory, not mutual exclusion; it does not prevent multiple threads from entering a critical section. Candidates who describe the synchronizes-with edge and the total-order requirement show real depth."
+    }
+  ]
+}

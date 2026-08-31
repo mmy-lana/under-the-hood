@@ -1,0 +1,68 @@
+{
+  "id": "pin-and-unpin-self-referential-futures",
+  "title": "Pin<&mut T> & Unpin: Self-Referential Structs and Async Futures",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x (std::pin)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "pin",
+    "unpin",
+    "self-referential",
+    "async",
+    "futures"
+  ],
+  "prerequisites": [
+    "Rust ownership, references, and move semantics",
+    "Understanding of async/await and future polling"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Some machines contain a tube that points to a spot on their own base. If you move the machine, the tube now points at the wrong spot — it breaks. So you nail such machines to the floor so they can never be moved while the tube is installed. Machines without a tube can be freely moved. When the waiting-room system builds a machine with a tube (a task holding a reference to its own data), it pins it to the floor before checking on it, so the machine is always safe.",
+    "junior": "Pin<&mut T> guarantees that T will not be moved in memory while pinned. This is needed for self-referential types: a struct that holds a pointer to one of its OWN fields. If such a struct is moved, the pointer dangles. Futures produced by async blocks can be self-referential (a local variable referenced across an await), so the async runtime polls them through Pin. Unpin is an auto-trait: most types are Unpin (safe to move even when pinned); types that are self-referential are !Unpin. You construct !Unpin types via unsafe (Pin::new_unchecked) or through libraries. Pin::new(&mut t) works for Unpin types; pin! macro / Box::pin for !Unpin.",
+    "senior": "Architecturally, Pin is a wrapper type that makes the pointee immovable: Pin<&mut T> and Pin<&T> promise the value at the address will not be moved. The Unpin marker says whether moving is actually dangerous: Unpin types are always safe to move out of a Pin (Pin::new, Pin::into_inner); !Unpin types require unsafe to construct and move. The async machinery relies on this: an async block may capture references to its own locals across await points (the generated future is self-referential), so the poll method takes Pin<&mut Self>. Box::pin and the pin! macro provide pinned allocation. This is why you cannot easily move a future after it has been polled.",
+    "underTheHood": "Pin<&mut T> is a struct around &mut T with a PhantomPinned marker for !Unpin types. Pin::new_unchecked(&mut t) is unsafe: it asserts that t will never be moved while the Pin is alive (and while it's pinned). The compiler generates self-referential futures: a local borrowed across an await becomes a field in the future struct, and the reference to it is stored as a pointer inside the same struct — moving the struct would invalidate the pointer. The Future::poll signature is fn poll(self: Pin<&mut Self>, cx: &mut Context) — the executor always polls through a Pin, so the future can never be moved while it might be polled. Drop: a pinned value can still be dropped (drop glue doesn't move it). The pin guarantees are enforced by the type system + unsafe contracts."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Moving a self-referential struct vs pinning it",
+    "summary": "A struct that points to its own field breaks when moved; Pin prevents the move so the internal pointer stays valid.",
+    "legacyOrBad": {
+      "label": "Moving a self-referential struct (broken)",
+      "snippet": "let mut a = build_self_referential(); // ❌ OLD: pointer inside points to a",
+      "fullFile": {
+        "filename": "pin.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: A self-referential struct holds a pointer to one of its OWN\n// fields. If the struct is MOVED, the pointer still points at the OLD\n// address — a dangling pointer. (This example is illustrative; in safe\n// Rust you can't even construct this without unsafe, which is the\n// point.)\nstruct SelfRef {\n    data: String,\n    ptr_to_data: *const String, // ❌ OLD: points into `self`\n}\n\nfn build() -> SelfRef {\n    let mut s = SelfRef {\n        data: String::from(\"hello\"),\n        ptr_to_data: std::ptr::null(),\n    };\n    s.ptr_to_data = &s.data as *const String; // points to own field\n    s\n}\n\n// fn main() {\n//     let a = build();\n//     let b = a; // ❌ OLD: moving `a` to `b` leaves ptr_to_data dangling\n//     // unsafe { (*b.ptr_to_data).clone() } // reads freed/stale memory\n// }"
+      }
+    },
+    "modernOrGood": {
+      "label": "Pin prevents the move",
+      "snippet": "let pinned = Box::pin(my_future); // ✅ NEW: the future is pinned, cannot move",
+      "fullFile": {
+        "filename": "pin.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: The async runtime uses Pin to keep futures immovable while\n// they may be polled. An async block that borrows a local across an\n// await is self-referential; polling it through Pin keeps the internal\n// pointers valid.\nuse std::pin::Pin;\n\nasync fn example() {\n    let data = String::from(\"hello\");\n    // The compiler may turn `data` into a field and a self-reference\n    // to it inside the generated future — self-referential.\n    tokio::time::sleep(std::time::Duration::from_millis(1)).await;\n    println!(\"{data}\"); // borrows `data` across the await\n}\n\n// The executor polls:\n//   let mut fut = Box::pin(example());  // ✅ NEW: pinned, immovable\n//   let waker = ...; let mut cx = Context::from_waker(&waker);\n//   let _ = fut.as_mut().poll(&mut cx); // poll takes Pin<&mut Self>\n\n// Unpin types (most types) are safe to move even when pinned:\n//   Pin::new(&mut ordinary_struct)  // T: Unpin → freely movable\n// !Unpin types need Pin::new_unchecked (unsafe) or Box::pin.\n\n// The `pin!` macro pins a local on the stack:\n//   let mut fut = pin!(example());"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why are async futures self-referential, and how does Pin make polling them safe?",
+      "contextIntro": "This is the foundational async Rust question — interviewers want the compiler-generated self-reference and the Pin contract that keeps internal pointers valid across polls.",
+      "detailedAnswer": "An async block compiles into a state machine (a Future). A local variable that is borrowed ACROSS an await point becomes a field of the future struct, and references to it (or to other captured data) may be stored as pointers within the same struct — making the future self-referential. If the future were moved after being polled, those internal pointers would point to the old address — dangling. To prevent this, Future::poll takes self: Pin<&mut Self>: the executor must poll through a Pin, which guarantees the future is never moved while pinned. Box::pin (heap), the pin! macro (stack), or pin-project provide the pinned context. The Pin contract (for !Unpin types) is that the value stays at one address for the lifetime of the Pin — enforced by the type system for construction and by unsafe internals.",
+      "trapWarning": "The naive answer is 'Pin makes futures thread-safe' or 'Pin pins to a CPU'. Pin is about memory immovability, not CPU pinning or threads. Another trap: thinking you can move a future out of a Box::pin with into_inner safely — for !Unpin types, into_inner is unsafe because the move would break internal pointers. Candidates who connect self-referentiality to the Pin contract show real async understanding."
+    },
+    {
+      "question": "What is the difference between Unpin and !Unpin, and how do most normal types behave under Pin?",
+      "contextIntro": "This tests the auto-trait semantics — interviewers want to know that Unpin is the default and Pin only restricts the types that genuinely need immovability.",
+      "detailedAnswer": "Unpin is an auto-trait (like Send/Sync): almost all types are Unpin by default — a value of an Unpin type can be safely moved even while it is inside a Pin. For Unpin types, Pin<&mut T> behaves like &mut T: you can move the value out (Pin::into_inner), and Pin::new is safe. !Unpin types (marked with PhantomPinned, or generated self-referential futures) cannot be moved while pinned without unsafe. The distinction matters because Pin's immovability guarantee is only needed when a type actually holds self-references. This is why most code never thinks about Pin: your structs are Unpin and freely movable; only async futures and purpose-built self-referential types (some intrusive collections, certain FFI wrappers) are !Unpin.",
+      "trapWarning": "The naive answer is 'Pin makes everything immovable'. Pin only restricts !Unpin types; Unpin types (the vast majority) are movable even when pinned. Another trap: thinking you need Box::pin for every future — you can use stack pinning (pin! macro) or direct polling for Unpin futures. Candidates who describe the auto-trait default and PhantomPinned marker show real understanding."
+    }
+  ]
+}

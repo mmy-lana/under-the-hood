@@ -1,0 +1,68 @@
+{
+  "id": "drop-checker-and-manually-drop",
+  "title": "Drop Checker, Drop Glue, ManuallyDrop<T>, and std::mem::forget",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "drop",
+    "drop-checker",
+    "manuallydrop",
+    "mem-forget",
+    "destructor"
+  ],
+  "prerequisites": [
+    "Rust ownership and lifetimes",
+    "Understanding of RAII and destructors"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Every rented room must be cleaned when the tenant leaves (drop — the automatic cleanup). Usually the landlord's rules make sure the cleaning happens in the right order. But some rooms contain special valuables that you deliberately do NOT want cleaned when you move out — you take them with you (mem::forget / ManuallyDrop): you're telling the landlord 'don't clean this room, I'm handling it myself.' The landlord's bookkeeper (the drop checker) double-checks that you haven't put cleaning instructions in a spot that would run too early or reference something already cleaned.",
+    "junior": "In Rust, values are dropped automatically at the end of their scope (RAII): the Drop trait's drop() runs when the value goes out of scope. Box, Vec, MutexGuard, File all free resources on drop. ManuallyDrop<T> is a wrapper that prevents the compiler from dropping the inner value automatically — you take manual control (e.g. for FFI where the C side owns the memory). std::mem::forget(v) prevents v's destructor from running (v is 'leaked' deliberately). The drop checker is part of the borrow checker that verifies drop ordering doesn't cause use-after-free (e.g. dropping a reference to a value that drops earlier).",
+    "senior": "Architecturally, drop is the RAII mechanism: the compiler inserts drop calls at scope end (or earlier via drop(v) / NLL-based early drops). ManuallyDrop<T> is a wrapper whose Drop impl is a no-op for the inner T — it stops the automatic drop of the wrapped value, letting you extract it with ManuallyDrop::take (or drop it manually later). mem::forget is implemented as ManuallyDrop::into_inner (move out without running drop). These are for cases where ownership must be transferred to code outside Rust's rules (FFI) or where a destructor must not run. The DROP CHECKER is a region-based analysis that ensures a value being dropped doesn't reference memory that has already been dropped — it historically limited some patterns (e.g. dropping a type containing a reference to a field of another type) and was relaxed by NLL.",
+    "underTheHood": "Drop glue is compiler-generated code that runs the destructor and drops the fields (in declaration order). For a Box<T>, drop frees the heap allocation; for Vec, it drops elements and frees the buffer; for MutexGuard, it unlocks. ManuallyDrop<T> is a union-like wrapper (actually a repr(transparent)-ish struct with a ManuallyDrop constructor that has no Drop impl), so the compiler does NOT generate drop glue for the inner value — the memory is simply not cleaned. mem::forget(v) moves v into a ManuallyDrop and never extracts it, so drop never runs (the value is leaked — intentionally). The drop checker tracks the drop order of locals and lifetimes: after NLL (non-lexical lifetimes), the checker is more precise about when a borrow is 'live' relative to drops, preventing use-after-free in drop-heavy code."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Automatic drop vs ManuallyDrop / mem::forget",
+    "summary": "RAII cleans up automatically; ManuallyDrop/mem::forget suppress the cleanup for cases where ownership moves outside Rust's rules.",
+    "legacyOrBad": {
+      "label": "Forgetting to clean up (relying on manual)",
+      "snippet": "let file = File::open(path)?;\n// ❌ OLD: if code forgets to close, the OS file handle leaks",
+      "fullFile": {
+        "filename": "drop.rs",
+        "language": "rust",
+        "code": "// ❌ OLD (as a pattern to avoid): manually tracking cleanup. In a\n// language without RAII you'd have to remember to close the file,\n// free the buffer, and unlock the mutex on EVERY exit path. In Rust,\n// the default is automatic — the Drop impl runs at scope end.\nfn read_first_line(path: &str) -> std::io::Result<String> {\n    let file = std::fs::File::open(path)?;\n    // ✅ (the correct pattern) drop(file) is automatic at scope end.\n    // ❌ The WRONG instinct is to try to 'manually close' and forget\n    // that the borrow checker + Drop already handle it.\n    let mut buf = String::new();\n    // std::io::BufReader::new(file) would take ownership...\n    Ok(buf)\n}\n\n// Key insight: you don't write cleanup; Drop does it for you."
+      }
+    },
+    "modernOrGood": {
+      "label": "ManuallyDrop for FFI ownership transfer",
+      "snippet": "let mut md = ManuallyDrop::new(raw_ptr_holder); // ✅ NEW",
+      "fullFile": {
+        "filename": "drop.rs",
+        "language": "rust",
+        "code": "use std::mem::ManuallyDrop;\n\n// ✅ NEW: ManuallyDrop stops the automatic drop of the wrapped value.\n// Use it when ownership is transferred to non-Rust code (FFI) or when\n// you must control the exact cleanup moment.\nstruct FfiBox(*mut u8); // a raw pointer whose memory the C side owns\n\nfn give_to_c(v: FfiBox) {\n    let md = ManuallyDrop::new(v); // ✅ NEW: no auto-drop of the pointer\n    unsafe {\n        // hand the pointer to C; C will free it\n        ffi_take_ownership(md.0);\n    }\n    // ✅ NEW: when md goes out of scope, the inner FfiBox is NOT\n    // dropped — no double-free, no premature free.\n}\n\n// std::mem::forget(v) is the same idea for 'intentionally leak':\n// mem::forget(v) — the destructor never runs (e.g. when handing a\n// Rust-owned allocation to C and never getting it back).\n\n// ⚠️ Both suppress cleanup — use them only when you truly transfer\n// ownership; otherwise you leak resources."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the drop checker, and why was it needed before non-lexical lifetimes?",
+      "contextIntro": "This tests the borrow-checker integration — interviewers want the drop-ordering analysis and the classic pattern it used to reject.",
+      "detailedAnswer": "The drop checker is the part of the borrow checker that verifies values are not dropped while still borrowed (which would create a use-after-free when the borrow is later used, or when a destructor reads a dropped value). Historically (pre-NLL), it was conservative: it examined the drop order of locals and the lifetimes of borrows, and rejected code where a value that might be dropped at scope end was borrowed with a lifetime that extended to the end. The classic rejected pattern: a struct containing a reference to a field of another struct being dropped in the same scope, where the reference's lifetime outlived the field's drop. NLL (non-lexical lifetimes) made the analysis much more precise: borrows are considered live only where actually used, so many previously-rejected (but actually-safe) patterns now compile, and genuinely-unsafe drop orderings are still caught.",
+      "trapWarning": "The naive answer is 'the drop checker prevents memory leaks'. It prevents use-after-free from drop-ordering, not leaks (leaks are prevented by RAII discipline, not the checker). Another trap: thinking NLL removed the drop checker — it made it more precise; the analysis still exists and still rejects unsound code. Candidates who describe the drop-order/liveness analysis show real understanding."
+    },
+    {
+      "question": "What is the difference between mem::forget, ManuallyDrop, and just not dropping, and when are they sound?",
+      "contextIntro": "This tests the ownership-transfer primitives — interviewers want the semantics of each and the soundness contract (who is responsible for the resource afterward).",
+      "detailedAnswer": "mem::forget(v) consumes v and guarantees its destructor never runs — the value's resources are intentionally leaked. ManuallyDrop<T> is a wrapper that prevents the compiler from generating the drop glue for the inner value; you can later take the value out with ManuallyDrop::into_inner (moving it out, so you regain ownership and drop happens normally at the new scope) or keep it wrapped (never dropped). 'Just not dropping' isn't a thing in safe Rust — the compiler inserts drops; ManuallyDrop/forget are how you suppress them. Sound usage is when ownership is transferred to code outside Rust's cleanup rules: handing a heap allocation to a C library that will free it, or embedding Rust data in a foreign structure that manages its own lifetime. If you forget a value and nothing else frees it, you have a real resource leak — forget is sound but must be intentional.",
+      "trapWarning": "The naive answer is 'forget and ManuallyDrop are the same'. forget consumes and never returns the value; ManuallyDrop lets you take it back (into_inner). Another trap: assuming forgetting is always a leak bug — it's the correct tool for ownership transfer to FFI; the leak is the consequence when used carelessly. Candidates who describe the take-back capability and the ownership-transfer contract show real depth."
+    }
+  ]
+}

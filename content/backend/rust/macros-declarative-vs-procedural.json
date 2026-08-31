@@ -1,0 +1,68 @@
+{
+  "id": "macros-declarative-vs-procedural",
+  "title": "Macro System: macro_rules! AST Matching vs Procedural Derive Macros (syn/quote)",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "macros",
+    "macro-rules",
+    "procedural-macros",
+    "syn",
+    "quote"
+  ],
+  "prerequisites": [
+    "Rust syntax, traits, and derives",
+    "Understanding of ASTs and metaprogramming"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two kinds of automatic paperwork. Declarative macros: a template with blanks — 'fill in this form pattern and produce that output pattern' — matched by shape (macro_rules!). Procedural macros: a small program that receives the raw document (the code as a tree), reads it, and writes a NEW document — it can do anything (derive macros like #[derive(Clone)]). The template is simpler and safe; the program is powerful but you must know how to read and write the document format.",
+    "junior": "Rust has two macro systems. macro_rules! is declarative: you define patterns with matchers ($x:expr, $y:ty) that expand to token templates. Procedural macros are functions that process TokenStreams: #[derive(...)] (derive macros), attribute macros (#[test]), and function-like macros (println!). The syn crate parses a TokenStream into an AST, quote generates code with #var interpolation. Common derives (#[derive(Debug, Clone, PartialEq)]) are procedural macros in the std/derive tooling. Write a derive: create a proc-macro crate, #[proc_macro_derive(MyTrait)] pub fn derive(input: TokenStream) -> TokenStream.",
+    "senior": "Architecturally, macro_rules! operates on token trees with pattern matching: the matcher ($x:expr) binds a token tree fragment by kind, and the expansion replaces it in the output template. It's hygienic for local variables (identifiers are namespaced) and can recurse, but it cannot 'compute' on the AST — it's pure pattern substitution. Procedural macros get the raw TokenStream of the item they're attached to, parse it into an AST (with syn), do arbitrary computation, and return a new TokenStream (with quote) that replaces/extends the input. This is how serde, thiserror, and derive builders work. Procedural macros run at compile time in their own process (the proc-macro crate is compiled to a dylib), so they can be slow but extremely expressive.",
+    "underTheHood": "macro_rules! is expanded by the compiler's macro engine during parsing: it matches the invocation against arms, binds metavariables (expr, ty, ident, tt...), and splices the expansion; the result is re-parsed (recursively, until no macros remain). Hygiene: identifiers introduced by the macro get a syntax-context marker preventing collisions with caller code. Procedural macros: the compiler serializes the item's tokens into a TokenStream and invokes the proc-macro dylib function; the function (using syn to parse, quote to build) returns a TokenStream which the compiler parses and inserts. Derive macros add an impl block to the item; attribute macros can transform the item entirely. The proc-macro API boundary is TokenStream in → TokenStream out, which is why syn/quote are essential."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "macro_rules! template vs procedural derive",
+    "summary": "Declarative macros substitute patterns; procedural macros compute on the AST — e.g. implementing a trait by inspecting struct fields.",
+    "legacyOrBad": {
+      "label": "Hand-writing trait impls (or macro_rules! for simple repetition)",
+      "snippet": "impl fmt::Debug for Point { ... } // ❌ OLD: boilerplate per struct",
+      "fullFile": {
+        "filename": "macro.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: Hand-writing a Debug (or Clone/PartialEq) impl for every\n// struct is repetitive boilerplate. macro_rules! can help for simple\n// repetition, but it cannot INSPECT the struct's fields the way a\n// derive macro can — it only does shape-based substitution.\nstruct Point {\n    x: i32,\n    y: i32,\n}\n\n// ❌ OLD: manual impl, must be duplicated for every struct:\nimpl std::fmt::Debug for Point {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        f.debug_struct(\"Point\")\n            .field(\"x\", &self.x)\n            .field(\"y\", &self.y)\n            .finish()\n    }\n}\n\n// And Clone, PartialEq, Eq, Hash... each written by hand."
+      }
+    },
+    "modernOrGood": {
+      "label": "Derive macro (procedural)",
+      "snippet": "#[derive(Debug, Clone, PartialEq, Eq)] // ✅ NEW: generated impls",
+      "fullFile": {
+        "filename": "macro.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: #[derive] is a procedural macro that PARSES the struct's\n// AST, inspects each field, and GENERATES the impl. No boilerplate.\n#[derive(Debug, Clone, PartialEq, Eq)] // ✅ NEW: generated impls\nstruct Point {\n    x: i32,\n    y: i32,\n}\n\n// A custom derive (simplified):\n// #[proc_macro_derive(MyTrait)]\n// pub fn derive_my_trait(input: TokenStream) -> TokenStream {\n//     let input = parse_macro_input!(input as DeriveInput);\n//     let name = &input.ident;\n//     quote! {\n//         impl MyTrait for #name {\n//             fn hello(&self) { println!(\"hi from {}\", stringify!(#name)); }\n//         }\n//     }.into()\n// }\n\n// syn parses the input TokenStream into DeriveInput (with fields,\n// generics, attributes); quote! builds the output with #interpolation."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between macro_rules! and procedural macros, and when would you choose each?",
+      "contextIntro": "This tests the macro taxonomy — interviewers want the pattern-matching vs AST-computing distinction and the practical guidance for when procedural power is needed.",
+      "detailedAnswer": "macro_rules! is declarative and shape-based: you write match patterns ($x:expr) and expansion templates; the compiler substitutes token fragments. It's great for small syntax extensions, repeated patterns (vec!, println!), and readability — but it cannot inspect the semantic structure (fields, generics) or do computation on the AST; it's pure token-tree substitution with limited recursion. Procedural macros are full functions over TokenStream: they parse the input with syn into a rich AST (struct fields, generics, attributes), compute arbitrarily, and emit new code with quote. Choose macro_rules! for simple, syntactic sugar; choose procedural macros when you need to read the item's structure (derive implementations, attribute transformations like serde's #[serde(rename)], or building complex DSLs). The cost of procedural macros is compile time and complexity (syn/quote, proc-macro crates).",
+      "trapWarning": "The naive answer is 'procedural macros are just more powerful macro_rules'. They operate on a different level (AST computation vs token substitution) and live in separate proc-macro crates. Another trap: thinking macro_rules! can inspect fields — it cannot; only procedural macros parse structure. Candidates who contrast the two expansion models show real understanding."
+    },
+    {
+      "question": "What is macro hygiene, and why does it matter for macro_rules! but differently for procedural macros?",
+      "contextIntro": "This probes the identifier-collision problem — interviewers want the syntax-context mechanism and how procedural macros handle (or don't handle) hygiene.",
+      "detailedAnswer": "Macro hygiene prevents identifiers introduced by a macro from colliding with identifiers in the caller's code. For macro_rules!, Rust applies hygiene via syntax contexts: a local variable declared inside the macro gets a context marker, so it cannot accidentally capture or be captured by a same-named variable at the call site. This is why a macro can use a temp variable named 'x' without clobbering the caller's 'x'. Procedural macros, by default, produce tokens with the CALLER's hygiene context — they are NOT automatically hygienic (the quote! spans come from the invocation). This is why procedural macro authors use Span::call_site() / Span::mixed_site() deliberately and often generate helper identifiers via generate_ident or unique prefixes (e.g. __impl_MyTrait_for_#name) to avoid collisions with user code. Hygiene is a correctness concern for any macro that introduces names.",
+      "trapWarning": "The naive answer is 'all Rust macros are hygienic'. macro_rules! is hygienic for locals; procedural macros are not automatically (they use call-site spans). Another trap: assuming generated helper names can't collide — a derive that generates a function without a unique prefix can clash with a user-defined function of the same name. Candidates who describe the syntax-context model and Span::mixed_site show real depth."
+    }
+  ]
+}

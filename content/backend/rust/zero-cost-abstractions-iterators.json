@@ -1,0 +1,68 @@
+{
+  "id": "zero-cost-abstractions-iterators",
+  "title": "Rust Iterators: Zero-Cost Functional Pipelines vs Handwritten Loops",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "iterators",
+    "zero-cost",
+    "optimization",
+    "functional",
+    "inlining"
+  ],
+  "prerequisites": [
+    "Rust basics (collections, traits)",
+    "Understanding of compiler optimization and inlining"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A factory line has a series of stations: sort, filter, transform, sum. Two ways to run it: hire a worker to walk each item through every station one at a time, writing progress notes (the iterator pipeline, where each station is fused into one smooth flow by the clever engineer). Or have a supervisor run the whole batch through station 1, then station 2, etc., with full reports between (naive multi-pass). The clever engineer fuses all the stations into a single conveyor that processes each item once — same result, no extra paper, as fast as a hand-built belt.",
+    "junior": "Rust iterators let you write functional pipelines: iter().filter(...).map(...).take(10).collect(). These are lazy: nothing runs until collected/consumed. The claim 'zero-cost' means the compiled output should be as fast as a handwritten loop — because the iterator adapters are generic and inline into each other. For example: nums.iter().filter(|n| n % 2 == 0).map(|n| n * 2).sum::<i32>() should optimize to a single loop with no iterator object overhead. Use iterators for clarity; they're designed to compile down to the same machine code as manual loops.",
+    "senior": "Architecturally, iterator adapters are zero-cost because of monomorphization + inlining: each adapter (Filter, Map, Take, Sum) is a generic struct wrapping the previous iterator, and its next() method calls the inner iterator's next() and transforms the result. Because everything is inlined and specialized per concrete type, the chain of adapter calls collapses into a single tight loop — the intermediate iterator objects exist only in the source, not in the compiled code. This is the zero-cost abstraction promise: the abstraction has no runtime cost over the equivalent hand-written loop. The optimizer (LLVM) fuses the pipeline, hoists bounds checks where possible, and vectorizes when profitable.",
+    "underTheHood": "An iterator is a type implementing Iterator { type Item; fn next(&mut self) -> Option<Self::Item> }. Each adapter is a struct: Filter<I, P> { iter: I, predicate: P }. next() on Filter calls self.iter.next(), checks the predicate, returns the item or continues. When the chain is instantiated with concrete types and inlined, the nested next() calls flatten into one loop. The sum() consumer is a FromIterator/Sum implementation that loops calling next() and accumulates. The compiler can then apply loop optimizations: bounds-check elimination (iterators know their length via size_hint), vectorization, and branch prediction. This is why iter().sum() benchmarks equal to (or beat) hand loops — the abstraction is erased at codegen."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Imperative loop with intermediate allocations vs iterator pipeline",
+    "summary": "An imperative version often allocates intermediate collections and repeats passes; the iterator pipeline fuses into one pass with no intermediate storage.",
+    "legacyOrBad": {
+      "label": "Multi-pass imperative style",
+      "snippet": "let mut evens = Vec::new(); // ❌ OLD: intermediate allocation",
+      "fullFile": {
+        "filename": "iter.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: An imperative multi-pass approach. It builds an\n// intermediate Vec (evens), then another pass to transform, then sums\n// — extra allocations and repeated iteration. It's also more verbose\n// and easier to get wrong (indexing bugs, off-by-ones).\nfn sum_evens(nums: &[i32]) -> i32 {\n    let mut evens = Vec::new(); // ❌ OLD: intermediate heap allocation\n    for &n in nums {\n        if n % 2 == 0 {\n            evens.push(n * 2);\n        }\n    }\n    let mut total = 0;\n    for n in &evens {\n        total += n; // ❌ OLD: second pass over the temp\n    }\n    total\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Zero-cost iterator pipeline",
+      "snippet": "nums.iter().filter(|n| n % 2 == 0).map(|n| n * 2).sum() // ✅ NEW",
+      "fullFile": {
+        "filename": "iter.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: The iterator pipeline is lazy, allocation-free, and fuses\n// into a single pass. filter -> map -> sum compile into ONE loop with\n// no intermediate Vec and no iterator object overhead (monomorphized\n// + inlined).\nfn sum_evens(nums: &[i32]) -> i32 {\n    nums.iter()\n        .filter(|n| n % 2 == 0) // ✅ NEW: keep evens\n        .map(|n| n * 2) // ✅ NEW: transform\n        .sum() // ✅ NEW: single fused pass, no intermediate storage\n}\n\n// The compiled output is equivalent to a hand-written loop:\n// let mut total = 0;\n// for &n in nums { if n % 2 == 0 { total += n * 2; } }\n// total\n\n// The adapters are generic structs that inline into each other, so\n// the abstraction disappears at codegen — that's the zero-cost\n// promise."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What makes Rust iterators 'zero-cost', and when might they NOT be as fast as a hand-written loop?",
+      "contextIntro": "This tests the optimization model — interviewers want the monomorphization+inlining mechanism AND the honest cases where the promise can break.",
+      "detailedAnswer": "Iterators are zero-cost when the chain is monomorphized and inlined: each adapter is a generic struct whose next() calls the inner next(); with concrete types, the compiler inlines the whole chain into a single loop, eliminating the iterator object and enabling loop optimizations (bounds-check elimination via size_hint, vectorization). The promise can break when: the chain is used across a function boundary without inlining (e.g. a boxed dyn Iterator, which forces dynamic dispatch and prevents fusion); closures that capture large state inhibit inlining; or when the iterator produces values that cannot be fused (e.g. collect() into a collection necessarily allocates). Also, if you call an adapter that needs the full collection (like .rev() on a double-ended iterator that requires RandomAccess), the fusion may differ. In general, for linear single-pass pipelines, iterators match hand loops.",
+      "trapWarning": "The naive answer is 'iterators are always zero-cost by definition'. Zero-cost depends on inlining and concrete types; Box<dyn Iterator> and cross-crate non-inlined paths pay real costs. Another trap: assuming every collect() is free — collecting into a Vec allocates, exactly like building the Vec by hand. Candidates who explain the inlining dependency show real understanding."
+    },
+    {
+      "question": "How do lazy iterators differ from eager collection, and what happens if you never consume an iterator?",
+      "contextIntro": "This tests the laziness model — interviewers want the next()-driven evaluation and the 'nothing runs until consumed' semantics that prevent surprises.",
+      "detailedAnswer": "Iterator adapters are lazy: chaining .filter().map() only BUILDS the adapter structs — no filtering or mapping happens until something calls next() (or a consuming method like collect(), sum(), for loop). Each call to next() pulls one item through the whole chain: the innermost source produces the next element, each adapter transforms/filters it in turn. If you never consume the iterator, the closures never run and no work is done — this is why you can build a pipeline and conditionally consume it. Consuming methods (collect, sum, count, for_each) drive the chain to completion. This laziness is what allows infinite iterators (0.., repeat) as long as the consumer stops (take). Side effects in closures run per item when consumed, so 'side-effecting map' only executes during consumption.",
+      "trapWarning": "The naive answer is 'the pipeline runs when you write it'. It runs only when consumed. Another trap: putting side effects in a filter/map closure and expecting them to run eagerly — they run once per consumed item, and if you consume twice (two collect calls on the same iterator source) they run twice. Candidates who describe the next()-driven pull model show real understanding."
+    }
+  ]
+}

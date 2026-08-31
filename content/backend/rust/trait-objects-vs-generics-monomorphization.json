@@ -1,0 +1,68 @@
+{
+  "id": "trait-objects-vs-generics-monomorphization",
+  "title": "Static Dispatch (Monomorphization) vs Dynamic Dispatch (dyn Trait VTable)",
+  "category": "backend",
+  "subcategory": "rust",
+  "versionContext": "Rust 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "rust",
+    "generics",
+    "monomorphization",
+    "trait-objects",
+    "vtable",
+    "dynamic-dispatch"
+  ],
+  "prerequisites": [
+    "Rust traits and generics",
+    "Understanding of dispatch and code generation"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two ways to send a message. Static dispatch: print 100 personalized letters, each with the recipient's name typed in (each gets its own exact copy — fast to deliver, but a lot of paper). Dynamic dispatch: print ONE generic letter with a 'Dear [name]' blank, and a clerk fills in the name when delivering (one template, but each delivery takes a moment to fill the blank). The first is like generics (monomorphization); the second is like trait objects (dyn Trait).",
+    "junior": "Generics with trait bounds use static dispatch: fn process<T: Handler>(h: T) — the compiler generates a specialized copy for each concrete type (monomorphization), and calls are direct and inlinable. Trait objects use dynamic dispatch: fn process(h: &dyn Handler) — the value is a fat pointer (data pointer + vtable pointer), and method calls go through the vtable at runtime. Static dispatch is faster (no indirection, inlining possible) but increases binary size; dynamic dispatch is flexible (heterogeneous collections, runtime type choice) with a small per-call cost. Choose generics for hot paths, dyn for collections of mixed types or runtime-selected implementations.",
+    "senior": "Architecturally, monomorphization duplicates the generic function body for each concrete type argument: the compiler generates a separate copy with T substituted, enabling direct calls, inlining, and constant propagation. Trait objects erase the concrete type: &dyn Trait is a fat pointer (two words: the data and a pointer to the trait's vtable), and each method call is an indirect call through the vtable (one extra indirection, prevents inlining in most cases). The trade-offs: code size (monomorphization multiplies, especially with many instantiations) vs runtime indirection (vtable calls). dyn Trait also requires object safety — the trait must not have generic methods or use Self by value in return positions (unless Box<Self>).",
+    "underTheHood": "Monomorphization happens during codegen: rustc instantiates each generic function per concrete type and runs the optimizer on each copy (so each can inline and specialize). The vtable for dyn Trait is a static table generated per (trait, concrete type) containing function pointers to each trait method (plus drop/alignment/size entries); a trait object's method call compiles to loading the vtable from the fat pointer, indexing the method, and an indirect call. Rust also has 'thin' trait objects in some cases via metadata tricks, but the standard model is the fat pointer. &dyn Trait and Box<dyn Trait> are both fat pointers (Box adds a heap allocation); Arc<dyn Trait> too. The compiler may devirtualize in some cases but usually cannot across a function boundary."
+  },
+  "rosettaStone": {
+    "react": "N/A — Rust language feature.",
+    "angular": "N/A — Rust feature.",
+    "vue": "N/A — Rust feature.",
+    "svelte": "N/A — Rust feature."
+  },
+  "codeComparison": {
+    "title": "Generic static dispatch vs dyn Trait object",
+    "summary": "Generics specialize per type (direct calls, inlining); trait objects go through a vtable (flexible, one indirection per call).",
+    "legacyOrBad": {
+      "label": "dyn Trait in a hot loop",
+      "snippet": "fn sum_all(items: &[&dyn Computable]) -> f64 { // ❌ OLD: vtable call per item",
+      "fullFile": {
+        "filename": "dispatch.rs",
+        "language": "rust",
+        "code": "// ❌ OLD: A slice of trait objects forces a vtable indirection on\n// every compute() call. In a hot loop over millions of items, that\n// per-call indirect call (plus no inlining) is measurable overhead.\nfn sum_all(items: &[&dyn Computable]) -> f64 {\n    items.iter().map(|c| c.compute()).sum() // ❌ OLD: vtable call each\n}\n\n// Also, the slice cannot be pre-specialized — every element is a fat\n// pointer (2 words each), doubling memory vs a concrete slice.\n\n// trait Computable { fn compute(&self) -> f64; }"
+      }
+    },
+    "modernOrGood": {
+      "label": "Generic monomorphized dispatch",
+      "snippet": "fn sum_all<T: Computable>(items: &[T]) -> f64 { // ✅ NEW: direct calls",
+      "fullFile": {
+        "filename": "dispatch.rs",
+        "language": "rust",
+        "code": "// ✅ NEW: A generic over T monomorphizes per concrete type: each\n// compute() call is a direct (potentially inlined) call, and the slice\n// is a plain contiguous array of the concrete type (no fat pointers).\nfn sum_all<T: Computable>(items: &[T]) -> f64 {\n    items.iter().map(|c| c.compute()).sum() // ✅ NEW: static dispatch\n}\n\n// When you NEED heterogeneous collections (mixed concrete types in\n// one list) or a runtime-chosen implementation, trait objects are the\n// tool:\n// fn pick(which: bool) -> Box<dyn Computable> {\n//     if which { Box::new(A) } else { Box::new(B) }\n// }\n\n// Rule of thumb: generics for known-at-compile-time types (fast,\n// inlinable); dyn Trait for runtime polymorphism and mixed-type\n// collections."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What are the real costs and benefits of monomorphization vs trait objects, beyond 'static is fast, dynamic is slow'?",
+      "contextIntro": "This tests the engineering trade-off — interviewers want code-size/bloat and flexibility considerations, not just the dispatch-speed soundbite.",
+      "detailedAnswer": "Monomorphization benefits: direct calls (inlinable), no per-call indirection, better constant propagation — and the specialized code can be optimized against the concrete type. Costs: code bloat — each concrete instantiation is a separate copy, so N types × M generic functions can blow up binary size and compile time; this is especially painful with many large generic functions. Trait objects benefit: one copy of the function (smaller binary for heterogeneous use), runtime flexibility (collections of mixed types, plugins, runtime-selected implementations), and stable compile times. Costs: vtable indirection per call (prevents inlining in most cases), fat pointers (2× memory per reference in collections), and the object-safety restriction (no generic methods, no Self-by-value returns). The choice is a real engineering trade-off: hot, type-fixed paths favor generics; polymorphic, mixed-type, or plugin-like boundaries favor dyn.",
+      "trapWarning": "The naive answer is 'always use generics, they're faster'. Code bloat and compile-time cost are real; for a small number of instantiations the bloat is minor, but large generic-heavy codebases pay. Another trap: assuming trait objects can express anything generics can — object safety forbids generic methods and by-value Self returns, which is why Box<dyn Clone> doesn't work directly. Candidates who weigh binary size and object safety show real understanding."
+    },
+    {
+      "question": "What is object safety, and why does it restrict what can be a trait object?",
+      "contextIntro": "This probes the trait-object constraints — interviewers want the rules (no generic methods, no Self by value) and the underlying reason (the vtable can't represent them).",
+      "detailedAnswer": "A trait is object-safe if it can be dispatched through a vtable. The restrictions: no generic methods (a generic method would need a different vtable entry per type argument, but the vtable is fixed per (trait, concrete type)); no methods returning Self by value (the vtable would need to produce a value of the erased type); no associated constants or functions without a Self argument that would need type information. Also, methods that use Self in certain positions (e.g. fn clone(&self) -> Self) make the trait non-object-safe unless the return is Box<Self>. The vtable stores a fixed set of function pointers; anything that would require knowing the erased concrete type at the call site can't be dispatched dynamically. This is why Clone is not object-safe (returns Self) and why dyn-compatible traits need care.",
+      "trapWarning": "The naive answer is 'any trait can be used as dyn Trait'. Object safety forbids generic methods and by-value Self returns. Another trap: thinking Box<dyn Trait> removes the object-safety limits — it only handles the Self-return problem for clone-like cases; generic methods are still not allowed. Candidates who can enumerate the object-safety rules and their vtable rationale show real depth."
+    }
+  ]
+}
