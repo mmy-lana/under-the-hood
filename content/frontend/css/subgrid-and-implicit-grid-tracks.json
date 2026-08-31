@@ -1,0 +1,61 @@
+{
+  "id": "subgrid-and-implicit-grid-tracks",
+  "title": "CSS Subgrid: Nested Track Alignment & Parent Line Inheritance",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Grid Level 2 (subgrid, Chrome 117+/Safari 16+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "subgrid", "grid", "layout", "tracks", "alignment"],
+  "prerequisites": [
+    "CSS Grid basics (grid-template-columns/rows)",
+    "Understanding of grid lines and tracks"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a classroom with rows of desks. Normally, each row of desks is independent — if one row has three desks and another has five, they do not line up. Subgrid is like drawing the same floor lines across all rows: every desk in every row sits on exactly the same lines, so everything lines up perfectly. Instead of each inner row inventing its own spacing, it borrows the ruler lines from the outer layout, guaranteeing that columns and rows match no matter how deep the nesting goes.",
+    "junior": "Subgrid lets a nested grid inherit the track definitions of its parent instead of defining its own. grid-template-columns: subgrid; makes the child grid use the parent's column tracks, so items inside align exactly with the parent's columns. This is the clean solution to the 'card alignment' problem where inner sections need to line up with outer columns: .grid { display: grid; grid-template-columns: repeat(4, 1fr); } .card { grid-column: span 2; display: grid; grid-template-columns: subgrid; }. The same works for rows with grid-template-rows: subgrid.",
+    "senior": "Architecturally, subgrid removes the need for hard-coded inner track sizes that drift from the outer layout. The subgridded element participates in its parent's track sizing algorithm: its own track sizes are computed from the parent's tracks, and gaps are inherited (or overridden via the gap property on the subgrid). Line numbers inside the subgrid restart at 1 relative to the subgrid's own box, which is a subtle but important detail. Subgrid also propagates content-based sizing: if a subgridded row is auto-sized, the parent's track accounts for the nested content, enabling the classic 'sticky footer inside a card' and perfectly aligned product grids.",
+    "underTheHood": "The grid layout algorithm (CSS Grid spec §12) treats subgrid tracks as shared track lists: the subgrid element does not generate independent track sizing; instead it references the parent's track list via a subgridded-track reference. During track sizing, the subgrid's items are measured and their contributions are folded into the shared tracks, so the parent's fr/auto tracks resolve with nested content included. The subgrid's own gutters default to the parent's row-gap/column-gap. The subgrid establishes its own grid container for its items, but its line numbering and track geometry alias the parent's — implemented as a single track-sizing pass across the nested levels."
+  },
+  "rosettaStone": {
+    "react": "CSS-in-JS with subgrid: styled-system or inline styles can emit grid-template-columns: subgrid for aligned card internals.",
+    "angular": "Angular Material table/card layouts can use subgrid for column-aligned metadata rows inside cards.",
+    "vue": "Vue component libraries (Vuetify) are adopting subgrid for aligned form/card sections.",
+    "svelte": "Svelte components compose well with subgrid: parent grid + child .svelte components with subgrid columns."
+  },
+  "codeComparison": {
+    "title": "Hard-coded inner tracks vs subgrid inheritance",
+    "summary": "Repeating fixed track sizes in nested grids drifts from the parent; subgrid ties the inner grid to the parent's actual tracks.",
+    "legacyOrBad": {
+      "label": "Nested grid with hard-coded tracks",
+      "snippet": ".card__body { display: grid; grid-template-columns: 1fr 1fr; } /* ❌ OLD: re-invents tracks, drifts from parent */",
+      "fullFile": {
+        "filename": "subgrid-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: The inner grid re-declares its own track sizes instead of\n   inheriting the parent's. If the parent changes (e.g. 4 cols -> 6),\n   the inner 2-col assumption breaks and columns stop aligning. */\n\n.grid {\n  display: grid;\n  grid-template-columns: repeat(4, 1fr);\n}\n\n.card {\n  grid-column: span 2;\n}\n\n.card__body {\n  display: grid;\n  grid-template-columns: 1fr 1fr; /* ❌ OLD: hard-coded — may not match parent */\n}\n\n/* The inner label/value pairs only accidentally align with the outer\n   columns; any change to one layout silently misaligns the other. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Subgrid inherits parent tracks",
+      "snippet": ".card__body { display: grid; grid-template-columns: subgrid; } /* ✅ NEW: inherits parent's columns */",
+      "fullFile": {
+        "filename": "subgrid-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: grid-template-columns: subgrid makes the inner grid use the\n   parent's exact track list, so inner items align perfectly with the\n   outer columns — and stay aligned when the parent changes. */\n\n.grid {\n  display: grid;\n  grid-template-columns: repeat(4, 1fr);\n}\n\n.card {\n  grid-column: span 2;\n  display: grid;\n  grid-template-columns: subgrid; /* ✅ NEW: inherit the 4 parent columns */\n}\n\n/* Inner items now sit on the same vertical lines as outer siblings.\n   Track sizing folds nested content into the shared tracks, so an\n   auto-sized row grows to fit the card body while keeping alignment. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between a nested grid and a subgrid, and when does subgrid actually matter?",
+      "contextIntro": "This separates developers who understand grid layout from those who just know the display: grid syntax — subgrid is the concept that proves real grid knowledge.",
+      "detailedAnswer": "A nested grid is an independent grid container inside a grid item: it defines its own tracks, so its internal columns have no relationship to the parent's columns. A subgrid (grid-template-columns: subgrid / grid-template-rows: subgrid) is a grid item whose tracks are the parent's tracks — it does not size its own columns/rows; it aliases the parent's track list and participates in the parent's track sizing algorithm. Subgrid matters whenever inner content must align with outer columns/rows that you cannot hard-code: card metadata rows, form label/value columns inside a broader grid, sticky footers, and table-like layouts. Without subgrid you must duplicate track definitions and manually keep them in sync.",
+      "trapWarning": "The naive answer is 'subgrid is just a shortcut for nested grids'. It is a fundamentally different mechanism: shared tracks vs independent tracks. Another trap: assuming subgrid works for both axes by default — you must specify grid-template-columns: subgrid and/or grid-template-rows: subgrid explicitly for each axis; a plain display: grid child is not a subgrid. Candidates who explain the track-alias and line-numbering details show real depth."
+    },
+    {
+      "question": "How does subgrid handle line numbers and gaps, and why does content-based sizing still work?",
+      "contextIntro": "This probes the precise geometry semantics of subgrid — the areas where implementation detail trips up even experienced CSS developers.",
+      "detailedAnswer": "Inside a subgrid, line numbers restart at 1 relative to the subgrid's own box: grid-column: 1 / 3 on a subgridged item spans the first two tracks of the subgrid, regardless of where the subgrid itself sits in the parent. Gaps are inherited from the parent by default — the subgrid uses the parent's row-gap/column-gap unless it overrides them with its own gap property. Content-based sizing works because auto tracks inside a subgrid participate in the shared track-sizing pass: the subgrid's items contribute their sizes to the parent's tracks, so a parent auto row grows to fit nested content. This is why subgrid is the correct tool for perfectly aligned, content-aware layouts.",
+      "trapWarning": "The naive answer is 'line numbers inside a subgrid keep the parent's numbering'. They restart at 1 inside the subgrid. Another trap: thinking gaps double up — the subgrid inherits the parent's gaps (no double-gap), and overriding gap on the subgrid changes only the subgrid's internal gaps. Candidates who mention line re-numbering and inherited gutters demonstrate that they have actually used subgrid."
+    }
+  ]
+}

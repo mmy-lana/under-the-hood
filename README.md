@@ -1,4 +1,4 @@
-# ⚡ Under The Hood
+# Under The Hood
 
 > **Deep-dive, distraction-free technical documentation and interview preparation hub — explained across four progressive depths from ELI5 to engine internals.**
 

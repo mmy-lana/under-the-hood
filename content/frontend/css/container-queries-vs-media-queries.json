@@ -1,0 +1,61 @@
+{
+  "id": "container-queries-vs-media-queries",
+  "title": "Container Queries: Component-Based Responsive Bounds",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Container Queries (Chrome 105+, Safari 16+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "container-queries", "responsive", "media-queries", "components", "cqw"],
+  "prerequisites": [
+    "Responsive design with media queries",
+    "CSS layout basics (flexbox/grid)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A coat that adjusts to the person wearing it is better than a coat that only checks the size of the whole store. Old-style responsive design checks the store window (the whole screen) to decide how a coat fits. Container queries check the coat's own dressing room (the container it hangs in): the same coat can be long in a big room and short in a small room, because it reacts to its own space, not the building's size. This makes every garment — every piece — adapt to wherever it is placed.",
+    "junior": "Container queries let components respond to their parent container's size instead of the viewport. Declare a container: .card { container-type: inline-size; } then query it: @container (min-width: 400px) { .card__title { font-size: 1.5rem; } }. Container query units (cqw, cqh, cqi, cqb, cqmin, cqmax) are percentages of the container's size. This is the component-ized way to do responsive: a card component adapts whether it is in a sidebar (narrow) or a hero (wide), without page-level media queries.",
+    "senior": "Architecturally, container queries shift responsive decisions from the page to the component boundary: the same component instance can render different layouts depending on where it is mounted. container-type: inline-size establishes a containment context (size containment on the chosen axis), so the browser can compute the container's size without the querying children influencing it — this is why container-type has layout/size containment side effects. container-name allows targeting a specific container when several are nested. Compared to media queries, this removes the maintenance burden of coordinating breakpoints across reusable widgets.",
+    "underTheHood": "The engine resolves @container queries against the nearest ancestor that establishes a containment context. container-type: inline-size applies size containment in the inline axis and layout/style containment overall, so the container's inline size is computed independently of descendants (breaking circular sizing). The query condition evaluates the container's content-box size in the chosen axis. Container query units resolve against the query container's size (cqw = 1% of the container's width). Nesting works because each container establishes a context; the query resolves against the nearest matching named/type container, and style queries (@container style(--theme: dark)) evaluate computed values rather than sizes."
+  },
+  "rosettaStone": {
+    "react": "CSS modules/Tailwind v4 container queries let React components self-adapt without viewport context in props.",
+    "angular": "Angular components can encapsulate container queries in their own styles, making responsive behavior truly component-scoped.",
+    "vue": "SFC scoped styles support @container natively, so Vue components respond to their mount container.",
+    "svelte": "Svelte components with scoped CSS can define their own container contexts for self-contained responsive behavior."
+  },
+  "codeComparison": {
+    "title": "Viewport media queries vs container queries for a reusable card",
+    "summary": "Media queries respond to the whole screen, so the same card misbehaves in narrow containers; container queries make the card adapt to its own space.",
+    "legacyOrBad": {
+      "label": "Viewport media query",
+      "snippet": "@media (min-width: 700px) { .card { flex-direction: row; } } /* ❌ OLD: keyed to viewport, not the card's container */",
+      "fullFile": {
+        "filename": "card-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: Media queries key off the VIEWPORT. The card's layout flips\n   at 700px of screen width — but the card may live in a 300px sidebar\n   or a 900px hero, so the same component renders wrongly in one of them. */\n\n.card {\n  display: flex;\n  flex-direction: column;\n}\n\n@media (min-width: 700px) {\n  .card {\n    flex-direction: row; /* ❌ OLD: viewport-tied breakpoint */\n  }\n}\n\n/* In a sidebar the card stays cramped in column mode at 1200px viewport;\n   in a wide hero it flips to row even when it has little room. The\n   component cannot adapt to its actual placement. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Container query on the card wrapper",
+      "snippet": ".card-wrap { container-type: inline-size; }\n@container (min-width: 400px) { .card { flex-direction: row; } } /* ✅ NEW */",
+      "fullFile": {
+        "filename": "card-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: The card wrapper is a container, and the query reacts to the\n   card's OWN width. The same component now adapts per placement. */\n\n.card-wrap {\n  container-type: inline-size; /* ✅ NEW: establishes the containment context */\n}\n\n.card {\n  display: flex;\n  flex-direction: column;\n}\n\n@container (min-width: 400px) {\n  .card {\n    flex-direction: row; /* ✅ NEW: flips when the CONTAINER is wide enough */\n  }\n}\n\n/* In a 300px sidebar the card stays column; in a 900px hero it flips to\n   row — both correct, driven by the container, not the viewport. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does container-type: inline-size have containment side effects, and what breaks if you forget it?",
+      "contextIntro": "Interviewers want the mechanism behind container queries — that they require containment to avoid circular sizing, not just a new media-query syntax.",
+      "detailedAnswer": "Container queries measure a container's size to style descendants, which creates a circular dependency risk: the descendants' styles could change the container's size, which changes the query result. To break the cycle, container-type applies size containment to the chosen axis: the container's inline size is computed without considering its contents, so query results cannot feed back into sizing. container-type: inline-size also implies layout and style containment. Forgetting container-type means no containment context exists and @container queries never match. This is also why you cannot size the container itself with percentage-based children that depend on the query — the containment makes such cycles well-defined.",
+      "trapWarning": "The naive answer is 'just add @container and it works'. Without container-type on an ancestor, the query has no context and silently does nothing. Another trap: thinking container-type only adds a capability — it changes layout semantics (containment), which can surprise people who relied on the container growing with its content. Candidates who explain the containment rationale show real understanding."
+    },
+    {
+      "question": "How do container query units (cqw/cqi) differ from viewport units (vw/vh), and when are they correct?",
+      "contextIntro": "This probes practical knowledge of the unit system — interviewers want to know the resolution context of each unit and the pitfalls of mixing them.",
+      "detailedAnswer": "Viewport units resolve against the viewport (vw = 1% of viewport width); container query units resolve against the nearest query container. cqi is 1% of the container's inline size (width in horizontal writing mode), cqb is 1% of the block size, cqw/cqh are 1% of width/height respectively, and cqmin/cqmax take the smaller/larger of the two. These are correct for sizing typography, spacing, and internal layout relative to the component's own space — making components scale proportionally wherever they render. Mixing vw units inside a container-query component ties part of the design to the viewport, recreating the exact coupling container queries are meant to remove.",
+      "trapWarning": "The naive answer is 'cqw is just vw for containers'. They resolve against different boxes and behave differently under scrollbars, transforms, and nested containers (units resolve against the nearest container). Another trap: using container units on the container itself or its ancestors — units need a query container ancestor, otherwise they fall back to the small viewport size in some implementations. Candidates who can explain cqi vs cqb and the nearest-container resolution show real mastery."
+    }
+  ]
+}

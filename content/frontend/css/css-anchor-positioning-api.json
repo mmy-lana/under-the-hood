@@ -1,0 +1,61 @@
+{
+  "id": "css-anchor-positioning-api",
+  "title": "Anchor Positioning: anchor-name Tethering Without JS Math",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Anchor Positioning (Chrome 125+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "anchor-positioning", "anchor-name", "position-anchor", "popover", "tooltip"],
+  "prerequisites": [
+    "CSS positioning (absolute/fixed)",
+    "Understanding of inset properties and overflow"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two magnets: one magnet is glued to a spot on the wall, and a paper is pinned to the other magnet. When the wall magnet moves, the paper follows automatically because the magnets are drawn to each other. Anchor positioning is like that: you declare one element the 'wall magnet' (the anchor) and another element the 'paper magnet' (the positioned element), then say things like 'keep the paper's left edge on the magnet's right edge'. The browser does the following — no measuring tape, no calculations by hand.",
+    "junior": "Anchor positioning lets you attach an element to another element (the anchor) without JavaScript. Mark the anchor: .btn { anchor-name: --tip; } then position the popover: .popover { position: absolute; position-anchor: --tip; left: anchor(right); bottom: anchor(top); }. inset-area: top right; is a shorthand that places the element in a named region around the anchor. Anchor functions (anchor(edge), anchor(--name edge)) resolve to the anchor's edges. This replaces manual getBoundingClientRect + coordinates math for tooltips, menus, and callouts.",
+    "senior": "Architecturally, anchor positioning moves the 'stick a popover near its trigger' problem from imperative JS geometry into the CSS layout algorithm. The positioned element resolves its inset values against the anchor's box via anchor() functions, and the browser recomputes the position when the anchor moves, scrolls, or resizes — no scroll/resize listeners. It composes with the top layer: popovers and dialogs in the top layer can still be anchored to in-flow elements. Combined with position-try-options, the browser can try alternative placements (flip to the other side) when the preferred spot overflows the viewport — the 'try the next position' logic that JS libraries hand-rolled.",
+    "underTheHood": "The layout engine resolves anchor references during the positioned-element layout phase: each anchor-name registers the element in a tree-scoped anchor registry, and a positioned element's position-anchor picks a registered anchor. anchor() is evaluated against the anchor's border box edges to compute the inset offsets. Overflow handling uses position-try-options: the engine re-solves the layout with each fallback inset-area/anchor combination and picks the first that fits within the scrollport (the 'try' algorithm tests candidates in order). In the top layer, anchored popovers still track their anchor because the registry is scoped to the tree; the compositor/layout coordinates the anchor's transformed position so the popover follows even under transforms."
+  },
+  "rosettaStone": {
+    "react": "React tooltip/menu components can drop floating-ui geometry math for CSS anchor positioning where browser support allows.",
+    "angular": "Angular overlay positioning can delegate to CSS anchors for simple anchored popovers, reserving CDK for complex cases.",
+    "vue": "Vue floating-element libraries are increasingly CSS-anchor-aware; simple anchors need zero JS.",
+    "svelte": "Svelte actions can set anchor-name and let the browser position popovers declaratively."
+  },
+  "codeComparison": {
+    "title": "getBoundingClientRect math vs anchor positioning",
+    "summary": "JS geometry must be recomputed on scroll/resize; CSS anchor positioning keeps the popover tethered automatically via the layout engine.",
+    "legacyOrBad": {
+      "label": "Manual JS positioning math",
+      "snippet": "const r = btn.getBoundingClientRect();\npop.style.left = r.right + 'px'; pop.style.top = r.top + 'px'; // ❌ OLD",
+      "fullFile": {
+        "filename": "anchor-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Manual positioning requires reading geometry and writing\n// coordinates — plus re-running on scroll/resize/reflow, handling\n// flipping when it overflows, and cleanup. Lots of JS for a tooltip.\nfunction positionPopover() {\n  const r = btn.getBoundingClientRect(); // ❌ OLD: geometry read\n  pop.style.left = `${r.right + 8}px`; // ❌ OLD: manual offset math\n  pop.style.top = `${r.top}px`;\n  // Flip if it overflows the viewport:\n  if (r.right + pop.offsetWidth > innerWidth) {\n    pop.style.left = `${r.left - pop.offsetWidth - 8}px`; // ❌ OLD: hand-rolled flip\n  }\n}\naddEventListener('scroll', positionPopover, { passive: true });\naddEventListener('resize', positionPopover);\npositionPopover();\n// And cleanup: remove both listeners later."
+      }
+    },
+    "modernOrGood": {
+      "label": "CSS anchor positioning",
+      "snippet": ".btn { anchor-name: --tip; }\n.popover { position: absolute; position-anchor: --tip; inset-area: right; } /* ✅ NEW */",
+      "fullFile": {
+        "filename": "anchor-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: Declarative tethering. The popover is positioned against the\n   button's anchor; the browser recomputes on scroll/resize/transform\n   with no JS at all. */\n\n.btn {\n  anchor-name: --tip; /* ✅ NEW: register this element as an anchor */\n}\n\n.popover {\n  position: absolute;\n  position-anchor: --tip; /* ✅ NEW: tether to the anchor */\n  inset-area: right; /* ✅ NEW: place in the right region of the anchor */\n}\n\n/* Flip when it would overflow:\n   @position-try --flip { inset-area: left; }\n   position-try-options: --flip;  -> the engine tries --flip first. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the browser keep an anchored popover following its anchor during scroll, and why is this different from JS positioning?",
+      "contextIntro": "This tests whether you understand that anchor positioning is resolved by the layout engine, not computed once — the key architectural difference from manual geometry math.",
+      "detailedAnswer": "The anchored element's position is recomputed as part of the layout/rendering pipeline: the engine resolves the anchor() inset values against the registered anchor's current border box at each render update. When the page scrolls or the anchor moves (including under transforms), the anchor's box position is updated and the anchored element's insets re-resolve in the same frame — no scroll/resize listeners are involved. This is why it stays perfectly attached with zero jank risk from JS sampling. With position-try-options, the engine also re-evaluates fallback placements during the same resolution, picking the first candidate that fits the scrollport.",
+      "trapWarning": "The naive answer is 'it computes the position once at load'. It is re-resolved continuously by the layout engine as the anchor moves. Another trap: thinking it is equivalent to position: absolute relative to a wrapper — the anchor can be anywhere in the document, including in another stacking context, and the positioned element can live in the top layer. Candidates who mention the re-resolution pipeline and the anchor registry show real understanding."
+    },
+    {
+      "question": "How does position-try-options flipping work, and what problem does it solve that JS libraries had to solve manually?",
+      "contextIntro": "This probes the overflow-avoidance mechanism — the 'try these placements in order' algorithm that is the real value of anchor positioning beyond simple tethering.",
+      "detailedAnswer": "position-try-options lists alternative placements (either inset-area values or named @position-try blocks). When the preferred placement would overflow the scrollport (or violate inset-modified containing block constraints), the engine re-solves the layout with the next candidate and picks the first one that fully fits. This mirrors the flip/fallback logic that floating-ui and popper.js implemented by measuring the popover's size and viewport at runtime, recomputing on every change. The CSS version runs inside the layout algorithm, so the flip is instantaneous and frame-consistent, and it also composes with scroll-driven changes. You can combine it with inset-area to express 'prefer right, else left, else below' declaratively.",
+      "trapWarning": "The naive answer is 'it just flips when it detects overflow'. It is an ordered candidate search executed during layout resolution, not an event-driven correction — there is no flash of the wrong position and no measurement jank. Another trap: thinking position-try-options works without an anchor or inset-area setup — the candidates are resolved against the same anchor reference. Candidates who describe the try-algorithm ordering and its layout-phase execution show real depth."
+    }
+  ]
+}

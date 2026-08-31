@@ -1,0 +1,61 @@
+{
+  "id": "stacking-context-composite-layers",
+  "title": "Stacking Contexts: isolation, will-change, and GPU Layers",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS 2.1 + modern compositing (Chrome 117+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "stacking-context", "isolation", "will-change", "compositor", "gpu", "z-index"],
+  "prerequisites": [
+    "CSS positioning and z-index basics",
+    "Understanding of the box model and paint order"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine a pile of transparent folders on a desk. Normally, the folders pile up in the order you place them, and each folder's papers stay inside its own folder. A stacking context is a special folder that seals its contents: the papers inside can never jump in front of papers from other folders, no matter how they are shuffled internally. Once you seal a folder, the whole folder behaves like one single sheet when compared with the rest of the desk. That is what isolation does: it seals the folder so inner z-index battles cannot leak out.",
+    "junior": "A stacking context is a group of elements painted together as a unit, in a fixed order relative to siblings. It is created by positioning + z-index, opacity < 1, transform, filter, mix-blend-mode, will-change, contain, and isolation: isolate. Inside a context, z-index only competes with elements inside the same context. To contain a sub-tree's z-index battles, use isolation: isolate on a parent — it creates a fresh context without needing z-index. This is the modern, predictable way to scope stacking instead of fighting z-index: 9999 wars.",
+    "senior": "Architecturally, stacking contexts are the unit of compositing: each context can become its own composited layer (backing store) when it has a transform, opacity animation, or will-change. The browser's compositor then positions/animates that layer on the GPU without re-rasterizing the main-thread paint. Creating many layers increases GPU memory, so will-change should be used deliberately. A key correctness trap: a context clips the visual order of descendants to the context — you cannot interleave a child of one context between children of another, no matter the z-index values.",
+    "underTheHood": "The rendering engine computes paint order via the stacking context tree: each context runs a background/border pass, then negative z-index children, then block-level in-flow descendants, then floats, then inline content, then z-index:0/auto positioned, then positive z-index children. Layers are promoted by the compositor when the element is 'composited' (transform/opacity/will-change/contain:paint, or force-compositing heuristics). The layer tree maps 1:1 with stacking contexts that were promoted; the main thread rasterizes each layer's content into a texture, and the compositor thread draws them with z-order. isolation: isolate creates a new stacking context without visual side effects, letting the subtree be promoted independently."
+  },
+  "rosettaStone": {
+    "react": "React components wrap modals/drawers in a portal to a top-level stacking context, relying on the same paint-order rules.",
+    "angular": "Angular overlay/CDK portals mount to the document body to escape component stacking contexts for z-index control.",
+    "vue": "Vue transition wrappers often add transform for animations — which unintentionally creates stacking contexts; beware.",
+    "svelte": "Svelte transitions animate opacity/transform, creating stacking contexts and potentially GPU layers during the transition."
+  },
+  "codeComparison": {
+    "title": "Fighting z-index wars vs containing them with isolation",
+    "summary": "Global z-index escalation is fragile; isolation: isolate scopes the stacking battle to a subtree so inner values cannot leak outward.",
+    "legacyOrBad": {
+      "label": "Global z-index escalation",
+      "snippet": ".modal { z-index: 9999; } /* ❌ OLD: global arms race — the next overlay needs 10000 */",
+      "fullFile": {
+        "filename": "stacking-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: Global z-index escalation. Every new overlay needs a higher\n   number to beat the last one, and any ancestor with a stacking\n   context traps the whole subtree — so 9999 often does nothing. */\n\n.modal {\n  position: fixed;\n  z-index: 9999; /* ❌ OLD: arbitrary arms race number */\n}\n\n.tooltip {\n  position: absolute;\n  z-index: 10000; /* ❌ OLD: must beat the modal everywhere it appears */\n}\n\n/* The moment a parent creates a stacking context (transform,\n   opacity, filter), these numbers compare only inside that parent —\n   the modal can silently appear UNDER unrelated fixed headers. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "isolation: isolate to scope stacking",
+      "snippet": ".overlay-root { isolation: isolate; } /* ✅ NEW: fresh stacking context, no z-index needed */",
+      "fullFile": {
+        "filename": "stacking-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: isolation: isolate creates a fresh stacking context on the\n   root of each widget, so internal z-index battles stay scoped and\n   never leak to siblings. No global numbers required. */\n\n.overlay-root {\n  isolation: isolate; /* ✅ NEW: seals this subtree's stacking order */\n}\n\n.modal {\n  position: fixed;\n  z-index: 10; /* ✅ NEW: small, local numbers — only compete inside the root */\n}\n\n.tooltip {\n  position: absolute;\n  z-index: 20; /* ✅ NEW: beats the modal within the same isolated root */\n}\n\n/* Both the modal and the tooltip are compared only inside\n   .overlay-root; unrelated page content cannot interleave with them. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does z-index: 999999 sometimes fail to bring an element to the front?",
+      "contextIntro": "Interviewers ask this to see whether you understand that z-index is scoped by stacking contexts, not a global priority number — the classic production mystery.",
+      "detailedAnswer": "z-index only orders elements within the same stacking context. If any ancestor of your element creates a stacking context (position + z-index, opacity < 1, transform, filter, will-change, contain, mix-blend-mode, isolation), then your huge z-index competes only against siblings inside that ancestor's context. The ancestor itself is then painted at its own z-index among ITS siblings. So a modal with z-index: 999999 inside a transformed card is trapped: the whole card sits at whatever level the card's context has. Fix: move the element to a top-level context (portal/body) or remove the creating property from ancestors, or contain with isolation at a deliberate root.",
+      "trapWarning": "The naive answer is 'z-index is broken' or 'just use a bigger number'. Bigger numbers only matter within the same context. Another trap: assuming opacity: 0.99 or a tiny transform are harmless — they create stacking contexts too, which silently traps descendants. Candidates who trace the ancestor chain to find the context-creating property show real debugging skill."
+    },
+    {
+      "question": "How does will-change actually create GPU layers, and why is it not free?",
+      "contextIntro": "This tests the compositing model — that will-change is a promise that promotes the element to its own layer with real GPU memory cost, not a performance silver bullet.",
+      "detailedAnswer": "will-change tells the browser to promote the element into its own composited layer before the property actually changes, so the eventual animation (transform/opacity) runs on the compositor thread without re-rasterizing on the main thread. Each promoted layer is a separate texture in GPU memory, with its own compositing cost. Overusing will-change on many elements (or on huge ones) bloats GPU memory and can cause layer explosion, slow down first paint, and increase memory pressure on low-end devices. Modern browsers also auto-promote layers for running animations, so will-change is best reserved for a small number of known, imminent animations.",
+      "trapWarning": "The naive answer is 'will-change makes everything faster'. It is a trade-off: layers cost memory and compositing time, and an idle will-change layer keeps being re-rasterized if content changes. Another trap: thinking will-change creates a stacking context — it does (like transform), so adding it changes paint order and can trap z-index children. Candidates who mention GPU memory, layer limits, and auto-promotion show real understanding."
+    }
+  ]
+}

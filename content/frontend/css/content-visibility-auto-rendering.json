@@ -1,0 +1,61 @@
+{
+  "id": "content-visibility-auto-rendering",
+  "title": "content-visibility: auto: Skipping Off-Screen Layout & Paint",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Containment Level 2 (content-visibility, Chrome 85+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "content-visibility", "rendering", "performance", "containment", "layout"],
+  "prerequisites": [
+    "CSS containment (contain property)",
+    "Understanding of layout, paint, and the rendering pipeline"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A long scrollable menu in a restaurant shows every dish on the first page, even the ones at the very bottom that nobody can see yet — so the printer prints hundreds of pages up front. content-visibility is the smart waiter: he only prints the pages currently open on the table, and prepares the others when you actually turn to them. The restaurant saves paper (rendering work), and the only difference is a tiny delay the moment you flip to a new page.",
+    "junior": "content-visibility: auto on a section tells the browser to skip rendering (layout + paint + some style work) for that section while it is off-screen, then render it when it approaches the viewport. .feed-item { content-visibility: auto; contain-intrinsic-size: auto 500px; }. This dramatically speeds up long pages (feeds, docs, lists). The contain-intrinsic-size gives the browser an estimated size for off-screen elements so the scrollbar stays roughly correct. It is a pure-CSS performance win for long scrollable content — no virtualization JS needed.",
+    "senior": "Architecturally, content-visibility: auto applies layout, style, and paint containment to the element and skips the rendering of the subtree while it is outside the relevant viewport (with a margin). When the element approaches the viewport, the engine unskips it and renders it. The key detail is contain-intrinsic-size: without an intrinsic size, a skipped element collapses to zero height, breaking the scrollbar; the intrinsic size (a fixed value or the 'auto' keyword that remembers the last rendered size) keeps the layout stable. This is the CSS-native version of virtualization: rendering work is proportional to the visible content, not the total document size.",
+    "underTheHood": "The engine tracks each content-visibility: auto element's position and, during the rendering steps, determines if it is within the 'relevant' region (viewport plus a skippable margin). Skipped elements are not laid out or painted (their subtrees get style/layout/paint containment and the rendering is skipped), which reduces layout and paint cost. The element still occupies space via its contain-intrinsic-size (a remembered or estimated size). When scroll brings it near the viewport, it is re-included in layout and paint — 'unskipping' triggers a layout pass for that subtree. Because layout can no longer read the real size of skipped children, contain-intrinsic-size prevents layout from depending on unrendered content, avoiding the need to unskip just to measure."
+  },
+  "rosettaStone": {
+    "react": "React long lists can use content-visibility: auto instead of windowing when item heights are predictable.",
+    "angular": "Angular material lists / CDK virtual scroll pair with content-visibility for extra rendering savings.",
+    "vue": "Vue components in long feeds get content-visibility: auto classes for native skipping.",
+    "svelte": "SvelteKit blog/article pages with many sections benefit from content-visibility on each section."
+  },
+  "codeComparison": {
+    "title": "Rendering every list item vs skipping off-screen items",
+    "summary": "Without content-visibility, the browser lays out and paints the entire list; with it, only items near the viewport render, and intrinsic sizes keep the scrollbar stable.",
+    "legacyOrBad": {
+      "label": "All items always rendered",
+      "snippet": ".item { /* ❌ OLD: every item is laid out and painted regardless of visibility */ }",
+      "fullFile": {
+        "filename": "cv-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: Every item in a long list is fully laid out and painted on\n   load, even the ones thousands of pixels below the viewport. For a\n   10,000-item feed this means layout and paint work for the entire\n   document up front — slow first render and slow scroll. */\n\n.item {\n  /* ❌ OLD: no skipping — full render cost for all items */\n}\n\n/* The browser computes layout and paint for all items eagerly;\n   scrolling later only benefits because everything was already\n   rendered, but the initial cost is proportional to total content. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "content-visibility: auto per item",
+      "snippet": ".item { content-visibility: auto; contain-intrinsic-size: auto 120px; } /* ✅ NEW */",
+      "fullFile": {
+        "filename": "cv-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: content-visibility: auto skips layout+paint for items that\n   are off-screen. contain-intrinsic-size reserves their space so the\n   scrollbar and layout stay stable. */\n\n.item {\n  content-visibility: auto; /* ✅ NEW: skip off-screen rendering */\n  contain-intrinsic-size: auto 120px; /* ✅ NEW: remembered/estimated height */\n}\n\n/* When an item scrolls near the viewport, the engine 'unskips' it and\n   renders it on demand. Initial cost is proportional to the visible\n   items, not the whole 10,000-item feed. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does content-visibility: auto need contain-intrinsic-size, and what happens without it?",
+      "contextIntro": "Interviewers use this to check whether you understand the layout implications of skipping — the collapse bug is the classic mistake that breaks layouts.",
+      "detailedAnswer": "content-visibility: auto applies size-like skipping: while an element is off-screen, the engine does not lay out its subtree, so it has no real height. Without contain-intrinsic-size, the element's height computes as zero (its content is not measured), collapsing the page — the scrollbar shrinks and items pile up. contain-intrinsic-size supplies a proxy size: a fixed value (e.g. 500px) or auto (the engine remembers the last rendered size and uses it while skipped). The layout stays stable because the engine can position the element without measuring its skipped contents, and when it unskips, the real size replaces the proxy. This is the deliberate trade-off: you trade exact initial sizing for dramatically reduced rendering work.",
+      "trapWarning": "The naive answer is 'content-visibility: auto is free'. Without contain-intrinsic-size, layouts collapse — the most common production bug with this property. Another trap: using a fixed contain-intrinsic-size on variable-height content causes scroll jumps when items unskip to their real (different) sizes; 'auto' mitigates this by remembering rendered sizes. Candidates who can explain the sizing proxy and the unskip behavior show real understanding."
+    },
+    {
+      "question": "How does content-visibility: auto differ from JS windowing/virtualization, and when is each appropriate?",
+      "contextIntro": "This tests whether you understand the mechanism — native rendering skip vs DOM pruning — and can make an architectural trade-off between the two approaches.",
+      "detailedAnswer": "Windowing (virtual scrolling) removes off-screen nodes from the DOM entirely, which also removes their memory, event listeners, and layout cost — but requires measuring item sizes, managing a window, and often re-mounting components on scroll (with all the lifecycle cost that implies). content-visibility: auto keeps the DOM intact but skips layout and paint for off-screen subtrees in the engine — no JS, no re-mounting, and state stays in the DOM. It is best for long static-ish documents where the number of elements is large but each is cheap to render on demand; windowing is better for genuinely unbounded or interactive virtual lists (chat logs, infinite grids) where DOM count itself is the problem. Combining both is common: virtualize the container, add content-visibility to rows.",
+      "trapWarning": "The naive answer is 'content-visibility replaces windowing'. It does not reduce DOM count or memory for listeners — it only skips rendering work. Another trap: assuming it helps when the whole document fits in the viewport or when elements are always visible — the win requires off-screen content. Candidates who articulate the DOM-vs-render distinction and the memory angle show real architectural understanding."
+    }
+  ]
+}

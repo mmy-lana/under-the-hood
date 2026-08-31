@@ -1,0 +1,61 @@
+{
+  "id": "popover-api-top-layer",
+  "title": "Popover API: Top Layer Promotion, Light-Dismiss, Backdrop",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "Popover API (Chrome 114+, Firefox 125+, Safari 17+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "popover", "top-layer", "dialog", "light-dismiss", "backdrop", "html"],
+  "prerequisites": [
+    "HTML semantics and ARIA basics",
+    "Understanding of stacking contexts and z-index"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A magician keeps a special trapdoor card on top of the whole deck — no matter how tall the deck gets, that card is always on top, and only one trapdoor card can be on top at a time. The Popover API is that trapdoor: a popover card is lifted out of the deck entirely and placed on a special top shelf. When you tap outside the card, the trapdoor closes by itself. You no longer need to carefully shuffle the deck (manage z-index) to keep the card visible.",
+    "junior": "The popover attribute turns an element into a popover: <div id=\"menu\" popover>...</div>. Toggle it with a button: <button popovertarget=\"menu\">Open</button>. Popovers are promoted to the top layer, so they always paint above everything regardless of z-index. They support light-dismiss: clicking outside or pressing Escape closes them automatically. Style with the :popover-open pseudo-class and the ::backdrop pseudo-element. The popover API removes the need for custom overlay JS/ARIA wiring for simple menus, tooltips, and toasts: browser handles focus, dismissal, and top-layer stacking.",
+    "senior": "Architecturally, the popover API formalizes the top-layer concept: the element is rendered in the top layer (above the whole document's stacking contexts) and is the only element in it at a time unless multiple popovers are explicitly allowed. Light-dismiss is implemented by the browser's 'light dismiss' algorithm, which listens for outside clicks and Escape. Popovers get an implicit role of menu/dialog-like semantics and a default focus behavior; the :popover-open pseudo-class and ::backdrop give styling hooks. It composes with anchor positioning, allowing anchored popover menus with zero JS. This is a rendering/behavior primitive, not just a styling trick — it removes whole classes of overlay bugs.",
+    "underTheHood": "The top layer is implemented as a special layer above the root stacking context in the rendering tree; the engine re-parents the popover element's rendering into the top layer (its layout context becomes the viewport). The popover's 'popover open' state is tracked, and toggling it triggers the show/hide steps which fire the beforetoggle/toggle events, apply the popover-open state, and run the light-dismiss listener setup. The ::backdrop pseudo-element is generated in the top layer behind the popover. Multiple popovers: only one 'topmost' popover is auto-dismissed by light dismiss; nesting popovers (popover with popovertarget inside) keeps the hierarchy. The engine also manages focus: opening moves focus into the popover, and closing restores it."
+  },
+  "rosettaStone": {
+    "react": "React overlays can use the native popover attribute + popovertarget instead of portal+backdrop for simple menus.",
+    "angular": "Angular CDK overlays remain powerful; native popover covers simple cases with less wiring.",
+    "vue": "Vue components can leverage native popover for menus/toasts, keeping JS to state toggling.",
+    "svelte": "Svelte can bind popover open state with runes and let the browser handle top-layer and dismissal."
+  },
+  "codeComparison": {
+    "title": "Custom overlay with z-index vs native popover top layer",
+    "summary": "Hand-rolled overlays fight z-index and need manual dismissal logic; the popover API handles top-layer placement and light-dismiss natively.",
+    "legacyOrBad": {
+      "label": "Custom overlay + z-index management",
+      "snippet": "<div class=\"menu\" hidden>...</div>\n.menu { position: fixed; z-index: 9999; } /* ❌ OLD: z-index arms race */",
+      "fullFile": {
+        "filename": "overlay-bad.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: Custom overlay. Fixed positioning + a huge z-index still\n     loses to ancestors with stacking contexts, and dismissal requires\n     hand-written outside-click and Escape handling. -->\n<button id=\"open\">Open menu</button>\n<div id=\"menu\" class=\"menu\" hidden>Menu items...</div>\n\n<script>\n  open.addEventListener('click', () => {\n    menu.hidden = false;\n    document.addEventListener('click', onDocClick); // ❌ OLD: manual light-dismiss\n  });\n  function onDocClick(e) {\n    if (!menu.contains(e.target)) { menu.hidden = true; /* cleanup */ }\n  }\n</script>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Native popover attribute",
+      "snippet": "<button popovertarget=\"menu\">Open</button>\n<div id=\"menu\" popover>Menu items...</div> <!-- ✅ NEW: top layer + light dismiss -->",
+      "fullFile": {
+        "filename": "overlay-good.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Native popover. The element is promoted to the top layer,\n     painted above everything, and the browser handles outside-click\n     and Escape dismissal automatically. No z-index, no JS listeners. -->\n<button popovertarget=\"menu\">Open menu</button>\n<div id=\"menu\" popover>\n  Menu items...\n</div>\n\n<!-- Styling hooks:\n     #menu:popover-open { animation: fade-in 150ms; }\n     #menu::backdrop { background: rgb(0 0 0 / 0.3); } -->\n\n<!-- Accessible: the browser gives popovers appropriate semantics and\n     manages focus on open/close without manual ARIA wiring. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does 'top layer' actually mean, and why does a popover beat any z-index value?",
+      "contextIntro": "This tests the rendering model — interviewers want you to distinguish the top layer (a separate rendering surface above all stacking contexts) from merely-high z-index values.",
+      "detailedAnswer": "The top layer is a rendering layer above the document's root stacking context: an element promoted to it paints above every other element regardless of z-index, because z-index only orders elements within a stacking context, and the top layer is not part of any of them. The browser re-parents the popover's rendering into this layer (its containing block becomes the viewport), so it cannot be trapped by an ancestor's stacking context or overflow clipping. This is the same mechanism <dialog> and fullscreen elements use. When a popover opens, it is promoted; when it closes, it is demoted. This is why popovers survive inside transformed/overflow-hidden cards that would otherwise clip or trap them.",
+      "trapWarning": "The naive answer is 'popover just has an infinite z-index'. The top layer is structurally above all stacking contexts; z-index: 999999 inside a transformed ancestor still loses to the top layer. Another trap: assuming multiple popovers stack in the top layer by z-index — the browser manages topmost-popover ordering (the last opened is topmost, and light dismiss targets it). Candidates who explain the re-parenting and stacking-context independence show real understanding."
+    },
+    {
+      "question": "How does light-dismiss work under the hood, and what events fire during open/close?",
+      "contextIntro": "This probes the behavior layer — the dismissal algorithm and lifecycle events that make popovers feel native and that developers hook into for animation and state sync.",
+      "detailedAnswer": "Light-dismiss is implemented by the browser: when a popover is open, the engine listens for outside pointer interactions and the Escape key; an outside click closes the topmost popover, and Escape does too. The lifecycle is: showing steps fire beforetoggle (with oldState/newState), then the element is promoted to the top layer and gets the popover-open state, then toggle fires; hiding reverses it. You can prevent default on beforetoggle to cancel the change. The browser also manages focus — moving it into the popover on open and restoring it on close. Combining popover with anchor positioning gives menus that track their trigger with no JS at all.",
+      "trapWarning": "The naive answer is 'popovers are just styled divs'. The browser owns the dismissal and focus behavior — your outside-click handler is unnecessary and can conflict with the native one. Another trap: assuming toggle events fire synchronously on attribute change only — the events and top-layer promotion are part of the show/hide steps, so animation triggered from toggle must account for the promotion timing. Candidates who know beforetoggle and the oldState/newState payload show real depth."
+    }
+  ]
+}

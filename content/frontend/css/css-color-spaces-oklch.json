@@ -1,0 +1,61 @@
+{
+  "id": "css-color-spaces-oklch",
+  "title": "OKLCH Color Space: Perceptual Uniformity & Display P3",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Color 4 (oklch/oklab, Chrome 111+, Safari 15.4+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "color", "oklch", "color-space", "display-p3", "wide-gamut"],
+  "prerequisites": [
+    "CSS colors (hex, rgb, hsl)",
+    "Understanding of color models and the sRGB gamut"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Imagine two rulers: one has marks that get farther apart as they go up (sRGB/HSL), so 'one step up' means a big change at the top and a tiny change at the bottom. The other ruler (OKLCH) has evenly spaced marks — one step is always the same visual jump. If you want colors to feel consistent as you move along the ruler, the even ruler is much easier to work with: you can trust that 'add 10 marks' always looks like the same amount of change, whether the color is dark or light.",
+    "junior": "oklch() is a color function with three channels: lightness (L), chroma (C — how vivid), and hue (H — the color angle). background: oklch(70% 0.15 250);. Unlike hex/hsl, oklch is perceptually uniform: equal numeric steps look like equal visual steps. To make a palette, keep L constant and rotate H, or keep H constant and step C. It also exposes colors outside sRGB: you can specify wide-gamut colors for Display P3 screens (use color(display-p3 r g b) or just oklch values that exceed sRGB chroma), letting high-end monitors show richer colors with graceful fallback.",
+    "senior": "Architecturally, OKLCH is a color space designed for perceptual uniformity based on the CAM16-UCS color appearance model. Interpolation and gradients in oklch avoid the muddy grey midpoints of sRGB interpolation (especially between complementary colors). Hue is a wheel (degrees), chroma is unbounded by gamut (clamped at conversion), and lightness uses a non-linear encoding matching human vision better than HSL's naive lightness. This makes it the recommended space for design tokens, theme ramps, and color mixing (color-mix(in oklch, ...)). Display-P3 output is the practical gain: the browser converts oklch values to the display's gamut, so a chroma beyond sRGB renders fully saturated on P3 panels.",
+    "underTheHood": "The CSS Color 4 spec defines oklch as a cylindrical form of OKLab, which is derived from a non-linear transform of XYZ tristimulus values using a specific M1/M2 matrix pair approximating cone responses. The browser converts oklch -> OKLab -> XYZ -> the display's color profile (sRGB or Display P3) at paint time via the color pipeline (Skia/GPU). Interpolation between two oklch colors happens in the oklch space directly, producing perceptually even gradients. Chroma values that exceed the destination gamut are gamut-mapped (the spec's CSS gamut mapping algorithm) rather than naively clipped, preserving hue and lightness where possible. color(display-p3 ...) lets authors target the wider gamut explicitly, with oklch as the perceptual interpolation space of choice."
+  },
+  "rosettaStone": {
+      "react": "Design-token systems in React apps (Tailwind v4, CSS vars) increasingly use oklch for theme ramps and interpolation.",
+      "angular": "Angular Material's color palettes can be regenerated in oklch for perceptual spacing between tones.",
+      "vue": "Vue apps using CSS variables for theming benefit from oklch tokens that interpolate predictably.",
+      "svelte": "SvelteKit sites with CSS variable themes can adopt oklch tokens for consistent dark/light ramps."
+    },
+    "codeComparison": {
+      "title": "HSL hand-tuned palette vs OKLCH generated palette",
+      "summary": "HSL lightness is not perceptually uniform — equal steps look uneven; OKLCH lightness steps look visually even, so palettes are predictable.",
+      "legacyOrBad": {
+        "label": "HSL palette with hand-tuning",
+        "snippet": "--c-500: hsl(210 80% 50%); /* ❌ OLD: equal lightness steps do NOT look even */",
+        "fullFile": {
+          "filename": "palette-bad.css",
+          "language": "css",
+          "code": "/* ❌ OLD: In HSL, equal lightness steps are NOT perceptually equal.\n   The mid tones look different in brightness even though the numbers\n   step evenly, so you hand-tune every stop. */\n\n:root {\n  --c-300: hsl(210 80% 70%); /* looks washed out */\n  --c-400: hsl(210 80% 60%);\n  --c-500: hsl(210 80% 50%); /* the 'brand' color */\n  --c-600: hsl(210 80% 40%);\n  --c-700: hsl(210 80% 30%); /* ❌ OLD: visually jumps more than the top steps */\n}\n\n/* Each step required manual eyeballing; the ramp is uneven and\n   gradients between complementary colors pass through grey mud. */"
+        }
+      },
+      "modernOrGood": {
+        "label": "OKLCH generated palette",
+        "snippet": "--c-500: oklch(55% 0.16 250); /* ✅ NEW: even perceptual steps */",
+        "fullFile": {
+          "filename": "palette-good.css",
+          "language": "css",
+          "code": "/* ✅ NEW: In OKLCH, stepping L by a constant amount looks like an even\n   brightness ramp, so you can generate a whole palette numerically. */\n\n:root {\n  --c-300: oklch(75% 0.13 250); /* ✅ NEW: 10% perceptual steps */\n  --c-400: oklch(65% 0.14 250);\n  --c-500: oklch(55% 0.16 250); /* the brand color */\n  --c-600: oklch(45% 0.14 250);\n  --c-700: oklch(35% 0.12 250);\n}\n\n/* Gradients also stay vivid:\n   background: linear-gradient(in oklch, var(--c-400), var(--c-600));\n   No grey mud, no hand-tuning, wide-gamut friendly. */"
+        }
+      }
+    },
+    "interviewGotchas": [
+      {
+        "question": "Why is OKLCH better than HSL for building palettes and gradients, even though HSL has been used for years?",
+        "contextIntro": "This tests whether you understand perceptual uniformity — the actual math behind why HSL ramps look uneven — rather than just repeating 'OKLCH is modern'.",
+        "detailedAnswer": "HSL's lightness channel is a simple model that does not match human perception: two colors with the same HSL lightness can appear very different in brightness, and equal lightness steps look uneven (especially in the mid-tones and for saturated colors). Interpolating in HSL between two colors passes through desaturated grey midpoints because hue and saturation are treated as a naive cylinder. OKLCH is built on a perceptually-uniform model (CAM16-UCS-derived): equal numeric steps in L correspond to equal perceived lightness differences, and chroma/hue interpolation keeps colors vivid through the whole gradient. This makes generated ramps and gradients predictable and consistent, which is why design systems have migrated to it.",
+        "trapWarning": "The naive answer is 'OKLCH just has nicer color names or more channels'. The difference is the perceptual model behind the numbers. Another trap: assuming any color space interpolates identically — color-mix(in hsl, ...) vs color-mix(in oklch, ...) produce visibly different gradients, and the in-hsl one muddies. Candidates who mention perceptual uniformity and interpolation space selection show real understanding."
+      },
+      {
+        "question": "How do OKLCH and Display P3 relate, and what happens when a color exceeds the sRGB gamut?",
+        "contextIntro": "This probes the wide-gamut story — that oklch values can encode colors outside sRGB, and how the browser handles out-of-gamut values on both wide and standard displays.",
+        "detailedAnswer": "OKLCH is a color space, not a gamut: its L and C channels can express colors beyond the sRGB gamut, particularly high-chroma colors that fit in Display P3. On a wide-gamut (P3) display, the browser converts the oklch value through the color pipeline and renders the extra saturation; on an sRGB display, the value is gamut-mapped to the closest reproducible color. The CSS Color 4 spec mandates gamut mapping (not naive clipping) — it preserves hue and lightness while reducing chroma, avoiding ugly hue shifts. You can also write color(display-p3 ...) to target P3 directly. For wide-gamut delivery, serve P3 values via @supports or use oklch values whose chroma naturally exceeds sRGB, letting browsers handle conversion.",
+        "trapWarning": "The naive answer is 'oklch automatically makes colors brighter on every screen'. On sRGB displays the extra chroma is gamut-mapped down; the benefit only materializes on wide-gamut hardware. Another trap: thinking hex and oklch(0.5) with high chroma are interchangeable — hex is sRGB-only and cannot express the wide-gamut colors oklch can. Candidates who explain gamut mapping vs clipping and the P3 target show real depth."
+      }
+    ]
+  }

@@ -1,0 +1,61 @@
+{
+  "id": "scroll-driven-animations-timeline",
+  "title": "Scroll-Driven Animations: animation-timeline: scroll() Compositor Sync",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "Scroll-driven Animations (Chrome 115+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "scroll-driven-animations", "animation-timeline", "compositor", "scroll", "keyframes"],
+  "prerequisites": [
+    "CSS animations and keyframes",
+    "Understanding of scroll events and the compositor"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A player piano plays its song not by a musician pressing keys live, but by a paper roll that advances as you turn the handle. Scroll-driven animations work the same way: the page's scroll position is the handle, and the animation is the paper roll. You do not need someone to watch the scrolling and press keys in real time — the handle turn directly drives the music, smoothly and without any middleman.",
+    "junior": "animation-timeline: scroll() ties an animation's progress to scroll position instead of time. .progress { animation: grow linear; animation-timeline: scroll(); } makes the animation play as you scroll (0% at scroll start, 100% at scroll end). Use scroll(root) for the page or scroll(#container) for an element; the range option (e.g. scroll(nearest) or animation-range: cover 0% cover 100%) sets which scroll portion maps to the animation. This enables scroll-linked effects (progress bars, parallax, reveal-on-scroll) in pure CSS with no scroll listeners.",
+    "senior": "Architecturally, scroll-driven animations are compositor-driven: the scroll position is sampled on the compositor thread and used to compute the animation's progress directly, so the animation does not depend on main-thread scroll events or rAF callbacks. This eliminates the classic jank of JS scroll handlers and the delay of 'scroll -> event -> main thread -> style recalc -> paint'. The animation-timeline can be scroll() (a ScrollTimeline) or view() (a ViewTimeline keyed to an element's visibility in the scroller). animation-range controls which part of the scroll maps to 0%-100%, and named timelines (@scroll-timeline in older syntax) can be referenced. The animation is still a normal CSS animation — it just has a scroll-based time source.",
+    "underTheHood": "The engine creates a ScrollTimeline whose currentTime is derived from the scroller's scroll offset clamped into the timeline's range. The compositor maintains the scroll offset and, for compositor-eligible animations (transform/opacity), updates the animation progress on the compositor thread without a main-thread round trip. For non-compositable properties, the engine still schedules the animation on the main thread but samples its current time from the compositor-provided scroll position during the frame's animation update step. view() timelines compute the target's intersection with the scroller to derive progress, so an element animates as it enters, crosses, and exits the viewport. Range syntax (animation-range: entry 0% exit 100%) defines these mapping boundaries explicitly."
+  },
+  "rosettaStone": {
+    "react": "React components can drop scroll-position JS state in favor of CSS animation-timeline for progress/parallax effects.",
+    "angular": "Angular animations (triggers) remain time-based; scroll-driven CSS is a complementary pure-CSS option for scroll effects.",
+    "vue": "Vue transitions are time-based; scroll-driven animations live in scoped CSS and reduce scroll-listener code in composables.",
+    "svelte": "Svelte components benefit directly — no $effect scroll listeners needed when the compositor can drive the animation."
+  },
+  "codeComparison": {
+    "title": "Scroll listener + rAF progress vs compositor scroll() timeline",
+    "summary": "JS scroll handling samples on the main thread and can jank; animation-timeline: scroll() drives progress on the compositor with zero main-thread work.",
+    "legacyOrBad": {
+      "label": "Scroll listener + style update",
+      "snippet": "addEventListener('scroll', () => {\n  bar.style.transform = `scaleX(${scrollY / max})`; // ❌ OLD: main-thread per scroll event\n});",
+      "fullFile": {
+        "filename": "scroll-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A scroll listener updates a style on every scroll event.\n// Each update touches the main thread (event -> JS -> style recalc),\n// and un-throttled listeners can fire many times per frame, causing\n// jank and missed frames on low-end devices.\nconst bar = document.querySelector('.progress-bar');\n\naddEventListener('scroll', () => {\n  const max = document.documentElement.scrollHeight - innerHeight;\n  const p = scrollY / max; // ❌ OLD: main-thread sample per event\n  bar.style.transform = `scaleX(${p})`; // ❌ OLD: style write -> recalc\n});\n\n// Also needs passive:true, rAF throttling, resize handling, and\n// cleanup — a surprising amount of JS for one progress bar."
+      }
+    },
+    "modernOrGood": {
+      "label": "Compositor-driven scroll() timeline",
+      "snippet": ".progress-bar { animation: grow linear; animation-timeline: scroll(); } /* ✅ NEW */",
+      "fullFile": {
+        "filename": "scroll-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: The animation's time source is the scroll position itself,\n   sampled on the compositor thread. No listeners, no rAF, no style\n   writes from JS — the progress bar tracks the scroll perfectly. */\n\n.progress-bar {\n  transform-origin: left;\n  animation: grow linear; /* ✅ NEW: 'linear' eases the timeline mapping */\n  animation-timeline: scroll(); /* ✅ NEW: scroll position drives progress */\n  animation-range: cover 0% cover 100%; /* ✅ NEW: whole scrollable range */\n}\n\n@keyframes grow {\n  from { transform: scaleX(0); }\n  to { transform: scaleX(1); }\n}\n\n/* For element-relative effects, use view() and animation-range:\n   .reveal { animation-timeline: view();\n             animation-range: entry 0% cover 40%; } */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How are scroll-driven animations different from scroll listeners with rAF, and why do they avoid jank?",
+      "contextIntro": "This separates candidates who understand the compositor from those who only know 'scroll effects' — the main-thread vs compositor-thread distinction is the substance.",
+      "detailedAnswer": "A scroll listener runs on the main thread: the scroll event fires, JS runs (possibly scheduling a rAF), styles change, and the engine recalculates style and paint — all main-thread work that competes with input handling and rendering. Scroll-driven animations define a ScrollTimeline whose currentTime is the scroll offset; for compositor-eligible properties (transform, opacity), the compositor thread updates the animation progress directly from its own scroll position, bypassing the main thread entirely. The result is frame-aligned progress updates that cannot be starved by main-thread work. Even for non-compositable properties, the engine still benefits from a single consistent timeline source rather than event-driven JS sampling.",
+      "trapWarning": "The naive answer is 'it's just a CSS shortcut for the same scroll listener'. It is a different execution model (compositor-driven vs main-thread event-driven). Another trap: assuming any property animates smoothly — only transform/opacity run fully on the compositor; animating width/height/top still engages main-thread layout each frame. Candidates who mention compositor eligibility and the ScrollTimeline source demonstrate real understanding."
+    },
+    {
+      "question": "What is the difference between scroll() and view() timelines, and how does animation-range work?",
+      "contextIntro": "This tests precise knowledge of the two timeline types and the range mapping — the details that determine whether an effect tracks the page scroll or an element's visibility.",
+      "detailedAnswer": "scroll() creates a ScrollTimeline whose progress maps the scroll container's scroll offset: 0% is the scroll origin, 100% is the max scroll. view() creates a ViewTimeline keyed to a specific element: its progress is derived from the element's position relative to the scroller — 0% when the element first enters, 100% when it exits. animation-range then maps a sub-portion of that timeline to the keyframes' 0%-100%: for a view() timeline you can use range names like entry, cover, exit (e.g. animation-range: entry 20% exit 80%) to make an element start animating after it is partially visible and finish before it fully leaves. For scroll(), ranges are length/percentage offsets along the scrollable distance.",
+      "trapWarning": "The naive answer is 'view() is for elements, scroll() is for the page — same thing'. The progress math differs fundamentally: scroll() is absolute to the scroller, view() is relative to the element's traversal through the scroller. Another trap: forgetting animation-range — without it the default maps the whole timeline, so a view() animation finishes as soon as the element is fully visible rather than as it leaves. Candidates who can name entry/cover/exit and explain the mapping show real depth."
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "has-selector-backtracking-engine",
+  "title": ":has() Relational Selector: Invalidation Cost & Engine Heuristics",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Selectors Level 4 (:has, Chrome 105+, Safari 15.4+, Firefox 121+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "has-selector", "selectors", "performance", "invalidation", "engine"],
+  "prerequisites": [
+    "CSS selectors and the cascade",
+    "Understanding of DOM structure and style recalculation"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Normally, a shop sign says 'this shelf is discounted' and you just look at the shelf. The :has() sign is the opposite: it says 'this shelf is discounted IF it contains a red box'. To know whether the sign applies, the clerk must check the contents of every shelf before deciding. It is a powerful sign, but the store must do more checking — and it only re-checks when something is put on or taken off a shelf, not every time someone walks past.",
+    "junior": ":has() lets you style an element based on what it contains or what comes after it: article:has(img) { padding: 0; } styles articles that contain an image. .card:has(.badge) { border-color: red; }. It also enables parent selectors and 'previous sibling' effects: .input:has(+ .error) { border-color: red; }. This removes the need for JavaScript class toggling in many cases. Modern browsers support :has() everywhere. Keep selectors simple (direct child or descendant with a class/tag) — the engine optimizes simple cases well.",
+    "senior": "Architecturally, :has() is a relational selector that flips the style-resolution direction: instead of the subject matching the element being styled, the engine must test whether the subject has a descendant/matching relative. Browsers implement fast paths for simple forms (an ID/class/tag argument like :has(.foo)), but general :has() can require evaluating a selector against many candidate elements. The style invalidation cost is the key concern: when any DOM subtree changes, the engine must re-evaluate :has() selectors that could be affected, which is why the Selectors spec adds ':has() argument invalidation' limits and engines cap the complexity of such lookups.",
+    "underTheHood": "Style resolution builds a selector match by walking from the subject up (compound selectors resolve right-to-left). With :has(), the engine must instead search downward from the subject for a matching relative — implemented as a subtree lookup using the selector's argument as a probe. Chromium's Blink uses a per-element invalidation set: when a node mutates (class/attribute/child insertion), it marks which :has() selectors could change and which ancestors' styles need re-resolution, walking up the ancestor chain with early-exit heuristics. The engine also caches :has() matches on an element and invalidates them when the subtree changes. Complex arguments (nested :has, combinators with many candidates) fall back to slower full-subtree probing."
+  },
+  "rosettaStone": {
+    "react": "React conditional classes can be replaced by :has() when styling depends on contained state, reducing JS class juggling.",
+    "angular": "Angular's [class.x] bindings often duplicate what a :has() selector can express declaratively in component styles.",
+    "vue": "Vue class bindings and v-if containers pair well with :has() for state-derived styling without extra markup.",
+    "svelte": "Svelte's class directives can be minimized by :has() for container-driven styling in scoped CSS."
+  },
+  "codeComparison": {
+    "title": "JavaScript class toggling vs pure CSS :has()",
+    "summary": "Manually syncing classes with JS is error-prone and causes layout thrash; :has() expresses container-driven styling declaratively in the stylesheet.",
+    "legacyOrBad": {
+      "label": "JS class toggling",
+      "snippet": "const card = document.querySelector('.card');\nif (card.querySelector('.badge')) card.classList.add('has-badge'); // ❌ OLD",
+      "fullFile": {
+        "filename": "card-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: JavaScript must keep a mirror class in sync with the DOM.\n// Every badge added/removed requires manual class updates, and any\n// missed sync leaves the styling stale.\nconst cards = document.querySelectorAll('.card');\nfor (const card of cards) {\n  // ❌ OLD: manual query + classList mutation per card\n  if (card.querySelector('.badge')) {\n    card.classList.add('has-badge');\n  } else {\n    card.classList.remove('has-badge');\n  }\n}\n\n// Add a badge later and the class must be updated again:\ncard.querySelector('.badge').addEventListener('something', () => {\n  card.classList.add('has-badge'); // ❌ OLD: manual resync, easy to forget\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Pure CSS :has()",
+      "snippet": ".card:has(.badge) { border-color: red; } /* ✅ NEW: declarative, no JS sync */",
+      "fullFile": {
+        "filename": "card-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: The stylesheet declares the relationship directly. No\n   JavaScript, no mirror classes, no resync bugs — the engine\n   re-evaluates :has() when the subtree changes. */\n\n.card:has(.badge) {\n  border-color: red; /* ✅ NEW: applies whenever a .badge is present */\n}\n\n.card:has(.badge):not(:has(.badge--new)) {\n  border-style: dashed; /* ✅ NEW: combinable with :not for richer states */\n}\n\n/* Adding or removing a .badge updates the style automatically because\n   the engine invalidates the :has() match on subtree mutation. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can :has() be more expensive than normal selectors, and what do engines do to keep it fast?",
+      "contextIntro": "Interviewers ask this to separate CSS syntax knowledge from an understanding of the style-resolution and invalidation machinery behind the selector.",
+      "detailedAnswer": "Normal selectors resolve from the subject upward (right-to-left) using the element's own properties. :has() reverses the direction: the engine must search the subject's subtree (or siblings for the + combinator) to test whether a matching relative exists. The cost scales with subtree size and selector complexity, so the Selectors spec limits the argument forms engines must optimize. Browsers implement fast paths for simple arguments (e.g. :has(.class), :has(#id), :has([attr])) using cached per-element match sets, and they walk only ancestors that could be affected when a subtree mutates, with early-exit heuristics. Very complex arguments (deep nesting, many combinators, :has inside :has) degrade to slower probing.",
+      "trapWarning": "The naive answer is ':has() is slow, avoid it'. Modern engines handle common forms efficiently; the cost is real only for pathological arguments. Another trap: thinking :has() with :scope, :not, or complex combinators costs the same as :has(.single) — each added level multiplies the subtree probing. Candidates who explain fast paths and invalidation heuristics show real understanding."
+    },
+    {
+      "question": "When a node deep inside the page changes, how does the engine decide which :has() styles to recompute?",
+      "contextIntro": "This probes the invalidation model — the difference between re-resolving everything and selectively recomputing only the selectors whose truth value could have changed.",
+      "detailedAnswer": "The engine maintains invalidation sets per selector. When a DOM mutation occurs (attribute/class change, node insertion/removal), the engine checks which selectors could be affected. For a :has() selector, a change anywhere in a subtree can flip the selector's truth for any ancestor that has that selector as a subject, so the engine walks up the ancestor chain from the mutated node, and for each ancestor re-evaluates the cached :has() match. To bound the work, implementations cap the number of ancestors walked (the ':has() invalidation limit' in the spec) and use the argument's fast-path cache to test cheaply. Style recalculation is then limited to the affected elements rather than the whole document.",
+      "trapWarning": "The naive answer is 'any :has() change re-resolves the entire page'. Invalidation is scoped and cached; only potentially-affected ancestors are re-tested. Another trap: assuming the cache is always up to date — the engine invalidates lazily at style recalc time, so reading getComputedStyle forces a synchronous flush of pending invalidations, which is the real cost driver in hot JS loops. Candidates who mention the ancestor-walk limit and lazy invalidation show real engine-level depth."
+    }
+  ]
+}

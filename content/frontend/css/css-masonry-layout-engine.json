@@ -1,0 +1,61 @@
+{
+  "id": "css-masonry-layout-engine",
+  "title": "Native CSS Grid Masonry: grid-template-rows: masonry Layout Rules",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Grid Level 3 (masonry, Chrome 117+ behind flag, Firefox 128+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "masonry", "grid", "layout", "grid-template-rows", "columns"],
+  "prerequisites": [
+    "CSS Grid fundamentals",
+    "Understanding of block/inline axes and item placement"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A bricklayer has a long wall with columns drawn on it. Instead of forcing every brick into a rigid row, the bricklayer drops each brick into whichever column is currently shortest, so the wall grows evenly with no empty gaps. Every brick keeps its natural size; the wall just makes sure the shortest column always gets the next brick. That is masonry: a grid where columns are fixed but rows are not forced into alignment — items flow into the shortest column to avoid holes.",
+    "junior": "Masonry layout is a grid where one axis is normal (columns) and the other axis flows items into the shortest track (like Pinterest cards). The draft syntax: .masonry { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: masonry; }. Items keep their intrinsic height and are placed into the column with the most free space. Today this is a CSS Grid Level 3 proposal — check browser flags — and the common fallback is CSS columns (column-count) or a JS masonry library. The key difference from regular grid: no row alignment — each column's items stack independently.",
+    "senior": "Architecturally, masonry inverts grid's normal placement model: with grid-template-rows: masonry, the block axis does not have a fixed set of rows; instead, each item is placed at the end of the currently-shortest column (a greedy algorithm over the masonry-axis position of previously placed items). This preserves the item's intrinsic block size and avoids the empty-space gaps of a strict grid. The spec reuses grid placement properties (grid-column, grid-row) with masonry-specific nuances: spanning items occupy multiple columns and push the flow position accordingly. Browsers implement it in the grid layout algorithm as a distinct masonry flow, which is why it is specified as a separate level of Grid.",
+    "underTheHood": "The masonry algorithm maintains a set of grid-axis track positions; when placing an item, it computes the running position of each track (the sum of placed items' sizes plus gaps in that track) and selects the track(s) with the minimum position. Items are placed in order, and the masonry-axis position of the placed item is that minimum; the track's running position then advances by the item's size plus gap. For spanning items (grid-column: span 2), the placement uses the maximum of the spanned tracks' positions, and the item advances all spanned tracks. The layout produces a 'content-based' masonry axis height. In the rendering engine this is a dedicated placement pass distinct from the standard grid auto-placement algorithm (sparse/dense packing)."
+  },
+  "rosettaStone": {
+    "react": "React image-wall components can switch from JS masonry (columns-js) to native grid masonry where supported.",
+    "angular": "Angular apps can replace third-party masonry directives with CSS masonry behind feature flags.",
+    "vue": "Vue gallery components benefit from CSS masonry for CSS-driven placement without resize observers.",
+    "svelte": "Svelte components render the same markup; CSS masonry removes the JS measurement layer for card walls."
+  },
+  "codeComparison": {
+    "title": "CSS columns hack vs native grid masonry",
+    "summary": "CSS columns split content vertically (breaking card order and DOM flow); grid masonry places items into the shortest column preserving order.",
+    "legacyOrBad": {
+      "label": "CSS columns masonry hack",
+      "snippet": ".wall { column-count: 4; column-gap: 16px; } /* ❌ OLD: content flows top-to-bottom per column, order breaks */",
+      "fullFile": {
+        "filename": "masonry-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: CSS multi-columns approximate masonry but reflow content\n   top-to-bottom per column. Card #1 and #2 sit in column 1 while\n   column 4 stays empty until the page is tall enough — DOM order\n   becomes vertical-column order, breaking reading order and focus. */\n\n.wall {\n  column-count: 4; /* ❌ OLD: columns, not masonry */\n  column-gap: 16px;\n}\n\n.wall .card {\n  break-inside: avoid; /* ❌ OLD: fragile column-break rule */\n}\n\n/* Items fill column 1, then column 2, etc. — the first four cards are\n   all in the first column; visually and semantically this is not\n   masonry (shortest-column placement), and keyboard order is wrong. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Native grid masonry",
+      "snippet": ".wall { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: masonry; } /* ✅ NEW */",
+      "fullFile": {
+        "filename": "masonry-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: Grid masonry places each item into the currently shortest\n   column, preserving DOM order and reading order, with no gaps. */\n\n.wall {\n  display: grid;\n  grid-template-columns: repeat(4, 1fr); /* fixed grid-axis tracks */\n  grid-template-rows: masonry; /* ✅ NEW: masonry flow on the block axis */\n  gap: 16px;\n}\n\n/* Cards keep their intrinsic heights; the algorithm tracks each\n   column's running position and drops the next card into the shortest\n   one. Items flow left-to-right, top-to-bottom in DOM order — no\n   vertical-column reordering. (Draft spec: enable the flag in\n   Chromium, stable in Firefox 128+.) */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How is masonry placement different from the normal grid auto-placement algorithm?",
+      "contextIntro": "This probes whether you understand the placement algorithm difference — that masonry is a 'fill the shortest track' greedy flow rather than the sparse/dense grid cursor algorithm.",
+      "detailedAnswer": "Normal grid auto-placement uses a grid cursor: items are placed in order along the grid axis, and dense packing backtracks to fill holes left by earlier spanning items. The grid has a fixed number of rows/columns, and items align to the grid lines — which is why variable-height content leaves gaps. Masonry replaces the block-axis structure: there is no fixed set of rows; each item is placed at the masonry-axis position of the currently shortest track (computed as the max of the running end positions of the tracks it spans, plus gaps). This preserves intrinsic sizes and eliminates gaps. Spanning items still occupy multiple grid-axis tracks and advance them together. It is a distinct placement algorithm, not a grid with special sizing.",
+      "trapWarning": "The naive answer is 'masonry is just grid with auto rows'. Auto rows create a rigid row structure that forces every item into a row and leaves gaps; masonry has no row alignment at all. Another trap: thinking items are reordered visually — they are placed in DOM order into the shortest column, which is why reading/focus order stays correct (unlike the CSS columns hack). Candidates who explain the shortest-track greedy rule show real understanding."
+    },
+    {
+      "question": "What is the difference between the CSS columns masonry hack and native grid masonry, and why does the hack break order?",
+      "contextIntro": "This is the practical interview question — most developers have used the columns trick and interviewers want the structural reason it is not a real masonry solution.",
+      "detailedAnswer": "CSS multi-column layout splits content into a vertical sequence of columns: the first N items fill column 1, the next fill column 2, etc. That changes the visual reading order (top of column 1, then top of column 2) away from the DOM order, which affects keyboard navigation, screen readers, and find-in-page. It also requires break-inside: avoid to stop cards splitting across columns, and column heights are driven by content balance rather than shortest-column placement. Native grid masonry keeps DOM order and places each item into the shortest column, so reading order matches the source and no gaps appear. The hack is a visual approximation; masonry is a real placement algorithm.",
+      "trapWarning": "The naive answer is 'columns and masonry are the same thing'. The columns hack reorders content vertically and cannot place items into the shortest column. Another trap: assuming the masonry spec is stable everywhere today — grid-template-rows: masonry is a draft (Grid Level 3); check flags, and keep a columns/JS fallback. Candidates who mention reading order and spec status show real-world awareness."
+    }
+  ]
+}

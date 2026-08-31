@@ -1,0 +1,61 @@
+{
+  "id": "css-view-transitions-dom-sync",
+  "title": "View Transitions API: startViewTransition() Snapshot Trees",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "View Transitions API (Chrome 111+, cross-document 126+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "view-transitions", "animation", "snapshot", "dom", "browser-api"],
+  "prerequisites": [
+    "CSS animations and pseudo-elements",
+    "Understanding of DOM updates and rendering lifecycle"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Before a magician swaps two paintings on a wall, a photographer takes a photo of the room. Then the painter quickly replaces the paintings, and the magician slides the old photo out while sliding the new room into place — the audience never sees the bare wall between them. The View Transitions API is that photographer: it snaps a picture of the old screen, lets you change the page, snaps the new screen, and then smoothly morphs between the two photos so the change looks seamless.",
+    "junior": "document.startViewTransition(() => updateDOM()) takes a snapshot of the current page, runs your callback (which updates the DOM), snapshots the new state, and animates between them. The default animation is a crossfade. You can customize it with CSS pseudo-elements: ::view-transition-old(root) and ::view-transition-new(root). Give elements a view-transition-name to get individual morphing animations between old and new positions. Cross-document transitions work with @view-transition { navigation: auto; } on same-origin navigations. Keep the callback synchronous or return a promise so the browser knows when the new state is ready.",
+    "senior": "Architecturally, the API freezes the rendering lifecycle around a DOM change: it captures the old visual state into a set of snapshot images (one per view-transition-name), commits your DOM update, captures the new snapshots, and then plays CSS animations that crossfade/morph the old into new while the live DOM updates underneath. This is a rendering-engine feature, not JS animation: the snapshots are rasterized layers that the compositor animates. The root element is the default 'root' transition; named elements (view-transition-name) get their own snapshot pair, letting you slide, scale, or clip individual components. The pseudo-element tree (::view-transition-group, -image-pair, -old, -new) exposes the timeline for keyframe control.",
+    "underTheHood": "startViewTransition() sets a 'capturing' phase: the engine performs a render step to rasterize the old state (each active view-transition-name gets an image snapshot; elements without names are folded into the root snapshot). The callback runs, then the new state is captured. The engine then constructs the view-transition pseudo-element tree in the top layer, attaches the old/new snapshots as replaced-element images (::view-transition-old/new), and runs the default animation (root crossfade, or per-name morph). During the transition, updates to DOM are deferred until the transition finishes (the 'update callback done' promise gates the render), and skipping is possible via document.getAnimations() or the transition's finished/skipTransition(). Compositor-driven animation means main-thread jank does not stall the snapshot crossfade."
+  },
+  "rosettaStone": {
+    "react": "React apps wrap route changes with startViewTransition around the setState that swaps the route tree.",
+    "angular": "Angular Router events can trigger startViewTransition around the activated-route component swap.",
+    "vue": "Vue Router's route change handlers can run inside startViewTransition for SPA morphing transitions.",
+    "svelte": "SvelteKit's onNavigate callback can wrap page updates with document.startViewTransition for cross-page transitions."
+  },
+  "codeComparison": {
+    "title": "JS-driven enter/exit animations vs the View Transitions API",
+    "summary": "Hand-rolled enter/exit animations require two states and coordination; startViewTransition snapshots both states automatically and crossfades/morphs them.",
+    "legacyOrBad": {
+      "label": "Manual enter animation + exit animation",
+      "snippet": "oldEl.classList.add('exit'); // ❌ OLD: manual exit\nsetTimeout(() => { swapDOM(); newEl.classList.add('enter'); }, 300);",
+      "fullFile": {
+        "filename": "transition-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Manual enter/exit choreography. You must animate the old\n// element out, wait, swap the DOM, then animate the new element in —\n// with setTimeout timing that drifts and double-animation on fast paths.\nfunction swap(oldEl, newEl) {\n  oldEl.classList.add('exit'); // ❌ OLD: animate old out\n  setTimeout(() => {\n    oldEl.remove();\n    document.body.append(newEl);\n    newEl.classList.add('enter'); // ❌ OLD: animate new in after 300ms\n  }, 300);\n}\n\n// Fragile: the exit animation may be interrupted, the timing may\n// overlap with user interaction, and there is no single visual\n// snapshot guaranteeing the two states align."
+      }
+    },
+    "modernOrGood": {
+      "label": "startViewTransition snapshot morph",
+      "snippet": "document.startViewTransition(() => { swapDOM(); }); // ✅ NEW: snapshots + morphs automatically",
+      "fullFile": {
+        "filename": "transition-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: startViewTransition captures the old page, runs the DOM\n// update, captures the new page, and crossfades between the snapshots\n// — no manual enter/exit choreography or setTimeout timing.\nasync function swap() {\n  const t = document.startViewTransition(() => {\n    // ✅ NEW: the callback performs the real DOM change\n    swapDOM();\n  });\n\n  await t.finished; // ✅ NEW: resolves when the transition completes\n}\n\n// With CSS:\n//   .card { view-transition-name: card; }\n//   ::view-transition-old(card) { animation: slide-out 300ms; }\n//   ::view-transition-new(card) { animation: slide-in 300ms; }\n// Each named element morphs individually instead of a plain crossfade."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does startViewTransition avoid showing a blank flash between the old and new states, and what are the snapshots?",
+      "contextIntro": "This probes the core mechanism — that the API rasterizes both states into compositor snapshots and animates them, which is different from simply running JS animations on live DOM.",
+      "detailedAnswer": "Before running the callback, the engine performs a capture pass: it renders the current page and rasterizes it into snapshot images (a root snapshot plus one per element with a view-transition-name). The callback then updates the DOM, and a second capture pass rasterizes the new state. The engine mounts a view-transition pseudo-element tree (::view-transition-old/new) in the top layer and animates these snapshots — old image sliding/crossfading out while the new image animates in. Because the animation plays on captured images, the actual DOM swap is hidden behind them; no blank flash can appear. The live DOM is already the new state underneath, so after the animation the snapshots are removed and the real content shows.",
+      "trapWarning": "The naive answer is 'it delays the DOM update until the animation ends'. The DOM updates during the callback; the animation runs over snapshots on top. Another trap: thinking every element animates individually by default — only elements with a view-transition-name get their own snapshot; everything else is part of the root crossfade. Candidates who explain the capture/commit/crossfade phases show real understanding."
+    },
+    {
+      "question": "What happens if the callback throws or is async, and how does the browser handle the transition lifecycle?",
+      "contextIntro": "This tests the promise-driven lifecycle and error semantics — interviewers want to know the guarantees around the updateCallbackDone, ready, and finished promises.",
+      "detailedAnswer": "startViewTransition returns an object with three promises: updateCallbackDone (the callback resolved/rejected), ready (snapshots captured and animation about to start), and finished (animation completed or skipped). If the callback throws, updateCallbackDone rejects, the new-state capture is skipped, and the transition is skipped — the DOM change still happened but no snapshots animate (the page just shows the new state). If the callback returns a promise, the browser waits for it before capturing the new state, so async DOM updates (e.g. awaiting data) are supported. A skipped transition fires finished as resolved but with skipTransition() semantics; calling skipTransition() during the animation jumps straight to the final state.",
+      "trapWarning": "The naive answer is 'the transition always animates'. If the callback throws, no animation plays. Another trap: awaiting only t.finished while assuming the DOM is updated — the DOM is updated when updateCallbackDone resolves, which can precede finished by the animation duration. Candidates who can enumerate the three promises and their ordering demonstrate real lifecycle mastery."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "create-effect-scheduling",
+  "title": "createEffect: Synchronous vs Microtask Scheduling & Tracking Scopes",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "solidjs",
+    "createEffect",
+    "scheduling",
+    "microtask",
+    "tracking",
+    "lifecycle"
+  ],
+  "prerequisites": [
+    "createSignal and reactive reads",
+    "Understanding of effects vs derived values"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A store clerk has a list of chores to do whenever the prices change, but he does not do them the instant a price tag is changed — he waits until the shop is quiet, then does all the chores at once. If a price changes several times while he is waiting, he still only does the chores once. When you tell him to start a chore that must happen immediately (like updating the till), he does that one right away. That is the difference between a chore that waits its turn and one that must run instantly.",
+    "junior": "createEffect(() => { console.log(count()); }) runs the callback once initially, then re-runs it whenever any signal it reads changes. Effects are for side effects (logging, DOM APIs, subscriptions) — NOT for derived values (use createMemo for that). By default effects are scheduled: multiple signal changes in the same synchronous block trigger ONE effect run (batched), executed in a microtask. To run immediately and synchronously, pass the { name } or use createRenderEffect for pre-render effects. Reading signals inside the callback registers the dependency; reads outside (in helpers you call from the callback) are tracked too, as long as they happen synchronously during the callback.",
+    "senior": "Architecturally, createEffect registers a computation that tracks its dependencies each run (the tracking scope is active only while the callback executes). On dependency change, the effect is queued for update: Solid batches — the effect runs once per flush even if several dependencies changed, and by default the flush happens asynchronously (a microtask via queueMicrotask) so multiple mutations in one tick collapse into one run. This is the 'reactive root' model: effects are the leaves of the reactive graph where side effects happen. Effects also run their cleanup function (returned from the callback) before re-running, enabling subscription teardown.",
+    "underTheHood": "An effect is a Computation node registered on the current owner (the component's reactive root). During the initial run and each re-run, Solid pushes the computation onto a global tracking stack; signal reads add edges to the computation's dependency list. When a signal's version bumps, it marks the computation and queues it on a scheduler (a microtask queue with a flush flag). On flush, each queued effect runs: it first calls its stored cleanup (the previous callback's return value), then re-executes the callback, rewiring dependencies. The scheduler deduplicates — an effect queued multiple times before flush runs once. createRenderEffect differs: it runs synchronously during render and is used internally by JSX computations."
+  },
+  "rosettaStone": {
+    "react": "useEffect runs after commit, per render; Solid effects run on signal change (not re-render), with cleanup-before-rerun semantics.",
+    "angular": "effect() in Angular signals is the analogue; Angular flushes during change detection.",
+    "vue": "watchEffect is eager and flushes on the microtask queue by default, mirroring Solid's scheduling.",
+    "svelte": "$effect in Svelte 5 runs on the microtask after state changes; both compile away the dependency tracking into direct signal reads."
+  },
+  "codeComparison": {
+    "title": "Side-effect in a memo vs side-effect in createEffect",
+    "summary": "Performing side effects in a derived computation is a bug (it may run zero or many times); effects are the designated place for side effects.",
+    "legacyOrBad": {
+      "label": "Side effect inside a memo",
+      "snippet": "const x = createMemo(() => {\n  analytics.track('view'); // ❌ OLD: side effect in a pure memo\n  return count() * 2;\n});",
+      "fullFile": {
+        "filename": "effect-bad.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, createMemo } from 'solid-js';\n\n// ❌ OLD: Side effects inside createMemo. Memos are lazy and pure:\n// they may run zero times (if never read) or run once per change\n// (if read by many consumers). Tracking here fires unpredictably.\nconst [count, setCount] = createSignal(0);\n\nconst doubled = createMemo(() => {\n  analytics.track('doubled-view'); // ❌ OLD: runs only when read + dirty\n  return count() * 2;\n});\n\n// If nothing reads doubled() after a change, the track never fires;\n// if ten nodes read it, it still fires once (cached). The analytics\n// call has NO predictable relationship to user actions."
+      }
+    },
+    "modernOrGood": {
+      "label": "Side effect in createEffect",
+      "snippet": "createEffect(() => {\n  analytics.track('count', count()); // ✅ NEW: fires on every count change\n});",
+      "fullFile": {
+        "filename": "effect-good.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, createEffect } from 'solid-js';\n\n// ✅ NEW: Effects are the designated place for side effects. The\n// callback runs once initially, then again whenever count() changes\n// (batched to one run per flush). Cleanup runs before each re-run.\nconst [count, setCount] = createSignal(0);\n\ncreateEffect(() => {\n  analytics.track('count', count()); // ✅ NEW: deterministic per change\n});\n\n// If the effect needs teardown, return a cleanup function:\ncreateEffect(() => {\n  const sub = subscribe(count());\n  return () => sub.unsubscribe(); // ✅ NEW: runs before the next effect run\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why do multiple signal changes in one synchronous block cause an effect to run only once, and when does it actually run?",
+      "contextIntro": "This is the core scheduling question — interviewers want the batching and microtask semantics, which determine observable behavior in real event handlers and async code.",
+      "detailedAnswer": "Effects are queued on a scheduler rather than run synchronously per change. When a signal setter marks an effect dirty, the effect is pushed to a queue, and a flush is scheduled via queueMicrotask. If several signals change in the same synchronous block (e.g. three setCount calls in one click handler), the effect is queued once (deduplicated) and runs exactly once when the microtask flush executes — after the current task completes, before the next macrotask. This collapses bursty updates into a single effect run. The effect reads the signals during its run, so it observes the final values, not intermediate ones. Synchronous effects (createRenderEffect) opt out of this batching.",
+      "trapWarning": "The naive answer is 'effects run immediately when a signal changes'. They are batched and deferred to a microtask. Another trap: assuming an effect sees every intermediate value of a signal changed in a loop — it sees only the last value, because the callback runs once after the synchronous burst. Candidates who explain the scheduler queue and microtask flush show real understanding."
+    },
+    {
+      "question": "What does it mean for an effect to 'track' dependencies, and why is reading a signal in a helper function called from the effect still tracked?",
+      "contextIntro": "This probes the tracking-scope mechanics — the global owner stack that makes dependency collection work across function calls, which interviewers use to test genuine understanding.",
+      "detailedAnswer": "While an effect's callback executes, Solid pushes that computation onto a global tracking stack; any signal read — no matter how deep in a call stack the read happens — registers the current top-of-stack computation as a consumer. So calling a helper that reads count() inside the effect body tracks count as a dependency of the effect, even though the read is lexically elsewhere. This is why effects can wrap clean code that uses utility functions. The tracking stack is synchronous: if the callback awaits (deferring work), reads after the await happen outside the tracking scope and are not tracked. The dependency set is rebuilt on every run, so reads that no longer occur stop being dependencies.",
+      "trapWarning": "The naive answer is 'only signals read directly in the callback body are tracked'. Reads in synchronously-called helpers are tracked because tracking is a stack, not lexical. Another trap: assuming async reads inside an effect are tracked — after an await, the tracking scope is gone, so those reads never register dependencies and the effect will not re-run for them. Candidates who explain the owner/tracking stack and its synchronous scope demonstrate real depth."
+    }
+  ]
+}

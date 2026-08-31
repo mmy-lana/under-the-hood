@@ -1,0 +1,61 @@
+{
+  "id": "css-cascade-layers-priority",
+  "title": "Cascade Layers @layer: Specificity Overrides & Unlayered Styles",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Cascading and Inheritance Level 5 (@layer, all modern browsers)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "cascade", "layers", "specificity", "at-layer", "stylesheet-architecture"],
+  "prerequisites": [
+    "CSS specificity and the cascade",
+    "Experience with CSS reset/component stylesheet organization"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A rulebook for a game has several volumes: the basic rules, the tournament rules, and the official clarifications. If two volumes say different things, the tournament volume always wins over the basic one, no matter how specific the basic rule sounds. Cascade layers are those volumes: you declare the order of the books up front, and every rule inside a later book beats every rule in an earlier book — so you no longer need to invent ever-more-precise wording (specificity) to win an argument.",
+    "junior": "@layer lets you group styles into named layers whose priority is decided by declaration order, independent of specificity. @layer reset, base, components, utilities;. Rules in later layers win over earlier layers even with lower specificity. Unlayered styles (written outside any @layer) beat ALL layered styles — a common gotcha. Re-declaring layers in the same order later lets you reorder them: @layer utilities, components; moves utilities last so they win. Use layers to replace specificity wars between reset, third-party CSS, and your components.",
+    "senior": "Architecturally, @layer is the first cascade mechanism that is truly orthogonal to specificity: it establishes layer order as a cascade origin-like priority tier. Within a layer, normal specificity rules still apply; across layers, the layer order dominates (a 0-0-0 rule in a later layer beats a 0-1-0 rule in an earlier layer). Unlayered author styles are treated as an implicit final layer, which is why they win — important when integrating legacy CSS that cannot be wrapped. Layer order is resolved per stylesheet and concatenated in document order, with repeated @layer statements adding to the declared order.",
+    "underTheHood": "The cascade sorts declarations by origin, then by layer order, then by specificity, then by source order. The engine builds a layer order map from the @layer statements seen during parsing: named layers get an index, and unlayered author styles are assigned the highest priority (as if an implicit last layer). When two declarations compete, the layer index is compared before specificity, so a lower-specificity rule in a higher layer wins. Nested layers (@layer foo.bar) form a layer tree; the comparison uses the tree path lexicographically. Imported stylesheets (via @import) that are wrapped in layers inherit the layer's index, allowing third-party CSS to be slotted into a specific tier."
+  },
+  "rosettaStone": {
+    "react": "CSS modules per component + a global @layer setup gives predictable override order for component libraries.",
+    "angular": "Angular's ViewEncapsulation.emulated adds attribute specificity; @layer can tame third-party theme CSS included via styles array.",
+    "vue": "Scoped SFC styles combined with @layer normalize the order between base and component styles.",
+    "svelte": "Svelte scoped styles compile to class-hashed selectors; @layer gives deterministic ordering against global resets and UI-kit CSS."
+  },
+  "codeComparison": {
+    "title": "Specificity arms race vs cascade layers",
+    "summary": "Specificity wars need ever-more-specific selectors; @layer decides priority by declared order, so a simple class in a later layer wins cleanly.",
+    "legacyOrBad": {
+      "label": "Specificity escalation",
+      "snippet": "body .widget .btn--primary { color: red; } /* ❌ OLD: higher specificity to beat the base rule */",
+      "fullFile": {
+        "filename": "layers-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: To override a component style you keep raising specificity:\n   add more ancestors, more classes, !important. Every override makes\n   the next one harder, and the cascade becomes unpredictable. */\n\n.btn--primary {\n  background: blue; /* base component rule */\n}\n\n/* ❌ OLD: override with a heavier selector to win */\n.sidebar .widget .btn--primary {\n  background: red;\n}\n\n/* Next override needs an even heavier selector or !important, and\n   specificity defeats the intent of simple, maintainable selectors. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declared layer order",
+      "snippet": "@layer base, components, overrides;\n@layer overrides { .btn--primary { background: red; } } /* ✅ NEW: wins by layer order */",
+      "fullFile": {
+        "filename": "layers-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: Declare the layer order once. Any rule in a later layer wins\n   over earlier layers regardless of specificity. */\n\n@layer base, components, overrides; /* ✅ NEW: explicit priority order */\n\n@layer base {\n  .btn--primary {\n    background: blue;\n  }\n}\n\n@layer components {\n  .btn {\n    padding: 0.5rem 1rem;\n  }\n}\n\n@layer overrides {\n  .btn--primary {\n    background: red; /* ✅ NEW: wins over base by layer order, not specificity */\n  }\n}\n\n/* Simple selectors stay simple; the layer order does the prioritizing. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why do unlayered author styles beat layered ones, and how does that affect migrating an existing codebase?",
+      "contextIntro": "This is the most common @layer surprise in production — interviewers test whether you understand that unlayered styles are an implicit final layer, which changes how overrides resolve.",
+      "detailedAnswer": "The cascade assigns unlayered author styles the highest layer priority — as if they belonged to an implicit layer declared after all explicit layers. That means any style written outside @layer (which includes most legacy CSS) wins over layered rules of equal specificity regardless of the @layer order. During migration this is usually desirable (your existing overrides keep winning), but it silently defeats attempts to make a new utility layer beat legacy component styles until you move the legacy styles into a layer. The fix is to wrap legacy stylesheets (e.g. via @import url(...) layer(legacy)) so they participate in the layer order instead of sitting at the top.",
+      "trapWarning": "The naive answer is 'unlayered styles lose to layered ones'. They win, because unlayered is the implicit last layer. Another trap: assuming @layer resets specificity entirely — within the same layer, specificity and source order still apply normally. Candidates who mention the implicit-final-layer behavior show they have actually shipped layers."
+    },
+    {
+      "question": "How do nested layers and repeated @layer statements interact with the final priority order?",
+      "contextIntro": "This probes the more advanced layer mechanics — layer trees and the way declaration order across stylesheets composes — which trips up architects designing design-system CSS.",
+      "detailedAnswer": "Named layers form a tree via dot syntax: @layer components.buttons and @layer components.forms both nest under components. Comparison between two layers walks the path: shallower layers come first, and within the same parent, siblings compare by their declared order. Repeated @layer statements without a body (e.g. @layer a, b; then later @layer a, b;) do not reset the order — they add to it, and the final order is the first-declared sequence for each name. This lets you define the order in a bootstrap file and then add rules to layers anywhere. Nested layers follow the same index comparison recursively, so a rule in components.buttons beats components.forms only if buttons was declared after forms.",
+      "trapWarning": "The naive answer is 're-declaring @layer reorders the layers'. The order is set by the first declaration of each name; later @layer statements only append rules to existing layers. Another trap: thinking specificity leaks across nested layers — the layer index is compared first, so a 0-0-0 rule in a deeper/later layer can still beat a high-specificity rule in an earlier layer. Candidates who describe the layer tree and first-declaration ordering show real architectural understanding."
+    }
+  ]
+}

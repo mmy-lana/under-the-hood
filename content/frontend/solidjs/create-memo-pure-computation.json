@@ -1,0 +1,68 @@
+{
+  "id": "create-memo-pure-computation",
+  "title": "createMemo: Lazy Cached Computation & Dirty Version Propagation",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "solidjs",
+    "createMemo",
+    "memoization",
+    "computed",
+    "lazy",
+    "caching"
+  ],
+  "prerequisites": [
+    "createSignal and reactive reads",
+    "Understanding of derived values vs effects"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A chef writes the total bill on a small whiteboard instead of re-adding every price each time someone asks. The whiteboard has a flag: whenever a price changes, the chef flips the flag to 'stale'. The next time someone looks at the bill, the chef re-adds (because the flag is up), then lowers the flag. If nobody looks, he never re-adds. That is the chef's whiteboard trick: it remembers the last answer, knows when it might be wrong, and only recomputes when someone actually asks after a change.",
+    "junior": "const double = createMemo(() => count() * 2) creates a cached derived value. Read double() anywhere to get the computed result; it recomputes lazily only when count() changed AND someone reads double(). Compare: a plain expression const double = count() * 2 in the component body computes once and never updates; an effect computes but isn't readable as a value. Memos are for expensive derivations used in multiple places — they compute once, cache, and update only when dependencies change. Derived signals (createComputed) are eager; createMemo is lazy.",
+    "senior": "Architecturally, a memo is a lazy computation node: it tracks dependencies like an effect, but instead of eagerly re-running when a dependency changes, it marks itself dirty and waits for a read. On read, if dirty, it re-executes its function in a tracking scope (rewiring dependencies), caches the result, and returns it. Downstream consumers that read the memo are updated only when the memo's value actually changes (Solid compares values to avoid redundant updates). This makes memos the building block for efficient derived state: a memoized selector is recomputed at most once per dependency change, regardless of how many consumers read it.",
+    "underTheHood": "The memo is a Computation with a cache: it holds a value slot and a dirty flag. When a source signal bumps its version, the signal notifies the memo's observer, which flips the memo dirty (and cascades to the memo's own observers). Reading the memo triggers a check: if dirty, it runs the computation function inside the tracking stack, stores the result, clears dirty, and notifies its observers if the value changed (using equality). Memos can be 'pure' — the computation must not have side effects and must be deterministic, because it may run zero, one, or many times depending on read patterns. Solid optimizes with a flag system (ComputedNode) to skip re-execution when no reader needs a fresh value."
+  },
+  "rosettaStone": {
+    "react": "useMemo caches across renders but recomputes on every render unless deps change; Solid's memo recomputes only when a source changes and a read happens.",
+    "angular": "computed() in Angular signals matches createMemo semantics (lazy, cached, dependency-tracked).",
+    "vue": "Vue's computed() is equivalent — lazy cached getters with dependency tracking.",
+    "svelte": "Svelte 5 $derived compiles to a memo-like lazy computation."
+  },
+  "codeComparison": {
+    "title": "Recomputing in the component body vs memoizing a derived value",
+    "summary": "A plain body computation runs once and is stale, or runs on every render; a memo recomputes only when its source changes and caches the result.",
+    "legacyOrBad": {
+      "label": "Unmemoized body computation",
+      "snippet": "const doubled = count() * 2; // ❌ OLD: computes ONCE — never updates when count changes",
+      "fullFile": {
+        "filename": "memo-bad.jsx",
+        "language": "jsx",
+        "code": "import { createSignal } from 'solid-js';\n\n// ❌ OLD: This expression runs once when the component sets up.\n// It is NOT reactive — doubling never updates when count changes,\n// because plain JS has no tracking. The JSX below shows a stale 0.\nfunction Double() {\n  const [count, setCount] = createSignal(0);\n  const doubled = count() * 2; // ❌ OLD: computed once, frozen at 0\n\n  return (\n    <>\n      <p>{doubled}</p> {/* stays 0 forever */}\n      <button onClick={() => setCount(count() + 1)}>+1</button>\n    </>\n  );\n}\n\n// To make it reactive you'd have to inline the expression in JSX\n// (count() * 2) so the compiler wraps it in its own computation."
+      }
+    },
+    "modernOrGood": {
+      "label": "createMemo lazy caching",
+      "snippet": "const doubled = createMemo(() => count() * 2); // ✅ NEW: cached, lazy, updates on read",
+      "fullFile": {
+        "filename": "memo-good.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, createMemo } from 'solid-js';\n\n// ✅ NEW: createMemo caches the derived value, marks it dirty when\n// count changes, and recomputes lazily on the next read. Multiple\n// JSX nodes can read doubled() with a single recomputation.\nfunction Double() {\n  const [count, setCount] = createSignal(0);\n  const doubled = createMemo(() => count() * 2); // ✅ NEW: lazy + cached\n\n  return (\n    <>\n      <p>{doubled()}</p> {/* ✅ NEW: reads the cached/recomputed value */}\n      <p>{doubled()}</p> {/* second read: same cached value, no recompute */}\n      <button onClick={() => setCount(count() + 1)}>+1</button>\n    </>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between createMemo and createComputed, and when would you use each?",
+      "contextIntro": "This separates developers who understand Solid's lazy-vs-eager computation models — interviewers want the scheduling semantics, not just 'memo caches values'.",
+      "detailedAnswer": "createMemo is lazy: it does not run when a dependency changes; it marks itself dirty and only recomputes when something reads it. This makes it ideal for pure derived state that may not be consumed every cycle — the computation runs at most once per dependency change, and only if a read actually occurs. createComputed is eager: it re-runs as soon as a dependency changes (scheduled like an effect) and produces a value that is always current. Use memos for derivations you read in multiple places (cached selectors); use computed when you need a side-effect-free eager derivation consumed by non-tracked code or for interop. The eager model guarantees freshness at the cost of doing the work even if nothing reads the result that frame.",
+      "trapWarning": "The naive answer is 'memo is for caching, computed is for derived values — same thing'. The scheduling is the difference: lazy (on-read) vs eager (on-change). Another trap: putting side effects inside a memo — a pure computation may run zero or many times, so network calls/DOM writes there are a bug. Candidates who can articulate lazy-vs-eager and purity constraints show real understanding."
+    },
+    {
+      "question": "How does Solid decide to re-run a memo, and why might a memo not recompute even though its source changed?",
+      "contextIntro": "This probes the version/dirty propagation and equality checks — the mechanics that prevent redundant recomputation and update storms in large reactive graphs.",
+      "detailedAnswer": "A memo tracks its source signals as dependencies. When a source changes, its version increments and it notifies observers including the memo; the memo flips its dirty flag but does not recompute. On a read, if dirty, it re-executes the computation in a tracking scope, stores the new value, and then compares the new value to the previous cached value using Solid's equality check. If the values are equal, it does not notify its own downstream observers — consumers that depend only on that memo see no update. This means a memo whose source changed to an equivalent value suppresses downstream work entirely. Additionally, if nothing reads the memo, it may never recompute (lazy), so 'source changed' alone never triggers execution.",
+      "trapWarning": "The naive answer is 'a memo always recomputes when its source changes'. It recomputes on read, and only if the value actually differs. Another trap: assuming object references are compared deeply — Solid uses === by default, so returning a new object every time defeats equality suppression and propagates updates. Candidates who explain version bumping, lazy reads, and equality suppression show real engine-level understanding."
+    }
+  ]
+}

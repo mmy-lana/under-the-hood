@@ -1,0 +1,68 @@
+{
+  "id": "create-signal-reactive-graph",
+  "title": "createSignal: Publisher-Subscriber Node Tracking Graphs",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "solidjs",
+    "signals",
+    "createSignal",
+    "reactivity",
+    "fine-grained",
+    "tracking"
+  ],
+  "prerequisites": [
+    "SolidJS basics (createSignal, JSX)",
+    "Understanding of reactive programming concepts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A notice board in a hallway with a list of who should be told when the board changes. When someone pins a new notice, the board instantly rings each person on the list, but only those who actually signed up to watch it. Nobody else in the building is disturbed. Each reader is told exactly once per change, and people who stop caring remove themselves from the list. That is how a message with a precise, self-maintaining list of interested readers works.",
+    "junior": "const [count, setCount] = createSignal(0) returns a getter (count) and a setter (setCount). Read count() to get the value; call setCount(1) or setCount(c => c + 1) to update. Any code that reads count() inside a reactive context (JSX, createEffect, createMemo, createComputed) automatically re-runs when the value changes. This is 'fine-grained reactivity': only the exact consumers of count re-execute, not the whole component. Unlike React, the component function itself does NOT re-run — the JSX expressions that read count() are the reactive nodes.",
+    "senior": "Architecturally, each signal is a node in a directed reactive graph: it tracks a list of active consumers (effects, memos, template expressions) that read it during their evaluation. Reading inside a tracking scope registers an edge (signal -> consumer); setting a value bumps a version and marks dependent consumers dirty. The graph is dynamic: edges are added/removed on every evaluation based on which signals were actually read (Solid re-runs the computation and rewires dependencies). This gives precise invalidation — a consumer is only re-run when a signal it actually read changes, and only consumers in the dependency path are notified.",
+    "underTheHood": "The signal stores a value and a set of observer nodes (Computation objects) in its source map. When a computation runs, Solid's global owner/tracking stack marks the currently-executing computation as 'listening'; reads register the signal's node into that computation's dependencies (and the computation into the signal's observers). setValue increments the signal's version and calls update on each observer, scheduling it. Computations have flags (initial, dirty, stale); effects run in microtask batches, memos recompute lazily on read. The compiler (babel-plugin) transforms JSX expressions into individual computations, so the template becomes a graph of fine-grained nodes rather than one big re-render function."
+  },
+  "rosettaStone": {
+    "react": "const [count, setCount] = useState(0) re-renders the whole component; Solid's signal only re-runs the exact expressions reading it.",
+    "angular": "Angular 16+ signals mirror Solid's model; Angular runs change detection per component, Solid per node.",
+    "vue": "Vue's ref() is a similar signal; Vue tracks at component effect granularity with a Virtual DOM diff, Solid skips the diff entirely.",
+    "svelte": "Svelte 5 $state compiles to signals; Solid keeps them as explicit runtime primitives rather than compiled syntax."
+  },
+  "codeComparison": {
+    "title": "Component re-render vs fine-grained signal updates",
+    "summary": "A component-wide re-render re-executes everything; Solid's signals re-run only the expressions that read the changed value, with no diffing.",
+    "legacyOrBad": {
+      "label": "Component-wide re-render (state-based)",
+      "snippet": "const [count, setCount] = useState(0); // ❌ OLD: setCount re-renders the whole component",
+      "fullFile": {
+        "filename": "counter-bad.jsx",
+        "language": "jsx",
+        "code": "import { useState } from 'react';\n\n// ❌ OLD: Every setCount re-executes the ENTIRE component function:\n// all children re-render (unless memoized), all expressions re-run,\n// and the Virtual DOM diffs the result.\nfunction Counter() {\n  const [count, setCount] = useState(0); // ❌ OLD: coarse-grained state\n\n  // Re-runs on every count change even though it never reads count:\n  const expensive = computeExpensiveThing(); // ❌ OLD: wasted work\n\n  return (\n    <div>\n      <p>Count: {count}</p>\n      <button onClick={() => setCount(c => c + 1)}>+1</button>\n      <Child prop={expensive} /> {/* re-rendered too */}\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Fine-grained signal update",
+      "snippet": "const [count, setCount] = createSignal(0); // ✅ NEW: only expressions reading count() re-run",
+      "fullFile": {
+        "filename": "counter-good.jsx",
+        "language": "jsx",
+        "code": "import { createSignal } from 'solid-js';\n\n// ✅ NEW: setCount re-runs ONLY the JSX expressions (or effects) that\n// actually read count(). The component function runs once; the\n// template is compiled into fine-grained computation nodes.\nfunction Counter() {\n  const [count, setCount] = createSignal(0); // ✅ NEW: getter + setter\n\n  // Runs once (no signal read here), NOT on every count change:\n  const expensive = computeExpensiveThing(); // ✅ NEW: not re-executed\n\n  return (\n    <div>\n      <p>Count: {count()}</p> {/* ✅ NEW: this node alone re-runs */}\n      <button onClick={() => setCount(c => c + 1)}>+1</button>\n      <Child prop={expensive} /> {/* not re-created on count change */}\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does the Solid component function run only once while React re-runs it on every state change?",
+      "contextIntro": "This is the defining architectural question of Solid — interviewers want the compiled fine-grained model vs the component-as-render-function model, not just 'Solid is faster'.",
+      "detailedAnswer": "In Solid, JSX is compiled at build time into granular computation nodes: each expression that reads a signal becomes its own reactive computation wired into the DOM update path. The component function is a plain setup function that runs once to create those nodes and returns a template/mounting description; it is never re-executed. When a signal changes, only the computations that registered that signal as a dependency are invalidated and re-run, updating the exact DOM nodes they own. React, by contrast, treats the component function as the render unit: every state change re-runs the whole function and diffs. Solid's model trades the render-function abstraction for precision, which is why it has no Virtual DOM and no reconciliation of the component tree.",
+      "trapWarning": "The naive answer is 'Solid is just faster React'. The models differ fundamentally: Solid components are setup functions, not render functions — writing component logic that assumes re-execution (e.g. re-deriving state from props inside the body) behaves differently. Another trap: thinking JSX variables are reactive — only signal reads inside compiled expressions are tracked; a variable computed once and read in JSX does not update unless it is a memo or reads a signal inside the expression. Candidates who explain the compile-time transformation show real understanding."
+    },
+    {
+      "question": "How does Solid know which effects to re-run when a signal changes, and what happens to dependencies that are no longer read?",
+      "contextIntro": "This probes the dependency tracking mechanics — the dynamic edge rewiring that makes Solid's graph precise — a core differentiator interviewers dig into.",
+      "detailedAnswer": "When a computation runs, it executes inside a tracking scope: the currently-active computation is pushed onto a global owner stack, and every signal read registers the current computation as a consumer (and vice versa). On each re-run, the computation's dependency set is rebuilt from scratch: Solid clears the previous dependencies and re-registers the ones actually read during this evaluation. Signals whose consumers no longer read them are dropped from their observer lists, so stale edges never cause spurious updates. When a signal's value changes, its version bumps and it notifies its current observer list; effects are scheduled to run (batched in a microtask) and memos invalidate lazily. This dynamic graph is what guarantees 're-runs only when actually read'.",
+      "trapWarning": "The naive answer is 'Solid subscribes to signals at creation and never updates'. Dependencies are rewired on every evaluation — a conditional read (if (x()) use a() else use b()) correctly switches which signals trigger the effect. Another trap: assuming reads outside a tracking scope create subscriptions — reads in event handlers or plain functions outside effects/memos/JSX are untracked and create no dependency. Candidates who describe the owner-stack tracking and dependency rebuild demonstrate real depth."
+    }
+  ]
+}

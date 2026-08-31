@@ -1,0 +1,61 @@
+{
+  "id": "css-custom-properties-var-inheritance",
+  "title": "Typed CSS Variables: @property Registration & Computation Phases",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Properties and Values API Level 1 (@property)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "custom-properties", "property", "css-variables", "inheritance", "interpolation"],
+  "prerequisites": [
+    "CSS custom properties (var()) basics",
+    "Understanding of CSS inheritance and animation"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A form has two kinds of fields: free-text boxes where anyone can type anything (regular custom properties), and checked fields that only accept a number or a specific kind of answer (registered properties). The checked fields are much easier to count and compare because the clerk knows exactly what kind of value is inside. @property is how you upgrade a free-text field into a checked one: once the browser knows the type, it can do reliable math and smoothly count from one value to another during transitions.",
+    "junior": "Regular custom properties are untyped: --x: 10px; can hold any token sequence, and var() substitutes it as raw text. @property registers a typed custom property with syntax, inherits, and initial-value: @property --angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }. Typed properties can be interpolated in transitions/animations (the browser knows how to blend 0deg -> 360deg), and they validate values (invalid values are rejected instead of silently passing through). Register with CSS @property blocks or CSS.registerProperty() from JS.",
+    "senior": "Architecturally, @property moves custom properties from raw token substitution to first-class computed values. The browser parses the value against the declared syntax at computed-value time; an invalid value falls back to the initial value rather than being inherited as garbage. Because the value is typed, the engine can interpolate it in animations and transitions (previously impossible for var()-backed values) and use it in calculations (calc(), trigonometric functions) with proper unit handling. Inheritance control (inherits: false) prevents the classic 'custom property leaks into children' problem and lets the property participate in style computation like a real property.",
+    "underTheHood": "Registered custom properties go through the normal CSS computed-value pipeline: the parser checks the specified value against the syntax grammar (e.g. <length-percentage>, <color>, <angle>, or <number>), the computed value is stored in the element's computed style with a known type, and invalid-at-computed-value-time values are replaced by the initial value. Typed values enable the animation interpolation machinery: the engine computes start/end values with matching types and interpolates in the property's native space (e.g. hue angle interpolation for colors). The registration is stored in the CSS environment/registration map, shared between CSS @property rules and CSS.registerProperty() calls (which must be called before use)."
+  },
+  "rosettaStone": {
+    "react": "React inline styles can set custom properties; @property registration via global CSS enables animating those variables.",
+    "angular": "Angular component styles can include @property blocks for typed theming tokens that animate.",
+    "vue": "Vue SFC <style> blocks can register @property for transition-ready design tokens.",
+    "svelte": "Svelte components with global CSS can register typed variables for animated theme values."
+  },
+  "codeComparison": {
+    "title": "Unregistered var() animation vs typed @property animation",
+    "summary": "Animating an unregistered custom property falls back to discrete 'jump' behavior; registering a syntax makes the browser interpolate smoothly.",
+    "legacyOrBad": {
+      "label": "Animating an untyped custom property",
+      "snippet": ".card { --hue: 0; transition: --hue 1s; }\n.card:hover { --hue: 200; } /* ❌ OLD: untyped → discrete jump, no smooth transition */",
+      "fullFile": {
+        "filename": "var-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: The custom property has no registered syntax, so the browser\n   treats it as an untyped token stream. Transitions/animations on it\n   cannot interpolate — the value snaps from 0 to 200 with no smooth\n   blend (50% is treated as an unparseable jump point). */\n\n.card {\n  --hue: 0; /* ❌ OLD: untyped token */\n  transition: --hue 1s;\n}\n\n.card:hover {\n  --hue: 200; /* ❌ OLD: no interpolation — discrete change */\n}\n\n/* The hue snaps instantly even though transition is declared, because\n   the engine has no type information to blend 0 and 200. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Registered @property syntax",
+      "snippet": "@property --hue { syntax: '<number>'; inherits: false; initial-value: 0; }\n.card { --hue: 0; transition: --hue 1s; } /* ✅ NEW: smoothly interpolates */",
+      "fullFile": {
+        "filename": "var-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: Registering the property with a syntax gives the engine type\n   information, so --hue can be interpolated like a real number\n   property: 0 -> 200 blends smoothly across the transition. */\n\n@property --hue {\n  syntax: '<number>'; /* ✅ NEW: typed as a number */\n  inherits: false; /* ✅ NEW: don't leak into children */\n  initial-value: 0; /* ✅ NEW: fallback for invalid/missing values */\n}\n\n.card {\n  --hue: 0;\n  transition: --hue 1s; /* ✅ NEW: now interpolates smoothly */\n}\n\n.card:hover {\n  --hue: 200;\n}\n\n/* Invalid values are rejected (fall back to initial-value) instead of\n   passing through as garbage tokens. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can't you animate a regular custom property, but you can animate a registered one?",
+      "contextIntro": "This gets at the core difference between token substitution and typed computed values — interviewers want the animation machinery reason, not just 'register it and it works'.",
+      "detailedAnswer": "A regular custom property stores its value as an untyped token sequence; when a transition or animation targets it, the engine has no way to compute intermediate values — blending '10px 20px' with '20px 10px' or 'red' with '200' is undefined without a type. So it falls back to discrete (step) interpolation. Registering the property with @property declares a syntax (e.g. <number>, <color>, <angle>), so the engine parses the value into a typed computed value at style-computation time and can interpolate in that type's native space — numbers blend arithmetically, colors interpolate in the color space, angles spin. That type information is what the transition/animation machinery needs to produce smooth intermediate frames.",
+      "trapWarning": "The naive answer is 'custom properties just can't be animated in CSS'. They can, once typed — the interpolation needs the syntax declaration. Another trap: assuming the initial-value is only a fallback for missing values — it is also what invalid values resolve to at computed-value time, which changes how inheritance behaves. Candidates who mention computed-value parsing and interpolation in native space show real understanding."
+    },
+    {
+      "question": "What does inherits: false actually change, and why is inheritance a problem with untyped custom properties?",
+      "contextIntro": "This probes the inheritance semantics and the 'custom property leak' problem — a practical bug that @property registration fixes.",
+      "detailedAnswer": "By default, custom properties inherit, which is often exactly what you want (theme tokens). But it can leak values unintentionally: an element that sets --hue: 200 makes ALL descendants inherit 200 unless they override it, and because the value is untyped, descendants can also receive malformed tokens that 'work' until they reach a calc() or animation that chokes on them. @property with inherits: false makes the property NOT inherit — each element starts from its initial-value and only uses values set on itself, which is the correct semantics for state-like properties (e.g. --progress). The trade-off is deliberate: inherited tokens should keep inherits: true, while per-element state should be false.",
+      "trapWarning": "The naive answer is 'inherits: false just makes the property private'. It changes computed-value semantics — children no longer read the parent's value at all. Another trap: forgetting that untyped variables only substitute text, so a 'leaked' value can produce subtle breakage in calc() or var() chains far from where it was set. Candidates who connect inherits to the computed-value pipeline and give concrete leak scenarios show real depth."
+    }
+  ]
+}

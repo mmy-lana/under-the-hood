@@ -1,0 +1,61 @@
+{
+  "id": "css-containment-layout-paint",
+  "title": "CSS Containment: contain layout/paint/size Rendering Bails",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Containment Level 1-3 (all modern browsers)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "containment", "contain", "layout", "paint", "performance", "rendering"],
+  "prerequisites": [
+    "CSS layout and paint concepts",
+    "Understanding of style recalc and reflow"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel has a rule: the staff inside a sealed conference room may rearrange chairs freely, but nothing done in that room can spill into the lobby or change the hotel's outside dimensions. That rule lets the hotel know it never needs to re-check the whole building when one room changes — only the sealed room. CSS containment is the same 'sealed room' arrangement: you tell the browser that a section of the page is self-contained, so when it changes, the browser only re-does the work for that section and skips the rest of the building.",
+    "junior": "The contain property tells the browser a subtree is independent: contain: layout makes the element independent for layout (floats/positioning inside can't leak out); contain: paint clips painting to the element's box (overflow is clipped and paint can't bleed outside); contain: size makes the element's size independent of its contents (you must size it yourself); contain: content = layout + paint; contain: strict = all three. Use contain: content on widgets whose size is fixed and whose internal changes shouldn't affect the page, to get big rendering wins: the browser skips layout/paint work outside the container.",
+    "senior": "Architecturally, containment creates a 'containment boundary': the engine may treat the contained subtree as opaque, so layout of the rest of the page is not re-run when the subtree changes, paint is clipped to the boundary, and size containment removes the subtree from the parent's intrinsic sizing. This is the same optimization the browser uses internally for iframes/transform layers. Practical wins: app shells with long lists where each item is contain: content (independent layout) and content-visibility: auto (skips off-screen items entirely). The cost: you take responsibility for sizing (size) and clipping (paint), which can break designs that rely on content spilling out.",
+    "underTheHood": "Containment hooks into the layout and paint algorithms: with layout containment, the element establishes a new formatting context and an independent layout root — the engine skips 'effects of this subtree on ancestors' when the subtree invalidates. Paint containment clips descendants to the border box (overflow becomes effectively clip) and can create a new stacking context and a layer, so repaints are scoped. Size containment makes the element's size computed from its own specified dimensions, ignoring content contributions (content is laid out at the specified size, possibly overflowing internally). The engine uses these to compute an independent invalidation region: changes inside the container only dirty the container's own layout/paint region."
+  },
+  "rosettaStone": {
+    "react": "Virtualized React lists wrap items in contain: content so item updates don't re-layout the whole page.",
+    "angular": "CDK virtual scroll / large Angular tables apply containment to rows for scoped invalidation.",
+    "vue": "Vue large-list components (vue-virtual-scroller) pair contain: content with scroll virtualization.",
+    "svelte": "Svelte's compiler emits class attributes; adding contain: content classes scopes reflow to each list item."
+  },
+  "codeComparison": {
+    "title": "Full-page reflow on widget change vs contained widget",
+    "summary": "Without containment, updating a widget's internals can invalidate layout far beyond it; contain: content scopes the invalidation to the widget's boundary.",
+    "legacyOrBad": {
+      "label": "Uncontained widget",
+      "snippet": ".widget { /* ❌ OLD: no containment — internal changes can re-layout the whole page */ }",
+      "fullFile": {
+        "filename": "contain-bad.css",
+        "language": "css",
+        "code": "/* ❌ OLD: No containment. When the widget's content changes (e.g. a\n   feed item updates its height), the engine cannot assume the change\n   is local: floats could escape, the widget could grow, and the\n   browser may re-run layout for the whole page. */\n\n.widget {\n  /* ❌ OLD: nothing scopes the invalidation */\n}\n\n.widget__item {\n  transition: height 200ms;\n}\n\n/* Toggling .widget__item content invalidates the widget AND all\n   ancestors' layout regions — costly in a page with hundreds of\n   items, because each change re-measures the surrounding layout. */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Contained widget",
+      "snippet": ".widget { contain: content; } /* ✅ NEW: layout+paint scoped to the widget boundary */",
+      "fullFile": {
+        "filename": "contain-good.css",
+        "language": "css",
+        "code": "/* ✅ NEW: contain: content (layout + paint) scopes all internal\n   invalidation to the widget's own box. The engine knows nothing\n   inside can affect the rest of the page's layout or paint. */\n\n.widget {\n  contain: content; /* ✅ NEW: layout + paint containment */\n}\n\n.widget__item {\n  transition: height 200ms;\n}\n\n/* Now an item's height change only dirties the widget's own layout\n   and paint region — ancestors are not re-laid-out, and paint is\n   clipped to the widget's box. For stable-height feeds, add\n   contain: strict or size to also decouple intrinsic sizing. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between contain: layout, contain: paint, and contain: size, and what does each actually change?",
+      "contextIntro": "Interviewers want the precise semantics of each containment kind — most people know 'it's for performance' but cannot say what each one does to layout, painting, and sizing.",
+      "detailedAnswer": "contain: layout establishes the element as an independent formatting context and layout root: internal layout cannot affect elements outside (floats can't escape, and the element's layout is computed independently), so the engine can skip re-layout of ancestors when the subtree changes. contain: paint clips all painting to the element's padding box, and descendants cannot paint outside it; it also creates a stacking context and a containing block for absolutely-positioned descendants. contain: size makes the element's size depend only on its own specified dimensions (width/height or aspect-ratio), ignoring content size entirely — content is laid out within the given box and may overflow. contain: content = layout + paint; contain: strict = layout + paint + size.",
+      "trapWarning": "The naive answer is 'contain just makes things faster'. Each keyword changes behavior: size containment can collapse an element whose content grows (if you forget to size it), and paint containment silently clips overflowing content such as dropdowns or tooltips. Another trap: thinking contain: content includes size — it does not, so content that would grow the box still affects the element's own sizing and therefore ancestors. Candidates who can enumerate the three kinds and their side effects show real depth."
+    },
+    {
+      "question": "How does containment actually reduce reflow cost in the engine, and when is it worth adding?",
+      "contextIntro": "This probes the invalidation mechanism — that containment narrows the set of elements that must be re-laid-out or repainted, which is the real performance story.",
+      "detailedAnswer": "When the DOM changes, the engine computes an invalidation region: the set of elements whose layout/paint may be stale. Without containment, a change deep in a subtree can force re-layout up to the document root (because sizes/collapse can propagate). Containment makes the element an independent root: internal changes only invalidate the contained subtree's own region, and the rest of the page's layout is preserved. Similarly, paint containment limits repaint to the element's box. The win is biggest for many independent siblings (list items, cards, widget tiles) where one change would otherwise dirty the whole container. It is worth adding whenever a subtree is genuinely independent: fixed-size cards, virtualized rows, and widget modules. Adding it to a subtree that depends on outside context can break that dependency.",
+      "trapWarning": "The naive answer is 'containment is always free performance'. It changes layout semantics and can break designs that rely on content escaping the box (tooltips, popovers, negative margins). Another trap: using contain: strict on elements that are not explicitly sized — size containment collapses them. Candidates who connect containment to the invalidation region and list real use cases show they understand the trade-off, not just the API."
+    }
+  ]
+}

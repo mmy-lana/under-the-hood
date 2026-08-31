@@ -1,0 +1,61 @@
+{
+  "id": "css-scoping-light-vs-shadow-dom",
+  "title": "@scope Rule vs Shadow DOM Encapsulation (:host, ::part)",
+  "category": "frontend",
+  "subcategory": "css",
+  "versionContext": "CSS Scoping Level 1 (@scope, Chrome 118+)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["css", "scope", "shadow-dom", "encapsulation", "host", "part", "scoping"],
+  "prerequisites": [
+    "CSS selector basics and the cascade",
+    "Understanding of Web Components / Shadow DOM"
+  ],
+  "progressiveExplaining": {
+    "eli5": "Two ways to keep papers organized: a folder with a lock that nobody outside can peek into, and a clearly-labeled tray with a sign saying 'only papers for the kitchen belong here'. The locked folder is totally sealed — outside hands cannot touch the papers. The labeled tray keeps papers organized by rule, but it lives in the same open cabinet. Each has a job: the lock for true privacy, the label for tidy organization without locking everything away.",
+    "junior": "@scope scopes a set of rules to a subtree without Shadow DOM: @scope (.card) { :scope { border: 1px solid; } .title { font-weight: bold; } }. It limits which elements the selectors match (the scope root and its descendants), making component styles self-contained in light DOM. Shadow DOM gives true encapsulation: styles inside <template shadowrootmode> cannot leak out and outer styles cannot pierce in (except via :host, ::part, and CSS custom properties). @scope is lighter: no shadow boundary, the element stays in the light DOM, and the rules are just more specific scoped selectors.",
+    "senior": "Architecturally, @scope is a cascade-time scoping mechanism: it constrains the matching of a style rule to elements within the scope subtree, and it also changes the cascade tie-breaking (a rule in a closer/later scope wins over one in an outer scope, even at equal specificity — the 'proximity' rule). Shadow DOM is a rendering-tree isolation boundary: the shadow tree's styles are computed in their own tree scope, and the shadow boundary blocks selector matching from outside. @scope is ideal for scoping component styles in a single tree (e.g. CSS-modules-like organization, styling a section of a page); Shadow DOM is for true component encapsulation where external styles must not interfere.",
+    "underTheHood": "@scope compiles to a scoping root + subtree: the engine stores the scope's root (and optional limit) with the rule; selector matching tests whether the candidate element is a descendant of the scope root (and within the limit), and cascade sorting adds scope proximity as a tie-breaker before specificity. Shadow DOM creates a separate tree scope: selector matching from the outer tree cannot cross the shadow boundary (except ::part and ::slotted which the engine maps across the boundary), and inner rules start their matching inside the shadow tree. Custom properties and inherited properties still cross the shadow boundary by design; ::part exposes selected inner elements for external styling."
+  },
+  "rosettaStone": {
+      "react": "React rarely uses Shadow DOM; @scope gives a light-weight scoping option for styled components in light DOM.",
+      "angular": "Angular's ViewEncapsulation.Emulated is attribute-based; @scope offers a native-cascade alternative for scoped styles.",
+      "vue": "Vue scoped styles use attribute hashing; @scope can complement or replace it for more readable selectors.",
+      "svelte": "Svelte scoped styles hash class names; @scope gives native, readable scoping in scoped <style> blocks."
+    },
+    "codeComparison": {
+      "title": "Hashed/attribute scoping vs @scope proximity scoping",
+      "summary": "Framework scoping relies on generated attribute/hash selectors; @scope is a native cascade mechanism that also provides proximity-based win rules.",
+      "legacyOrBad": {
+        "label": "Attribute-hash scoping (emulated)",
+        "snippet": ".card[data-v-abc123] .title[data-v-abc123] { font-weight: bold; } /* ❌ OLD: generated attribute selectors */",
+        "fullFile": {
+          "filename": "scope-bad.css",
+          "language": "css",
+          "code": "/* ❌ OLD: Framework-emulated scoping appends a generated attribute or\n   hash to every selector. It works, but the compiled CSS is noisy,\n   specificity is inflated by the extra attribute, and it is opaque to\n   developers reading the output. */\n\n.card[data-v-abc123] .title[data-v-abc123] {\n  font-weight: bold; /* ❌ OLD: readability suffers; specificity inflated */\n}\n\n/* The hash must be unique per build, selectors grow, and debugging\n   the real cascade in devtools shows hashed selectors instead of the\n   author intent. */"
+        }
+      },
+      "modernOrGood": {
+        "label": "@scope native scoping",
+        "snippet": "@scope (.card) { .title { font-weight: bold; } } /* ✅ NEW: readable, native, proximity-aware */",
+        "fullFile": {
+          "filename": "scope-good.css",
+          "language": "css",
+          "code": "/* ✅ NEW: @scope scopes rules to the .card subtree with author-readable\n   selectors, plus the cascade proximity rule: an inner scope wins over\n   an outer one at equal specificity. */\n\n@scope (.card) {\n  /* ✅ NEW: :scope refers to the scope root (.card) */\n  :scope {\n    border: 1px solid;\n  }\n  .title {\n    font-weight: bold; /* ✅ NEW: only matches inside a .card */\n  }\n}\n\n/* No hashes, no inflated specificity; the scope boundary is explicit\n   and the rules read like the component they style. */"
+      }
+    }
+  },
+  "interviewGotchas": [
+      {
+      "question": "What is the difference between @scope and Shadow DOM encapsulation, and when would you choose each?",
+        "contextIntro": "This tests whether you understand that @scope is a cascade-level scoping mechanism in the light DOM while Shadow DOM is a rendering-tree isolation boundary — they solve different problems.",
+        "detailedAnswer": "@scope constrains selector matching to a subtree and adds proximity-based cascade ordering: rules within a nearer scope beat outer-scope rules at equal specificity. It does NOT create a boundary — the scoped elements remain in the light DOM, can be styled by outside rules that out-specify them, and participate in the normal cascade. Shadow DOM creates a real boundary: the shadow tree is a separate rendering tree scope, so outside selectors cannot match inside it (except via ::part/::slotted) and inside styles cannot leak out — a hard isolation guarantee that also isolates IDs, focus, and events. Choose @scope for organizing styles within one tree (component sections, CSS architecture); choose Shadow DOM when you need true encapsulation against any external interference.",
+        "trapWarning": "The naive answer is '@scope is a lighter Shadow DOM'. It provides no boundary at all — outside styles with higher specificity still win. Another trap: thinking @scope hides element IDs or isolates styles from inheritance — it does neither; custom properties and inherited styles still flow across @scope, exactly as in normal CSS. Candidates who contrast 'cascade scoping' vs 'tree boundary' show real understanding."
+      },
+      {
+        "question": "How does the @scope proximity rule change cascade outcomes compared to specificity, and why does it matter?",
+        "contextIntro": "This probes the unique cascade behavior of @scope — the proximity tie-breaker that lets inner scopes win naturally — which is the feature that makes scoped component overrides work.",
+        "detailedAnswer": "In the normal cascade, when two rules have equal specificity, source order decides. @scope adds a new cascade criterion: scope proximity. Between two matching rules of equal specificity, the one whose scope is 'closer' to the element (the inner scope) wins, regardless of source order. This means a rule in an inner @scope (.card .inner) naturally overrides an outer @scope (.page .card) rule at equal specificity — exactly the component-override behavior you want. The cascade order becomes: origin, layers, scope proximity, specificity, source order. This is why @scope feels like native component styling: nested scopes compose predictably without needing higher specificity hacks.",
+        "trapWarning": "The naive answer is '@scope is just a namespace for selectors'. It changes cascade ordering: scope proximity is compared before specificity, but only as a tie-breaker — if specificity differs, the higher-specificity rule still wins; proximity only resolves equal-specificity ties. Another trap: assuming inner-scope rules always beat outer-scope rules regardless of specificity. Candidates who get the exact ordering (proximity is a tie-breaker, not an override) demonstrate precise understanding rather than hand-waving."
+      }
+    ]
+}
