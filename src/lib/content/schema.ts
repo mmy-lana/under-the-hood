@@ -4,8 +4,7 @@
  */
 
 export type TopicCategory = 'frontend' | 'backend';
-export type RosettaFramework = 'react' | 'angular' | 'vue' | 'svelte';
-
+export type RosettaFramework = string;
 export interface ProgressiveDepth {
   /** Real-world physical metaphor, ZERO jargon (no "DOM", "function", "memory"). */
   eli5: string;
@@ -59,7 +58,7 @@ export interface TopicSchema {
   prerequisites: string[];
   progressiveExplaining: ProgressiveDepth;
   /** Framework equivalents keyed by `react|angular|vue|svelte`. */
-  rosettaStone?: Partial<Record<RosettaFramework, string>>;
+  rosettaStone?: Record<string, string>;
   codeComparison: CodeComparison;
   /** EXACTLY TWO gotchas required. */
   interviewGotchas: [InterviewGotcha, InterviewGotcha];

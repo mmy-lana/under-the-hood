@@ -25,6 +25,9 @@ const LANGS = [
   'go',
   'python',
   'rust',
+  'csharp',
+  'cpp',
+  'ruby',
   'bash',
   'yaml'
 ] as const;
@@ -38,6 +41,10 @@ const LANG_ALIASES: Record<string, string> = {
   yml: 'yaml',
   golang: 'go',
   rs: 'rust',
+  cs: 'csharp',
+  'c#': 'csharp',
+  'c++': 'cpp',
+  rb: 'ruby',
   shell: 'bash'
 };
 

@@ -7,7 +7,6 @@ import type { TopicSchema } from './schema';
  */
 
 const DEPTH_KEYS = ['eli5', 'junior', 'senior', 'underTheHood'] as const;
-const ROSETTA_KEYS = ['react', 'angular', 'vue', 'svelte'] as const;
 
 type RawRecord = Record<string, unknown>;
 
@@ -60,13 +59,13 @@ export function assertValidTopic(raw: unknown, path: string): asserts raw is Top
       fail(path, `progressiveExplaining.${key} must be a non-empty string`);
   }
 
-  // rosettaStone (optional): keys restricted to the 4 frameworks, non-empty values.
+  // rosettaStone (optional): non-empty string keys and values.
   const rosetta = raw['rosettaStone'];
   if (rosetta !== undefined) {
     if (!isRecord(rosetta)) fail(path, 'rosettaStone must be an object');
     for (const key of Object.keys(rosetta)) {
-      if (!(ROSETTA_KEYS as readonly string[]).includes(key))
-        fail(path, `rosettaStone has unknown framework key "${key}"`);
+      if (!isNonEmptyString(key))
+        fail(path, `rosettaStone key must be a non-empty string`);
       if (!isNonEmptyString(rosetta[key]))
         fail(path, `rosettaStone.${key} must be a non-empty string`);
     }

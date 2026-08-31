@@ -21,12 +21,30 @@ export function entries(): Array<TopicRouteParams> {
   }));
 }
 
-/** Shiki language per Rosetta framework. */
-const ROSETTA_LANG: Record<RosettaFramework, string> = {
+const ROSETTA_LANG: Record<string, string> = {
   react: 'tsx',
   angular: 'typescript',
   vue: 'vue',
-  svelte: 'svelte'
+  svelte: 'svelte',
+  fastapi: 'python',
+  nestjs: 'typescript',
+  spring: 'java',
+  springboot: 'java',
+  node: 'javascript',
+  express: 'javascript',
+  bun: 'typescript',
+  deno: 'typescript',
+  go: 'go',
+  rust: 'rust',
+  java: 'java',
+  python: 'python',
+  dotnet: 'csharp',
+  csharp: 'csharp',
+  cpp: 'cpp',
+  ruby: 'ruby',
+  html: 'html',
+  htmx: 'html',
+  css: 'css'
 };
 
 export interface TopicPageData {
@@ -36,7 +54,7 @@ export interface TopicPageData {
     modernSnippet: string;
     legacyFull: string;
     modernFull: string;
-    rosetta: Partial<Record<RosettaFramework, string>>;
+    rosetta: Record<string, string>;
   };
   legacyPane: DiffPaneData;
   modernPane: DiffPaneData;
@@ -67,13 +85,13 @@ export async function load({
 
   const rosettaEntries = await Promise.all(
     Object.entries(topic.rosettaStone ?? {}).map(async ([framework, code]) => {
-      const fw = framework as RosettaFramework;
-      return [fw, await highlight(code, ROSETTA_LANG[fw])] as const;
+      const lang = ROSETTA_LANG[framework.toLowerCase()] ?? 'typescript';
+      return [framework, await highlight(code, lang)] as const;
     })
   );
-  const rosetta: Partial<Record<RosettaFramework, string>> = Object.fromEntries(
+  const rosetta: Record<string, string> = Object.fromEntries(
     rosettaEntries
-  ) as Partial<Record<RosettaFramework, string>>;
+  );
 
   const index = allTopics.findIndex((t) => t.id === topic.id);
   const prev = index > 0 ? allTopics[index - 1] : undefined;

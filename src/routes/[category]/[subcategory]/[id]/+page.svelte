@@ -22,10 +22,10 @@
   const rosetta = $derived(
     Object.fromEntries(
       Object.entries(data.html.rosetta).map(([fw, html]) => {
-        const code = data.topic.rosettaStone?.[fw as RosettaFramework] ?? '';
+        const code = data.topic.rosettaStone?.[fw] ?? '';
         return [fw, { html, code }] as const;
       })
-    ) as Partial<Record<RosettaFramework, HighlightedCode>>
+    ) as Record<string, HighlightedCode>
   );
 
   const snippetLegacy = $derived({

@@ -2,21 +2,16 @@
   import { cn } from '$lib/utils/cn';
   import CopyButton from '$lib/components/atoms/CopyButton.svelte';
   import type { HighlightedCode } from '$lib/types';
-  import type { RosettaFramework } from '$lib/content/schema';
 
   interface RosettaTabsProps {
-    rosetta: Partial<Record<RosettaFramework, HighlightedCode>>;
+    rosetta: Record<string, HighlightedCode>;
   }
 
   let { rosetta }: RosettaTabsProps = $props();
 
-  const ORDER: RosettaFramework[] = ['react', 'angular', 'vue', 'svelte'];
+  const frameworks = $derived(Object.keys(rosetta));
 
-  const frameworks = $derived(
-    ORDER.filter((f) => rosetta[f] !== undefined)
-  );
-
-  let active = $state<RosettaFramework>('react');
+  let active = $state<string>('');
 
   $effect(() => {
     if (!frameworks.includes(active)) {
