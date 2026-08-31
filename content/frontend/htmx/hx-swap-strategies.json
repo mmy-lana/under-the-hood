@@ -1,0 +1,58 @@
+{
+  "id": "hx-swap-strategies",
+  "title": "hx-swap: innerHTML, outerHTML, beforebegin, afterend, and delete Strategies",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-swap", "dom", "outerHTML", "innerHTML", "morphing"],
+  "prerequisites": ["HTML DOM insertion methods", "HTMX hx-get/hx-post basics"],
+  "progressiveExplaining": {
+    "eli5": "When the server sends you a new puzzle piece, `hx-swap` tells the browser where to put it: empty the box and put it inside (`innerHTML`), replace the box itself (`outerHTML`), slide it just before the box (`beforebegin`), slide it right after the box (`afterend`), or throw the box in the trash (`delete`).",
+    "junior": "`hx-swap` controls how the returned HTML response is placed into the DOM relative to `hx-target`. Default is `innerHTML` (replaces children). Common strategies: `outerHTML` (replaces target element itself), `beforebegin` (inserts before target), `afterbegin` (prepends inside target), `beforeend` (appends inside target), `afterend` (inserts after target), and `delete` (removes target). You can also control scroll behavior via `hx-swap=\"innerHTML scroll:top\"`.",
+    "senior": "Architecturally, `hx-swap` maps directly to the DOM's `insertAdjacentHTML` and `outerHTML` APIs, combined with transition timing modifiers. Modifiers like `swap:300ms` and `settle:300ms` coordinate with CSS transition classes (`.htmx-swapping`, `.htmx-settling`), enabling smooth exit and enter animations during DOM replacement without custom JavaScript animation libraries.",
+    "underTheHood": "When the response arrives, HTMX runs the swap lifecycle: (1) adds `.htmx-swapping` to the target, (2) waits for the `swap` delay timer, (3) executes the chosen strategy using native DOM primitives (`insertAdjacentHTML`, `replaceChild`, `remove`), (4) adds `.htmx-settling` to new content, and (5) removes settling classes after the settle delay, firing `htmx:afterSettle`."
+  },
+  "rosettaStone": {
+    "react": "Conditional JSX rendering replacing nodes or arrays of items.",
+    "angular": "`ViewContainerRef.createEmbeddedView()` with insertion indices.",
+    "vue": "Dynamic component swapping or `v-html` insertions.",
+    "htmx": "`hx-swap=\"innerHTML | outerHTML | beforebegin | afterbegin | beforeend | afterend | delete\"`."
+  },
+  "codeComparison": {
+    "title": "Append vs Replace with hx-swap",
+    "summary": "`innerHTML` replaces the entire container; `hx-swap=\"beforeend\"` appends new items to an existing list.",
+    "legacyOrBad": {
+      "label": "Destructive innerHTML Replacement",
+      "snippet": "<div hx-get=\"/more-items\" hx-target=\"#list\"> // ❌ Overwrites entire list with new items",
+      "fullFile": {
+        "filename": "list-replace.html",
+        "language": "html",
+        "code": "<!-- ❌ Default swap is innerHTML: clicking replaces all existing items -->\n<button hx-get=\"/api/items?page=2\" hx-target=\"#item-list\">\n  Load More (Destructive)\n</button>\n\n<ul id=\"item-list\">\n  <li>Item 1</li>\n  <li>Item 2</li>\n</ul>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Infinite Scroll Append via beforeend",
+      "snippet": "<div hx-get=\"/more-items\" hx-target=\"#list\" hx-swap=\"beforeend\"> // ✅ NEW: Appends cleanly",
+      "fullFile": {
+        "filename": "list-append.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: beforeend appends new <li> elements to the end of #item-list -->\n<button \n  hx-get=\"/api/items?page=2\"\n  hx-target=\"#item-list\"\n  hx-swap=\"beforeend scroll:bottom\"\n>\n  Load More (Append)\n</button>\n\n<ul id=\"item-list\">\n  <li>Item 1</li>\n  <li>Item 2</li>\n</ul>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `hx-swap=\"outerHTML\"` and `hx-swap=\"innerHTML\"`?",
+      "contextIntro": "Interviewers test your precision with DOM element replacement boundaries.",
+      "detailedAnswer": "`innerHTML` replaces the *children* of the target element while keeping the target element's opening and closing tag intact. `outerHTML` replaces the *target element itself* along with its children, substituting it entirely with the incoming HTML response.",
+      "trapWarning": "If using `hx-swap=\"outerHTML\"`, the incoming server response must include the outer container element (with attributes and IDs) if subsequent HTMX interactions on that element are expected."
+    },
+    {
+      "question": "How do you animate element deletion with `hx-swap=\"delete\"`?",
+      "contextIntro": "Checks understanding of HTMX CSS transition swap timing modifiers.",
+      "detailedAnswer": "Use the `swap` timing modifier: `hx-swap=\"delete swap:500ms\"`. When triggered, HTMX adds the `.htmx-swapping` CSS class to the element, waits 500ms (allowing a CSS `opacity: 0; transform: scale(0.8)` transition to play), and then removes the element from the DOM.",
+      "trapWarning": "Without specifying `swap:500ms`, `hx-swap=\"delete\"` removes the element instantly, preventing any CSS exit transitions from playing."
+    }
+  ]
+}

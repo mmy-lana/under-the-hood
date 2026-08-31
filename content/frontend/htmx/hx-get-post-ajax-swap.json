@@ -1,0 +1,58 @@
+{
+  "id": "hx-get-post-ajax-swap",
+  "title": "hx-get & hx-post: Declarative AJAX & HX-Request Headers",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "ajax", "hx-get", "hx-post", "headers", "hypermedia"],
+  "prerequisites": ["HTML Form basics", "HTTP GET/POST methods"],
+  "progressiveExplaining": {
+    "eli5": "In traditional web pages, only links (`<a>`) can fetch new pages and only `<form>` tags can send data. HTMX lets ANY HTML tag (buttons, divs, dropdowns) send a request to the server and swap the incoming HTML fragment directly into the page without reloading.",
+    "junior": "`hx-get` and `hx-post` trigger AJAX requests directly from HTML attributes: `<button hx-get=\"/api/users\" hx-target=\"#list\">Load</button>`. HTMX intercepts the click, sends an AJAX request with custom headers (like `HX-Request: true`), and swaps the returned HTML string into `#list` (`innerHTML` by default).",
+    "senior": "Architecturally, `hx-get` and `hx-post` embrace the REST/HATEOAS hypermedia model: the server returns HTML partials (hypermedia state transitions) rather than raw JSON, eliminating client-side template compilation and JSON schema duplication. HTMX automatically injects headers (`HX-Request`, `HX-Target`, `HX-Current-URL`) allowing backend endpoints to conditionally return full layout pages or minimal partials based on the calling context.",
+    "underTheHood": "HTMX attaches event listeners (via event delegation) on the `document.body`. When an element with `hx-get`/`hx-post` triggers, it creates an `XMLHttpRequest` or `fetch`, sets request headers (`HX-Request: true`), issues the request, parses the returned HTML text via `DOMParser` or range fragments, and dispatches lifecycle events (`htmx:beforeRequest`, `htmx:afterOnLoad`, `htmx:afterSettle`)."
+  },
+  "rosettaStone": {
+    "react": "`fetch('/api/users').then(r => r.json()).then(data => setUsers(data))`.",
+    "angular": "`this.http.get<User[]>('/api/users').subscribe(data => this.users = data)`.",
+    "vue": "`const users = ref([]); onMounted(async () => users.value = await $fetch('/api/users'))`.",
+    "htmx": "`<button hx-get=\"/api/users\" hx-target=\"#list\">Load Users</button>`."
+  },
+  "codeComparison": {
+    "title": "Client-Side Fetch & DOM Construction vs Declarative hx-get",
+    "summary": "Manual JavaScript fetch requires parsing JSON and appending elements; HTMX requests and swaps HTML partials in one attribute.",
+    "legacyOrBad": {
+      "label": "Manual Fetch & InnerHTML",
+      "snippet": "fetch(url).then(r => r.text()).then(html => el.innerHTML = html); // ❌ Imperative plumbing",
+      "fullFile": {
+        "filename": "fetch-manual.js",
+        "language": "js",
+        "code": "// ❌ OLD: Writing imperative event listeners, fetch promises, and error handling\n// boilerplate for every simple content-loading interaction.\nconst btn = document.getElementById('load-btn');\nconst target = document.getElementById('content');\n\nbtn.addEventListener('click', async () => {\n  btn.disabled = true;\n  try {\n    const res = await fetch('/api/content');\n    const html = await res.text();\n    target.innerHTML = html;\n  } catch (err) {\n    target.innerHTML = '<p>Error loading content</p>';\n  } finally {\n    btn.disabled = false;\n  }\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative HTMX hx-get",
+      "snippet": "<button hx-get=\"/api/content\" hx-target=\"#content\">Load</button> // ✅ NEW: Zero custom JS",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: HTMX handles AJAX request, loading states, headers, and DOM swapping declaratively -->\n<button \n  hx-get=\"/api/content\"\n  hx-target=\"#content\"\n  hx-indicator=\"#spinner\"\n>\n  Load Content\n</button>\n\n<span id=\"spinner\" class=\"htmx-indicator\">Loading...</span>\n<div id=\"content\"><!-- HTML partial from server inserted here --></div>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How can a backend endpoint distinguish between a full browser navigation and an HTMX AJAX request?",
+      "contextIntro": "Interviewers test your knowledge of HTMX request header inspection for backend conditional rendering.",
+      "detailedAnswer": "HTMX automatically sends the **`HX-Request: true`** HTTP header on every AJAX request. Server-side controllers inspect this header: if present, the server renders and returns only the minimal HTML partial (e.g. `<tr>...</tr>`); if absent (e.g. initial direct browser page load), the server renders the full page template including `<head>`, `<body>`, and navigation bars.",
+      "trapWarning": "Failing to check `HX-Request` on endpoints serving both direct visits and HTMX partials will cause the entire HTML page layout to be nested inside the target element."
+    },
+    {
+      "question": "What is the default trigger event for `hx-get` on different HTML elements?",
+      "contextIntro": "Checks understanding of natural event triggers in HTMX.",
+      "detailedAnswer": "HTMX assigns default triggers based on element semantics: `<input>`, `<textarea>`, and `<select>` trigger on the `change` event; `<form>` triggers on the `submit` event; all other elements (like `<button>`, `<div>`, `<a>`) trigger on the `click` event.",
+      "trapWarning": "You can override any default trigger using `hx-trigger=\"mouseenter\"` or `hx-trigger=\"keyup changed delay:500ms\"`."
+    }
+  ]
+}

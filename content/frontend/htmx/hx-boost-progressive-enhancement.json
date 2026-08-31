@@ -1,0 +1,58 @@
+{
+  "id": "hx-boost-progressive-enhancement",
+  "title": "hx-boost: Progressive Enhancement SPA Anchor and Form Interception",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-boost", "progressive-enhancement", "spa", "forms", "navigation"],
+  "prerequisites": ["HTML `<a>` links and `<form>` submissions", "Single Page Application (SPA) mechanics"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a magical turbocharger you can stick onto an entire standard website with one single word: `hx-boost=\"true\"`. All standard links and forms suddenly act like a super-fast modern single-page app with smooth transitions, without rewriting any of your HTML links.",
+    "junior": "`hx-boost=\"true\"` converts standard HTML links (`<a href=\"/about\">`) and forms (`<form action=\"/save\" method=\"POST\">`) into AJAX requests automatically. It targets the `<body>` element by default, swaps the content, and updates the URL via `pushState`. If JavaScript fails or is disabled, the website continues to work 100% normally via standard browser navigation.",
+    "senior": "Architecturally, `hx-boost` is the ultimate realization of **Progressive Enhancement**. You write standard semantic HTML forms and links. Placing `hx-boost=\"true\"` on a parent container (`<body>` or `<nav>`) automatically intercepts clicks and submits, issuing AJAX requests with `HX-Boosted: true`. HTMX parses the incoming full HTML document, extracts the new `<body>` contents, and replaces the current body in place, reducing navigation overhead while keeping complete SEO crawlability.",
+    "underTheHood": "HTMX registers capture event listeners for `click` on anchors and `submit` on forms inside boosted subtrees. When triggered, it calls `event.preventDefault()`, issues an AJAX request with `HX-Boosted: true`, receives the complete HTML document, parses it into an offscreen DOM via `DOMParser`, extracts the `<title>` (updating `document.title`) and `<body>` (updating `document.body`), and invokes `history.pushState()`."
+  },
+  "rosettaStone": {
+    "react": "Next.js `<Link>` component intercepting client-side route transitions.",
+    "angular": "Angular `routerLink` directive intercepting standard anchor tags.",
+    "vue": "Vue Router `<RouterLink>` component.",
+    "svelte": "SvelteKit default client-side navigation anchor routing."
+  },
+  "codeComparison": {
+    "title": "Standard Full-Page Reload Links vs hx-boost SPA Navigation",
+    "summary": "Standard links cause white flashes and full reloads; `hx-boost` turns standard HTML into an instant SPA.",
+    "legacyOrBad": {
+      "label": "Full Page Reload Links",
+      "snippet": "<nav><a href=\"/about\">About</a></nav> // ❌ Triggers full page reload, re-executes all JS/CSS",
+      "fullFile": {
+        "filename": "layout-legacy.html",
+        "language": "html",
+        "code": "<!-- ❌ Every link click causes a full browser teardown, white flash,\n     and re-executes all CSS, JS bundles, and font parsing from scratch. -->\n<body>\n  <nav>\n    <a href=\"/\">Home</a>\n    <a href=\"/products\">Products</a>\n    <a href=\"/contact\">Contact</a>\n  </nav>\n  <main>Page content</main>\n</body>"
+      }
+    },
+    "modernOrGood": {
+      "label": "hx-boost Progressive SPA",
+      "snippet": "<body hx-boost=\"true\"><a href=\"/about\">About</a></body> // ✅ NEW: Instant SPA transitions",
+      "fullFile": {
+        "filename": "layout-boosted.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: One attribute converts all standard links & forms into\n     fast AJAX transitions with zero white-flash, while remaining 100% functional without JS! -->\n<body hx-boost=\"true\">\n  <nav>\n    <a href=\"/\">Home</a>\n    <a href=\"/products\">Products</a>\n    <!-- Opt out a specific link if needed: -->\n    <a href=\"/download.pdf\" hx-boost=\"false\">Download PDF</a>\n  </nav>\n  <main>Page content</main>\n</body>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you opt out a specific link or form from being boosted when `hx-boost=\"true\"` is on the parent `<body>`?",
+      "contextIntro": "Interviewers test your knowledge of inheritance and override rules in HTMX attributes.",
+      "detailedAnswer": "Add **`hx-boost=\"false\"`** directly onto the child element (or its local parent container). This tells HTMX to ignore the element and allow standard browser navigation (essential for external links, file downloads, or full-page logout redirects).",
+      "trapWarning": "External links pointing to different domains (e.g. `href=\"https://google.com\"`) are automatically ignored by `hx-boost`."
+    },
+    {
+      "question": "What happens to scripts in the `<head>` when navigating between pages with `hx-boost`?",
+      "contextIntro": "Checks understanding of script execution lifecycle during boosted navigation.",
+      "detailedAnswer": "By default, `hx-boost` only updates the `<body>` and `<title>`. Scripts and stylesheets in `<head>` are **not re-executed** on boosted navigations. If a destination page introduces a new `<script>` in its `<head>`, you can use the `head-support` extension (`hx-ext=\"head-support\"`) to diff and merge `<head>` tags.",
+      "trapWarning": "Inline scripts inside `<main>` will execute upon swap, but global scripts in `<head>` will not re-run."
+    }
+  ]
+}

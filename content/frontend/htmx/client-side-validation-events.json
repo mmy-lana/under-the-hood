@@ -1,0 +1,58 @@
+{
+  "id": "client-side-validation-events",
+  "title": "HTML5 Form Validation & htmx:validation:failed Event Hooks",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "validation", "html5", "events", "forms", "htmx-validation"],
+  "prerequisites": ["HTML5 Constraint Validation API (`checkValidity`, `reportValidity`)", "HTMX Events"],
+  "progressiveExplaining": {
+    "eli5": "Before sending a letter to the post office, the mailbox checks if you forgot the stamp (`required`) or wrote a fake email address (`type=\"email\"`). If anything is missing, HTMX stops the letter from leaving and shouts `htmx:validation:failed` so you can show an error bubble without bothering the server.",
+    "junior": "HTMX natively honors standard HTML5 form validation attributes (`required`, `pattern`, `minlength`, `type=\"email\"`). When a form or button with `hx-post` is submitted, HTMX calls `form.checkValidity()`. If invalid, the AJAX request is blocked and the browser displays native error bubbles. You can listen to `htmx:validation:validate` or `htmx:validation:failed` in JavaScript to attach custom validation rules.",
+    "senior": "Architecturally, HTMX embraces the browser's native **Constraint Validation API**. When `htmx:validation:validate` fires, you can execute custom validation logic and set `evt.detail.error` or call `elt.setCustomValidity('error')`. If validation fails, HTMX cancels request dispatch, fires `htmx:validation:failed`, and halts the pipeline without network latency.",
+    "underTheHood": "Before triggering an AJAX request, HTMX's `issueAjaxRequest` checks `element.checkValidity()`. If false, HTMX calls `element.reportValidity()`, dispatches the `htmx:validation:failed` event, and returns early. If custom validation logic in `htmx:validation:validate` calls `evt.preventDefault()` or assigns `evt.detail.valid = false`, the network request is aborted."
+  },
+  "rosettaStone": {
+    "react": "React Hook Form / Zod resolver client validation.",
+    "angular": "Angular `Validators.required` on `FormControl`.",
+    "vue": "VeeValidate / Vuelidate form validation schemas.",
+    "htmx": "Native HTML5 `required` + `htmx:validation:validate` event."
+  },
+  "codeComparison": {
+    "title": "Heavy Client-Side Validation Library vs Native HTML5 + HTMX Event Hooks",
+    "summary": "Third-party validation bundles add 50KB of JS; HTMX utilizes native HTML5 validation with custom event hooks.",
+    "legacyOrBad": {
+      "label": "Custom JS Validation Engine",
+      "snippet": "if (!validateRegex(email)) { showError(); return; } // ❌ Manual regex checks in JS",
+      "fullFile": {
+        "filename": "validator-legacy.js",
+        "language": "js",
+        "code": "// ❌ OLD: Writing custom JavaScript regex validators, error display managers,\n// and manual submit blocking logic for basic form inputs.\nfunction validateForm(e) {\n  e.preventDefault();\n  const email = document.getElementById('email').value;\n  if (!email.includes('@') || email.length < 5) {\n    document.getElementById('err').textContent = 'Invalid email';\n    return false;\n  }\n  submitViaAjax();\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Native HTML5 Validation with HTMX Hook",
+      "snippet": "<input type=\"email\" required minlength=\"5\" /> // ✅ NEW: Native constraint validation",
+      "fullFile": {
+        "filename": "validation-modern.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Native HTML5 constraints checked automatically by HTMX before request -->\n<form hx-post=\"/api/register\" hx-target=\"#feedback\">\n  <input \n    type=\"email\" \n    name=\"email\" \n    required \n    minlength=\"5\"\n    placeholder=\"user@example.com\"\n  />\n  <button type=\"submit\">Register</button>\n</form>\n\n<script>\n  // Custom dynamic rule hook:\n  document.body.addEventListener('htmx:validation:validate', (evt) => {\n    if (evt.detail.elt.name === 'email' && evt.detail.elt.value.endsWith('@banned.com')) {\n      evt.detail.elt.setCustomValidity('Domain not allowed');\n    }\n  });\n</script>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How can you disable client-side HTML5 validation and force HTMX to submit invalid forms directly to the server?",
+      "contextIntro": "Interviewers test your knowledge of server-side-only validation workflows.",
+      "detailedAnswer": "Add the standard HTML5 **`novalidate`** attribute to the `<form>` element (or `hx-validate=\"false\"` on the element). This causes HTMX to skip `checkValidity()` checks and submit the form data to the server immediately, allowing server-side validation to return formatted error messages in HTML.",
+      "trapWarning": "Without `novalidate`, the browser will prevent submission and show native tooltips, preventing the server from receiving the invalid input."
+    },
+    {
+      "question": "What event is fired if you want to format custom error styling when validation fails in HTMX?",
+      "contextIntro": "Checks knowledge of HTMX lifecycle event listeners.",
+      "detailedAnswer": "Listen to the **`htmx:validation:failed`** event: `document.body.addEventListener('htmx:validation:failed', (evt) => { evt.detail.elt.classList.add('is-invalid'); })`. This allows you to apply custom CSS classes and UI error badges whenever validation blocks a request.",
+      "trapWarning": "Remember to remove the error class on `htmx:validation:validate` when the user corrects their input."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "hx-trigger-filters-modifiers",
+  "title": "hx-trigger: Event Filters, Debounce (delay), and Throttle Modifiers",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-trigger", "debounce", "throttle", "events", "filter"],
+  "prerequisites": ["DOM Events", "Debounce and Throttle algorithms"],
+  "progressiveExplaining": {
+    "eli5": "If you are searching in an encyclopedia, you don't want to run to the library after every single letter you type. `hx-trigger` lets you say: 'wait until I stop typing for half a second (`delay:500ms`) and only search if the word actually changed (`changed`)'.",
+    "junior": "`hx-trigger` customizes which events fire an HTMX request and applies rate-limiting modifiers. Common syntax: `hx-trigger=\"keyup changed delay:500ms\"` (debounced search), `hx-trigger=\"click throttle:1s\"` (prevents double-clicks), `hx-trigger=\"load\"` (fires on page load), `hx-trigger=\"revealed\"` (fires when element scrolls into view). You can also use event filters: `hx-trigger=\"click[ctrlKey]\"`.",
+    "senior": "Architecturally, `hx-trigger` provides declarative event stream conditioning directly in HTML attributes. It supports event filters (JavaScript boolean expressions evaluated against the event object `[event.target.value.length > 3]`), polling schedules (`every 2s`), external trigger listeners (`from:body`, `from:document`), and custom event triggers (`hx-trigger=\"itemAdded from:body\"`). This replaces complex RxJS `debounceTime`/`distinctUntilChanged` operator chains.",
+    "underTheHood": "HTMX parses the `hx-trigger` attribute string into a trigger specification AST. When an event fires, HTMX evaluates the bracketed condition `[eval(condition)]`. For `delay:X`, it resets an active `setTimeout` timer (debounce). For `throttle:X`, it drops events arriving before the cooldown timer expires. For `changed`, it compares `element.value` against its previously cached value."
+  },
+  "rosettaStone": {
+    "react": "Custom `useDebounce(val, 500)` hook inside `useEffect`.",
+    "angular": "RxJS `fromEvent(input, 'keyup').pipe(debounceTime(500), distinctUntilChanged())`.",
+    "vue": "`watch(query, debounce(fn, 500))`.",
+    "htmx": "`hx-trigger=\"keyup changed delay:500ms\"`."
+  },
+  "codeComparison": {
+    "title": "RxJS/Lodash Debounce Implementation vs hx-trigger Modifiers",
+    "summary": "Debouncing live search manually requires external libraries and state; `hx-trigger` configures debounce in one line.",
+    "legacyOrBad": {
+      "label": "Manual JS Debounce Search",
+      "snippet": "let timer; input.onkeyup = () => { clearTimeout(timer); timer = setTimeout(fetchResults, 500); }; // ❌ Verbose",
+      "fullFile": {
+        "filename": "search-manual.js",
+        "language": "js",
+        "code": "// ❌ OLD: Manually wiring debounce timers, input diffing, and fetch requests.\nlet debounceTimer;\nlet lastValue = '';\nconst searchInput = document.getElementById('search');\n\nsearchInput.addEventListener('keyup', (e) => {\n  const val = e.target.value;\n  if (val === lastValue) return; // distinct check\n  \n  clearTimeout(debounceTimer);\n  debounceTimer = setTimeout(async () => {\n    lastValue = val;\n    const res = await fetch(`/api/search?q=${encodeURIComponent(val)}`);\n    document.getElementById('results').innerHTML = await res.text();\n  }, 500);\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative HTMX Debounced Search",
+      "snippet": "<input hx-get=\"/search\" hx-trigger=\"keyup changed delay:500ms\" hx-target=\"#results\" /> // ✅ NEW",
+      "fullFile": {
+        "filename": "search.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Automatic debouncing (delay:500ms) and value diffing (changed) -->\n<input \n  type=\"search\"\n  name=\"q\"\n  placeholder=\"Search users...\"\n  hx-get=\"/api/search\"\n  hx-trigger=\"keyup changed delay:500ms, search\"\n  hx-target=\"#results\"\n  hx-indicator=\"#search-spinner\"\n/>\n\n<div id=\"results\"></div>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `delay:500ms` and `throttle:500ms` in `hx-trigger`?",
+      "contextIntro": "Tests your understanding of debounce vs throttle algorithms in UI events.",
+      "detailedAnswer": "`delay:500ms` is a **debounce**: it waits until 500ms have elapsed *since the last event* before firing the request (ideal for typing in search boxes). `throttle:500ms` is a **rate limiter**: it fires the request immediately on first trigger, and then ignores all subsequent triggers for the next 500ms (ideal for preventing double-clicking on submit buttons).",
+      "trapWarning": "Using `throttle` instead of `delay` on a search input will cause intermediate requests to fire mid-word while typing."
+    },
+    {
+      "question": "How do you trigger an HTMX request based on a custom event emitted from another element?",
+      "contextIntro": "Checks knowledge of cross-component event coordination in HTMX.",
+      "detailedAnswer": "Use the `from:` modifier: `hx-trigger=\"cartUpdated from:body\"`. When any element in the application dispatches `document.body.dispatchEvent(new CustomEvent('cartUpdated'))`, the targeted element catches the event and executes its `hx-get` request.",
+      "trapWarning": "If you omit `from:body`, the element will only listen for events dispatched directly to itself or bubbling through its own children."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "hx-push-url-history-support",
+  "title": "hx-push-url: Browser History API Synchronization & Back/Forward Cache",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-push-url", "history-api", "pushState", "navigation", "url"],
+  "prerequisites": ["HTML5 History API (`pushState`, `popstate`)", "HTMX hx-get"],
+  "progressiveExplaining": {
+    "eli5": "When you click around a single-page app, the address bar at the top of your browser usually doesn't change, meaning you can't bookmark the page or click 'Back'. `hx-push-url` tells the browser to change the address bar to the new URL and remember the old screen so the browser's Back and Forward buttons work instantly.",
+    "junior": "`hx-push-url=\"true\"` (or passing a specific path `hx-push-url=\"/contacts/1\"`) updates the browser's address bar using `history.pushState()` when an HTMX request succeeds. HTMX snapshots the current DOM state into `localStorage` before swapping, so clicking the browser's Back button restores the previous view instantly without re-requesting the server.",
+    "senior": "Architecturally, `hx-push-url` bridges hypermedia partials with deep-linking and browser history navigation. HTMX intercepts `popstate` events on window back/forward navigation. It first attempts to restore the page from its internal DOM snapshot cache (`htmx-history-cache`). If the cached snapshot is missing or stale, it issues a background `HX-History-Restore-Request: true` fetch to the restored URL.",
+    "underTheHood": "When `hx-push-url` is active on an element, HTMX executes `saveHistoryCache()` before DOM swapping (saving the `innerHTML` of `document.body` to session storage keyed by URL). It calls `history.pushState({ htmx: true }, '', newUrl)`. On `popstate`, HTMX inspects `history.state`. If it finds a saved snapshot in cache, it restores `document.body.innerHTML` synchronously and triggers `htmx:historyRestore`."
+  },
+  "rosettaStone": {
+    "react": "React Router `useNavigate()` pushing to `history` stack.",
+    "angular": "Angular Router `router.navigate()` with browser location sync.",
+    "vue": "Vue Router `router.push()`.",
+    "htmx": "`<a hx-get=\"/contacts\" hx-push-url=\"true\" hx-target=\"#content\">Contacts</a>`."
+  },
+  "codeComparison": {
+    "title": "Un-synced AJAX Partial vs Deep-Linkable hx-push-url",
+    "summary": "Without `hx-push-url`, the browser address bar stays frozen; with it, URLs update and back/forward navigation works.",
+    "legacyOrBad": {
+      "label": "Frozen URL AJAX Load",
+      "snippet": "<button hx-get=\"/tab2\" hx-target=\"#main\">Tab 2</button> // ❌ URL remains /tab1, back button breaks",
+      "fullFile": {
+        "filename": "tabs-bad.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: Content updates inside #main, but the URL in the browser\n     stays stuck on /dashboard. Refreshing the page loses the active tab! -->\n<div class=\"tabs\">\n  <button hx-get=\"/tabs/settings\" hx-target=\"#main\">\n    Settings Tab\n  </button>\n</div>\n\n<div id=\"main\">Dashboard Content</div>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Deep-Linkable hx-push-url",
+      "snippet": "<button hx-get=\"/tabs/settings\" hx-push-url=\"true\" hx-target=\"#main\"> // ✅ NEW: Full URL sync",
+      "fullFile": {
+        "filename": "tabs-good.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Browser URL updates to /tabs/settings. Bookmarking and back/forward work! -->\n<div class=\"tabs\">\n  <button \n    hx-get=\"/tabs/settings\"\n    hx-push-url=\"true\"\n    hx-target=\"#main\"\n  >\n    Settings Tab\n  </button>\n</div>\n\n<div id=\"main\">Dashboard Content</div>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What header can the server send to force a URL push even if the client didn't specify `hx-push-url`?",
+      "contextIntro": "Interviewers test your knowledge of HTMX server response control headers.",
+      "detailedAnswer": "The server can send the **`HX-Push-Url: /new-url`** response header. This overrides client-side attributes and instructs HTMX to push `/new-url` onto the browser's history stack immediately upon swapping.",
+      "trapWarning": "Sending `HX-Push-Url: false` explicitly prevents a URL from being pushed even if the client element had `hx-push-url=\"true\"`."
+    },
+    {
+      "question": "Why does refreshing a page after `hx-push-url` sometimes render an unstyled partial instead of the full layout?",
+      "contextIntro": "Checks understanding of the dual-purpose endpoint pattern.",
+      "detailedAnswer": "If a user navigates via HTMX (which sends `HX-Request: true`), the server returns a partial (`<div>Settings</div>`). If `hx-push-url=\"/tabs/settings\"` updated the address bar, and the user hits **F5 (hard refresh)**, the browser sends a standard request *without* `HX-Request: true`. If the server blindly returns only the partial, the user sees broken unstyled HTML. The server must check for `HX-Request` and return the *full page shell* on direct requests.",
+      "trapWarning": "Always wrap backend handlers in middleware that serves full layouts when `HX-Request` is absent."
+    }
+  ]
+}

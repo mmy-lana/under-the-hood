@@ -1,0 +1,58 @@
+{
+  "id": "out-of-band-swaps-oob",
+  "title": "Out of Band Swaps (hx-swap-oob): Multi-Region Updates from a Single Response",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-swap-oob", "out-of-band", "multi-region", "shopping-cart", "dom"],
+  "prerequisites": ["HTMX hx-swap strategies", "HTML ID uniqueness"],
+  "progressiveExplaining": {
+    "eli5": "Normally, an HTMX button only updates one single spot on the page. But if you click 'Add to Cart', you want to update the product button AND update the cart counter at the top of the screen at the same time. Out-of-band swaps (`hx-swap-oob`) allow the server to send extra HTML pieces in the same box marked with 'deliver to #cart-count', updating multiple parts of the page in one shot.",
+    "junior": "Out of Band Swaps (`hx-swap-oob=\"true\"`) allow a single server response to update multiple disjoint elements on the page. While the main response body is swapped into `hx-target`, any element in the response containing `hx-swap-oob=\"true\" id=\"some-id\"` is automatically swapped into the matching `#some-id` element elsewhere in the DOM.",
+    "senior": "Architecturally, `hx-swap-oob` solves the classic multi-region coordination problem in server-driven UI without requiring client-side global state stores (Redux/Pinia). When handling actions with multi-component side effects (e.g. adding an item updates the product list, the navigation badge, and toasts), the backend encapsulates all affected HTML fragments in a single HTTP response stream.",
+    "underTheHood": "When HTMX processes the incoming response string, it scans the top-level nodes for `hx-swap-oob`. It extracts all OOB elements *before* swapping the main target content. For each OOB element, it locates the target in the active DOM by its `id` attribute and performs the swap (defaulting to `outerHTML`). The remaining non-OOB HTML is then swapped into the primary `hx-target`."
+  },
+  "rosettaStone": {
+    "react": "Redux / Context updating multiple connected subscriber components simultaneously.",
+    "angular": "NgRx Store or shared services dispatching updates to multiple components.",
+    "vue": "Pinia store updates triggering multiple reactive template watchers.",
+    "htmx": "`<div id=\"cart-count\" hx-swap-oob=\"true\">5</div>` returned in response."
+  },
+  "codeComparison": {
+    "title": "Multiple Polling Requests vs Single Response with OOB Swaps",
+    "summary": "Updating multiple page regions usually requires multiple API calls; OOB swaps update all regions in a single response.",
+    "legacyOrBad": {
+      "label": "Multiple Separate Requests",
+      "snippet": "await addToCart(); await updateCartBadge(); await showToast(); // ❌ 3 HTTP roundtrips",
+      "fullFile": {
+        "filename": "cart-legacy.js",
+        "language": "js",
+        "code": "// ❌ OLD: Multiple roundtrips or complex client-side event buses\n// to synchronize the navigation cart count, toast notifications, and button state.\nasync function handleAddToCart(productId) {\n  await fetch(`/api/cart/add?id=${productId}`, { method: 'POST' });\n  \n  // Separate calls to refresh other UI components:\n  const cartRes = await fetch('/api/cart/count');\n  document.getElementById('cart-badge').innerHTML = await cartRes.text();\n  \n  const toastRes = await fetch('/api/toast/latest');\n  document.getElementById('toasts').innerHTML = await toastRes.text();\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Single Response with hx-swap-oob",
+      "snippet": "<div id=\"cart-badge\" hx-swap-oob=\"true\">3</div> // ✅ NEW: Atomic multi-region update",
+      "fullFile": {
+        "filename": "response.html",
+        "language": "html",
+        "code": "<!-- ✅ Primary target content (replaces the clicked 'Add' button with 'Added!') -->\n<button class=\"btn-success\" disabled>Added to Cart!</button>\n\n<!-- ✅ Out-of-band swap #1: Updates navbar cart badge anywhere on page -->\n<span id=\"cart-badge\" hx-swap-oob=\"true\" class=\"badge\">\n  3 items\n</span>\n\n<!-- ✅ Out-of-band swap #2: Appends toast alert to notification area -->\n<div id=\"toast-container\" hx-swap-oob=\"beforeend\">\n  <div class=\"alert\">Item successfully added!</div>\n</div>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if an element with `hx-swap-oob=\"true\"` does NOT have an `id` attribute?",
+      "contextIntro": "Interviewers test your knowledge of OOB matching rules.",
+      "detailedAnswer": "HTMX **will fail to swap the element** and will log a console error. Out-of-band matching relies strictly on the `id` attribute of the OOB element matching an identical `id` in the active DOM. Without an `id`, HTMX has no identifier to locate the target.",
+      "trapWarning": "Always ensure every OOB fragment has an explicit `id=\"...\"` that matches an existing element on the current page."
+    },
+    {
+      "question": "Can you use different swap strategies (like `beforeend` or `outerHTML`) with `hx-swap-oob`?",
+      "contextIntro": "Checks precision regarding OOB swap value syntax.",
+      "detailedAnswer": "Yes. Instead of `hx-swap-oob=\"true\"` (which defaults to `outerHTML`), you can specify any swap strategy directly in the attribute: `hx-swap-oob=\"beforeend\"`, `hx-swap-oob=\"afterbegin\"`, `hx-swap-oob=\"innerHTML\"`, or `hx-swap-oob=\"delete\"`.",
+      "trapWarning": "`hx-swap-oob=\"true\"` uses `outerHTML` by default, whereas standard `hx-swap` defaults to `innerHTML`."
+    }
+  ]
+}

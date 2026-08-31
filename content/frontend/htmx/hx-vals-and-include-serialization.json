@@ -1,0 +1,58 @@
+{
+  "id": "hx-vals-and-include-serialization",
+  "title": "hx-vals & hx-include: Dynamic JSON and Form Payload Serialization",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "hx-vals", "hx-include", "serialization", "forms", "payload"],
+  "prerequisites": ["HTML Form serialization", "JSON syntax in HTML attributes"],
+  "progressiveExplaining": {
+    "eli5": "Normally, a button only submits the inputs inside its own form. If you want a button to grab data from three different inputs scattered across the entire room, `hx-include` gathers them up. And if you want to attach extra hidden secret codes, `hx-vals` stamps them onto the envelope.",
+    "junior": "`hx-vals` adds extra parameters to an HTMX request: `hx-vals='{\"role\": \"admin\", \"source\": \"banner\"}'`. For dynamic JavaScript expressions, use `js:` prefix: `hx-vals='js:{timestamp: Date.now()}'`. `hx-include=\"#other-form, #search-input\"` includes the values of external inputs or forms in the current request payload.",
+    "senior": "Architecturally, `hx-include` and `hx-vals` decouple request payload serialization from DOM tree hierarchy. In standard HTML, an input must be a DOM descendant of a `<form>` to be submitted. `hx-include` accepts any CSS selector, finds all matching form controls, and serializes their names and values into the request (`application/x-www-form-urlencoded` or `multipart/form-data`), enabling complex multi-widget dashboard submissions.",
+    "underTheHood": "Before dispatching a request, HTMX gathers parameters. First, it serializes the host element/form. Second, it evaluates `hx-include` selectors using `document.querySelectorAll()`, running `serializeForm()` on each match. Third, it parses `hx-vals` (evaluating JS if prefixed with `js:` or `javascript:`), merging all key-value pairs into the outgoing request parameter bag."
+  },
+  "rosettaStone": {
+    "react": "`const payload = { ...formData, role: 'admin', timestamp: Date.now() }`.",
+    "angular": "`this.http.post(url, { ...this.form.value, role: 'admin' })`.",
+    "vue": "`await $fetch(url, { body: { ...form, role: 'admin' } })`.",
+    "htmx": "`hx-vals='js:{timestamp: Date.now()}' hx-include=\"#sidebar-filters\"`."
+  },
+  "codeComparison": {
+    "title": "Manual JS Payload Assembly vs Declarative hx-include",
+    "summary": "Assembling payloads from disconnected inputs in JS requires querySelectors; `hx-include` serializes them declaratively.",
+    "legacyOrBad": {
+      "label": "Manual Object Assembly in JS",
+      "snippet": "body: JSON.stringify({ a: inputA.value, b: inputB.value }); // ❌ Manual collection",
+      "fullFile": {
+        "filename": "payload-manual.js",
+        "language": "js",
+        "code": "// ❌ OLD: Writing custom JavaScript to gather values from disjoint DOM inputs\n// and serializing them into an explicit fetch payload.\nasync function submitOrder() {\n  const quantity = document.getElementById('qty-input').value;\n  const coupon = document.getElementById('coupon-code').value;\n  const payment = document.querySelector('input[name=\"payment\"]:checked')?.value;\n\n  const payload = { quantity, coupon, payment, clientTime: Date.now() };\n  await fetch('/api/checkout', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify(payload)\n  });\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative hx-include + hx-vals",
+      "snippet": "<button hx-post=\"/checkout\" hx-include=\"#filters, #coupon\" hx-vals='js:{clientTime: Date.now()}'> // ✅ NEW",
+      "fullFile": {
+        "filename": "checkout.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Submits values from #coupon-input, #payment-selection, and dynamic timestamp -->\n<input id=\"coupon-input\" name=\"coupon\" value=\"SUMMER2026\" />\n\n<div id=\"payment-section\">\n  <input type=\"radio\" name=\"payment\" value=\"card\" checked /> Credit Card\n</div>\n\n<button\n  hx-post=\"/api/checkout\"\n  hx-include=\"#coupon-input, #payment-section\"\n  hx-vals='js:{ clientTime: Date.now() }'\n  hx-target=\"#order-summary\"\n>\n  Complete Checkout\n</button>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `hx-vals` and `hx-headers`?",
+      "contextIntro": "Interviewers test your knowledge of HTTP protocol structure within HTMX.",
+      "detailedAnswer": "`hx-vals` adds parameters to the **request body** (for POST/PUT) or query string parameters (for GET). `hx-headers` adds custom **HTTP headers** to the request (e.g. `hx-headers='{\"Authorization\": \"Bearer token\"}'` or `{\"X-Custom-ID\": \"123\"}`).",
+      "trapWarning": "Do not pass authentication tokens into `hx-vals` if your backend middleware expects them in the `Authorization` HTTP header."
+    },
+    {
+      "question": "Why must JSON in `hx-vals` use single quotes on the outside and double quotes on the inside?",
+      "contextIntro": "Checks attention to valid HTML attribute parsing syntax.",
+      "detailedAnswer": "HTML attributes use double or single quotes. Since standard JSON keys and string values *strictly require* double quotes (`{\"key\": \"value\"}`), the HTML attribute itself must be wrapped in single quotes: `hx-vals='{\"key\": \"value\"}'`. Wrapping in double quotes without escaping will create invalid HTML and cause JSON parsing errors.",
+      "trapWarning": "`hx-vals=\"{'key': 'value'}\"` is invalid JSON and will fail to parse."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "sse-and-websocket-extensions",
+  "title": "Server-Sent Events (SSE) & WebSockets Extensions for Real-Time DOM Morphing",
+  "category": "frontend",
+  "subcategory": "htmx",
+  "versionContext": "HTMX 1.x / 2.x (ext/sse.js, ext/ws.js)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["htmx", "sse", "websockets", "real-time", "streaming", "extensions"],
+  "prerequisites": ["Server-Sent Events (`EventSource`)", "WebSocket protocol basics"],
+  "progressiveExplaining": {
+    "eli5": "Normally, your browser has to ask the server for updates. With the SSE or WebSocket extension, the server keeps an open phone line to your page. Whenever a new chat message or live price arrives, the server speaks an HTML fragment through the line, and HTMX immediately slots it onto your screen in real time.",
+    "junior": "HTMX supports real-time updates via official extensions: `sse.js` and `ws.js`. For Server-Sent Events: `<div hx-ext=\"sse\" sse-connect=\"/events\" sse-swap=\"message\">`. The element connects to the SSE stream and swaps incoming HTML payloads directly into the DOM. For WebSockets: `<div hx-ext=\"ws\" ws-connect=\"/chat\">` allows both receiving HTML pushes and sending form payloads over the WebSocket connection (`ws-send`).",
+    "senior": "Architecturally, HTMX real-time extensions stream pure HTML over persistent bi-directional WebSockets or un-directional SSE connections. This unifies real-time streaming with hypermedia: rather than parsing JSON payloads in JavaScript and running client-side template engines to update views, the server streams live HTML fragments (e.g. `<tr>...</tr>` or OOB swaps) that HTMX immediately mounts into the DOM.",
+    "underTheHood": "The `sse` extension instantiates a native `EventSource`. When `eventSource.onmessage` or a named event fires, the extension parses the message string, extracts OOB elements, and invokes the HTMX swap engine (`htmx.swap()`). The `ws` extension creates a `WebSocket` instance; on message receipt, it swaps the HTML, and on form submission inside `ws-send`, it serializes form values into JSON or query format and sends them over `socket.send()`."
+  },
+  "rosettaStone": {
+    "react": "Socket.io / standard WebSocket hook updating React state arrays.",
+    "angular": "RxJS `webSocket()` subject emitting to component signals.",
+    "vue": "VueUse `useWebSocket()` composable.",
+    "htmx": "`<div hx-ext=\"sse\" sse-connect=\"/live\" sse-swap=\"chatMessage\">`."
+  },
+  "codeComparison": {
+    "title": "Manual WebSocket JSON Listener vs Declarative HTMX WS Extension",
+    "summary": "Manual WebSockets require state parsing and element creation; HTMX WS extensions swap streamed HTML directly into the target.",
+    "legacyOrBad": {
+      "label": "Manual WebSocket JSON Client",
+      "snippet": "ws.onmessage = (e) => { const { msg } = JSON.parse(e.data); append(msg); }; // ❌ Client template plumbing",
+      "fullFile": {
+        "filename": "chat-legacy.js",
+        "language": "js",
+        "code": "// ❌ OLD: Writing imperative WebSocket connection managers, JSON parsers,\n// error reconnects, and manual DOM appending.\nconst ws = new WebSocket('wss://example.com/chat');\nws.onmessage = (event) => {\n  const data = JSON.parse(event.data);\n  const div = document.createElement('div');\n  div.className = 'chat-bubble';\n  div.textContent = `${data.user}: ${data.text}`;\n  document.getElementById('messages').appendChild(div);\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative HTMX SSE Stream",
+      "snippet": "<div hx-ext=\"sse\" sse-connect=\"/chat-feed\" sse-swap=\"new_message\" hx-swap=\"beforeend\"> // ✅ NEW",
+      "fullFile": {
+        "filename": "chat.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Connects to SSE endpoint and appends live HTML fragments automatically -->\n<div \n  hx-ext=\"sse\"\n  sse-connect=\"/api/chat-feed\"\n  sse-swap=\"new_message\"\n  hx-target=\"#chat-messages\"\n  hx-swap=\"beforeend\"\n>\n  <div id=\"chat-messages\">\n    <div class=\"chat-bubble\">Welcome to chat!</div>\n  </div>\n</div>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What format must the server send when pushing messages over Server-Sent Events (SSE) to HTMX?",
+      "contextIntro": "Interviewers test your knowledge of the SSE wire protocol and HTMX integration.",
+      "detailedAnswer": "The server must format responses according to the W3C SSE standard with an event name and HTML data string. For example:\n```http\nevent: new_message\ndata: <div class=\"chat-bubble\">Hello World!</div>\n\n```\nThe `event:` name matches `sse-swap=\"new_message\"`, and the `data:` contains the raw HTML fragment to swap.",
+      "trapWarning": "SSE messages require two trailing newline characters (`\\n\\n`) to flush the event over the HTTP stream."
+    },
+    {
+      "question": "Can you use Out-of-Band (`hx-swap-oob`) updates over WebSockets and SSE in HTMX?",
+      "contextIntro": "Checks understanding of multi-target updates in real-time streams.",
+      "detailedAnswer": "Yes. A single SSE or WebSocket push event can contain both the main HTML fragment and multiple elements with `hx-swap-oob=\"true\" id=\"...\"`. HTMX will update the main target and simultaneously update all matching OOB elements across the entire page.",
+      "trapWarning": "Ensure OOB elements sent over WebSockets have unique IDs that match existing DOM elements on the client."
+    }
+  ]
+}
