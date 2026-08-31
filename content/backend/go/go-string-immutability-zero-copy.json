@@ -1,0 +1,68 @@
+{
+  "id": "go-string-immutability-zero-copy",
+  "title": "String Header: unsafe.String, unsafe.SliceData, Zero-Copy Casting",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (unsafe package)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "string",
+    "unsafe",
+    "zero-copy",
+    "string-header",
+    "memory"
+  ],
+  "prerequisites": [
+    "Go slices and strings basics",
+    "Understanding of unsafe and memory layout"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A library card for a book is just a small index card with the shelf number and the page count — it doesn't contain the book itself. A Go text label is like that: it's a tiny card (a pointer + a length) that describes where the text lives, not a copy of the text. Normally the library copies a book before giving you the card (so you can't write in the original). But with a special master key (unsafe), you can hand someone a card pointing AT the original book — zero copies. Dangerous if they scribble in it, but sometimes exactly what you need for speed.",
+    "junior": "A Go string is an immutable header: a pointer to the first byte and a length. Reading a string is cheap (no copy). Converting []byte to string normally COPIES (to preserve immutability): string(b). Similarly string to []byte copies. For performance-critical paths you can do zero-copy conversions with unsafe: unsafe.String(ptr, len) builds a string from bytes without copying, and unsafe.StringData(s) gets the byte pointer. unsafe.SliceData and unsafe.Slice convert between slices and their backing arrays. These are DANGEROUS — mutating the result violates immutability — use only when the lifetime and read-only usage are guaranteed.",
+    "senior": "Architecturally, the string header is stringStruct { str unsafe.Pointer, len int } (2 words). A []byte is sliceHeader { data unsafe.Pointer, len, cap int } (3 words). Normal conversion string(b) allocates a new byte array and copies, because a string must be immutable while the slice may be mutated. Zero-copy conversion (via unsafe.String / unsafe.StringData) reuses the same backing memory: it's only safe if you never mutate the bytes afterward and the underlying array outlives the string. This is how fast parsers and serializers avoid copies. The runtime assumes string immutability (e.g. map keys, hashing, interning); violating it causes memory corruption.",
+    "underTheHood": "unsafe.String(ptr, len) constructs a string header directly from a pointer + length, bypassing the copy — the compiler emits a stringStruct{ptr, len}. unsafe.StringData(s) returns the data pointer of the string. unsafe.Slice(ptr, len) builds a slice header over a raw pointer; unsafe.SliceData(slice) returns the backing array pointer. The runtime's stringtoslicebyte / slicetostring functions do the copying version. Zero-copy techniques are used inside the runtime (e.g. map key hashing can treat the string bytes as a byte slice via unsafe) and by high-performance libraries. The danger: the string created by unsafe.String shares memory with the source slice — if the source is later mutated or garbage-collected while the string outlives it, you get a dangling string."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Copying byte→string conversion vs zero-copy unsafe",
+    "summary": "string(b) copies the bytes; unsafe.String(b) reuses the same memory — a big win in hot parsers, with a safety contract.",
+    "legacyOrBad": {
+      "label": "Copying conversion in a hot path",
+      "snippet": "key := string(buf) // ❌ OLD: copies every time — allocation in a loop",
+      "fullFile": {
+        "filename": "parse.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: string(buf) allocates and copies the whole buffer every call\n// to preserve string immutability. In a parser that processes\n// thousands of tokens per request, this is a major allocation source:\n// each token string is a fresh heap allocation + memcpy.\nfunc parseTokens(buf []byte) []string {\n\tvar out []string\n\tfor _, tok := range split(buf) {\n\t\tout = append(out, string(tok)) // ❌ OLD: alloc + copy per token\n\t}\n\treturn out\n}\n\n// The resulting strings are immutable and safe, but the copy cost is\n// real at high throughput."
+      }
+    },
+    "modernOrGood": {
+      "label": "Zero-copy unsafe.String",
+      "snippet": "tokStr := unsafe.String(&tok[0], len(tok)) // ✅ NEW: no copy, shared memory",
+      "fullFile": {
+        "filename": "parse.go",
+        "language": "go",
+        "code": "package main\n\nimport \"unsafe\"\n\n// ✅ NEW: unsafe.String builds a string header over the existing bytes\n// — NO copy. The string shares memory with the source slice. This is\n// only safe when:\n//   1. the source slice outlives the string, and\n//   2. the source is never mutated afterward (or the string is not\n//      used after mutation).\nfunc parseTokens(buf []byte) []string {\n\tvar out []string\n\tfor _, tok := range split(buf) {\n\t\t// ✅ NEW: zero-copy string from the token bytes\n\t\ttokStr := unsafe.String(&tok[0], len(tok))\n\t\tout = append(out, tokStr)\n\t}\n\treturn out\n}\n\n// ⚠️ Safety contract: the returned strings reference the SAME backing\n// array as the input buf. If the caller mutates buf after this returns,\n// the strings change (and could be corrupted). Use this only where the\n// source is immutable for the string's lifetime — e.g. converting a\n// parser's immutable input window to strings for hashing/lookup only."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does converting a []byte to a string copy, and what would break if it didn't?",
+      "contextIntro": "This tests the immutability contract — interviewers want to know the memory-safety reason behind the copy and the specific corruption scenarios that zero-copy would enable.",
+      "detailedAnswer": "A string in Go is immutable BY CONTRACT: the runtime and libraries assume its bytes never change (map keys are hashed and stored, strings are used as keys in hash tables and compared cheaply, the compiler may intern or share them). A []byte is mutable by design. If string(b) didn't copy but shared the slice's backing array, then mutating the slice afterward would silently change the string — breaking map lookups (a key's hash changes after insertion), corrupting shared string data, and violating the language guarantee. So the conversion copies to give the string its own, immutable storage. Zero-copy via unsafe.String skips this protection and is only sound if the source memory is guaranteed immutable and correctly lifetime-managed — which is why the unsafe path exists for performance-critical code with a strict contract.",
+      "trapWarning": "The naive answer is 'the copy is just for safety against mutation of the string'. It's specifically because the SOURCE slice could be mutated; the string itself is never writable. Another trap: thinking unsafe.String is safe to use freely — a string built over a slice that later grows/reallocates (append) dangles, because the backing array moved. Candidates who describe the immutability-dependent runtime guarantees show real understanding."
+    },
+    {
+      "question": "What is the layout of a string and a slice, and what do unsafe.StringData / unsafe.SliceData give you?",
+      "contextIntro": "This probes the memory-header model — interviewers want the 2-word vs 3-word headers and the exact unsafe accessors, which underpin zero-copy design.",
+      "detailedAnswer": "A string is a 2-word header: { data unsafe.Pointer, len int } (no capacity — strings have no cap). A slice is a 3-word header: { data unsafe.Pointer, len int, cap int }. unsafe.StringData(s) returns the data pointer of a string (the first byte's address); you can then build a byte slice over it with unsafe.Slice(ptr, len) to read the bytes without copying. unsafe.SliceData(slice) returns the backing array's first-element pointer; unsafe.Slice(ptr, len) builds a new slice header over arbitrary memory. These accessors let you decompose and reassemble headers for zero-copy transforms (e.g. treating a string's bytes as a byte slice for hashing, or slicing into a raw allocation). All are governed by the unsafe rules: alignment, lifetime, and immutability are your responsibility.",
+      "trapWarning": "The naive answer is 'strings and slices are the same header'. Strings have no cap and are immutable; slices carry cap and are mutable. Another trap: calling unsafe.StringData on a zero-length string returns a pointer that may be nil or to a runtime sentinel — don't dereference it. Candidates who describe the exact header layouts and the accessor contracts show real depth."
+    }
+  ]
+}

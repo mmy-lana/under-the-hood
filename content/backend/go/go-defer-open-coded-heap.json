@@ -1,0 +1,68 @@
+{
+  "id": "go-defer-open-coded-heap",
+  "title": "defer Evolution: Open-Coded vs Stack-Allocated vs Heap-Allocated",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (open-coded defers)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "defer",
+    "compiler",
+    "stack",
+    "heap",
+    "open-coded"
+  ],
+  "prerequisites": [
+    "Go function basics and defer usage",
+    "Understanding of compiler optimization and function frames"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A waiter writes down tasks to do when leaving a table (like clearing dishes) on a small sticky note. In the old days, every sticky note had to be filed in a big cabinet and checked later. Then the restaurant realized most notes are only for that one table, so the waiter keeps them in his apron pocket — faster. Finally, for simple tasks (like flipping the sign), the waiter doesn't write a note at all: he just does the task mentally at the door. The simpler the task, the less overhead.",
+    "junior": "defer registers a function call to run when the current function returns: defer file.Close(). Defers run in LIFO order (last registered runs first). The arguments are evaluated immediately, the call runs at return. Historically, defer had a small cost (heap allocation in early Go). Modern Go (1.14+) uses open-coded defers for simple cases: the deferred calls are inlined at the end of the function with no allocation. This made defer essentially free in the common case. Use defer for cleanup (close files, unlock mutexes, recover) — it's now idiomatic and cheap.",
+    "senior": "Architecturally, defer has gone through three implementations. Early Go: each defer allocated a heap-allocated _defer record linked into a goroutine list. Go 1.13: defers with no closures could be allocated on the goroutine's stack (stack-allocated _defer), avoiding the heap allocation. Go 1.14+: open-coded defers — for functions with a small number of defers (fewer than 8, no loops, no recover, not in a tight recursion) the compiler inlines the deferred calls directly into the epilogue of the function, guarded by a deferBits bitmask that tracks which defers are active; no _defer record at all. This makes defer nearly free in the common case.",
+    "underTheHood": "The compiler decides per function: if the defer is 'open-codeable' (statically known defer count ≤ 8, no defer in a loop, no recover in the same function, function doesn't get too large), it emits a deferBits mask in the frame and inlines each deferred call into the return path, checking the bit before running it (so a deferred call can be skipped if the function returns early via a path that shouldn't run it — actually all defers run on any return, the bits handle the 'defer inside a conditional' case). If not open-codeable, it falls back to a runtime _defer record — stack-allocated (Go 1.13+) or heap-allocated (loops, escapes). A deferred function with a closure or arguments is wrapped as a closure if needed. This is why defer in a hot loop still allocates (loop defers can't be open-coded) — the allocation moves to the loop body."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go compiler/runtime concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Manual cleanup vs defer cleanup",
+    "summary": "Manually remembering to close/unlock on every return path is error-prone; defer guarantees cleanup runs on ALL exits, and modern Go makes it free.",
+    "legacyOrBad": {
+      "label": "Manual cleanup on every return",
+      "snippet": "func read(path string) ([]byte, error) {\n  f, err := os.Open(path)\n  if err != nil { return nil, err }\n  data, err := io.ReadAll(f)\n  f.Close() // ❌ OLD: manual close — easy to forget on an early return\n  return data, err\n}",
+      "fullFile": {
+        "filename": "read.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"io\"\n\t\"os\"\n)\n\n// ❌ OLD: Manual cleanup. If a future edit adds another error return\n// before f.Close(), the file leaks (fd exhaustion). Manually closing\n// on every path is repetitive and error-prone.\nfunc read(path string) ([]byte, error) {\n\tf, err := os.Open(path)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tdata, err := io.ReadAll(f)\n\tf.Close() // ❌ OLD: only reached if ReadAll returns\n\treturn data, err\n}\n\n// A panic or an added early return skips Close entirely."
+      }
+    },
+    "modernOrGood": {
+      "label": "defer cleanup (open-coded)",
+      "snippet": "func read(path string) ([]byte, error) {\n  f, err := os.Open(path)\n  if err != nil { return nil, err }\n  defer f.Close() // ✅ NEW: guaranteed on every return, ~free in modern Go\n  return io.ReadAll(f)\n}",
+      "fullFile": {
+        "filename": "read.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"io\"\n\t\"os\"\n)\n\n// ✅ NEW: defer guarantees f.Close() runs on EVERY exit path (normal\n// return, error return, panic). In Go 1.14+, this simple case is\n// OPEN-CODED: the compiler inlines the close into the function's\n// return epilogue with a deferBits mask — no heap allocation, no\n// _defer record, essentially zero overhead.\nfunc read(path string) ([]byte, error) {\n\tf, err := os.Open(path)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tdefer f.Close() // ✅ NEW: free in the common case\n\treturn io.ReadAll(f)\n}\n\n// Defers run LIFO and arguments are evaluated at defer time:\n// defer fmt.Println(x) captures x's value NOW, not at return."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "When does a defer still allocate, and why can't every defer be open-coded?",
+      "contextIntro": "This tests the compiler's open-coding decision — interviewers want the limits (loop defers, recover, count) that force the fallback to runtime _defer records, which is where defer cost returns.",
+      "detailedAnswer": "Open-coded defers only apply when the compiler can statically prove the set of deferred calls at compile time: typically ≤8 defers per function, none inside a loop, no recover() in the same function, and no pathological function size. When a defer is inside a LOOP, the number of defer registrations is dynamic, so the compiler cannot inline them — it falls back to creating a runtime _defer record per iteration, which (since Go 1.13) is stack-allocated when possible but can still escape to the heap (e.g. when the defer is in a loop that runs many times, the records accumulate until the function returns). recover() also forces the runtime path because it needs the defer chain. So defer in a hot loop is the case where the 'free defer' promise breaks.",
+      "trapWarning": "The naive answer is 'defer is always free in modern Go'. Open-coded defers cover the common case; loop defers and recover still allocate _defer records. Another trap: thinking the allocation is per function — it's per defer REGISTRATION, so a defer inside a loop allocates per iteration. Candidates who enumerate the open-coding limits show real compiler understanding."
+    },
+    {
+      "question": "How do defer arguments behave, and why does defer f.Close() evaluate the receiver immediately?",
+      "contextIntro": "This tests defer semantics — interviewers want the immediate-argument-evaluation rule and the closure workaround, which cause subtle bugs.",
+      "detailedAnswer": "When a defer statement executes, the deferred call's ARGUMENTS (including the receiver for a method call) are evaluated immediately and captured; the function body runs later at return. So defer f.Close() captures the f value (the file) at that point — which is why it closes the right file even if a local variable named f is reassigned later. Similarly, defer fmt.Println(x) prints the value of x AT DEFER TIME, not at return. To defer evaluation of arguments until the call runs, wrap in a closure: defer func() { fmt.Println(x) }() — the closure captures the variable by reference, so it sees the final value. This distinction is the classic source of 'why did my deferred log print the wrong value' bugs.",
+      "trapWarning": "The naive answer is 'defer runs the call with the values at return'. Arguments are snapshotted at defer registration. Another trap: assuming a method receiver is evaluated at return — it's evaluated immediately too (defer obj.Method() captures obj now). Candidates who explain the immediate-argument-evaluation rule and the closure fix show real understanding."
+    }
+  ]
+}

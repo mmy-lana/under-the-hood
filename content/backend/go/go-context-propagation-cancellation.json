@@ -1,0 +1,68 @@
+{
+  "id": "go-context-propagation-cancellation",
+  "title": "context.Context: Done() Channel, Parent-Child Tree Cancellation",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (context package)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "context",
+    "cancellation",
+    "deadline",
+    "propagation",
+    "goroutine"
+  ],
+  "prerequisites": [
+    "Go goroutines and channels",
+    "Understanding of cancellation and timeouts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A manager gives each worker a walkie-talkie on a shared channel. When the manager calls 'stop everything' (cancel), every worker on that channel hears it instantly and stops their task — and if a worker has sub-workers, the sub-workers hear it too (the signal flows down the tree). Workers can also set a deadline: 'if the order isn't done by 5pm, stop.' The walkie-talkie (the context) is passed from manager to worker to sub-worker, so a single 'stop' cascades through the whole team without anyone having to track everyone else.",
+    "junior": "context.Context carries cancellation, deadlines, and request-scoped values across API boundaries. Create with context.Background() (root), context.WithCancel(parent), context.WithTimeout(parent, d), context.WithDeadline(parent, t), context.WithValue(parent, key, val). Pass ctx as the FIRST parameter to functions that do work. Check cancellation: select { case <-ctx.Done(): ... } or ctx.Err(). Call the cancel function (defer cancel()) to release resources. Standard library APIs (http.Request.Context(), database/sql, net) honor context cancellation automatically.",
+    "senior": "Architecturally, a context is an immutable tree node: WithCancel/WithTimeout/WithDeadline create a CHILD context linked to its parent. When a parent is cancelled, the cancellation propagates to all children (and their children) via the Done() channel being closed. Each derived context holds a cancel function that unregisters it from the parent (avoiding leaks). ctx.Err() returns nil while active, context.Canceled after cancel, or context.DeadlineExceeded after the deadline. Values are a read-only key/value chain (WithValue); keys should be a private type to avoid collisions. The rules: never store contexts in structs, always pass them as arguments; never ignore the cancel function.",
+    "underTheHood": "The root context (Background/TODO) is an emptyCtx with a nil Done. Derived contexts use a cancelCtx struct: it has a done channel (created lazily), a mutex, children map, and err field. cancel() closes the done channel (once), sets err, and recursively cancels all registered children. timerCtx (WithDeadline/WithTimeout) wraps cancelCtx with a timer that triggers cancel when the deadline passes. valueCtx holds a key/value pair and forwards lookups to the parent (a linked chain). The Done() channel is the cancellation signal: select on it to react. The compiler/runtime has no magic — it's a plain data structure, which is why 'cancel leaks' happen when you forget to call the cancel function (the child stays registered on the parent)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime/library concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Manual goroutine stop flag vs context cancellation",
+    "summary": "A hand-rolled stop channel only handles one level and leaks on forget; context cascades cancellation through the whole tree and integrates with the standard library.",
+    "legacyOrBad": {
+      "label": "Manual stop channel",
+      "snippet": "stop := make(chan struct{}) // ❌ OLD: one-off signal, no hierarchy",
+      "fullFile": {
+        "filename": "worker.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: A hand-rolled stop channel. It only signals ONE level; if\n// the worker spawns sub-workers, you must thread the stop channel to\n// each of them manually. No deadline support, no values, and if you\n// forget to close(stop), the goroutine leaks forever.\nfunc worker(stop <-chan struct{}) {\n\tfor {\n\t\tselect {\n\t\tcase <-stop:\n\t\t\treturn // ❌ OLD: only this goroutine stops\n\t\tdefault:\n\t\t\tdoWork()\n\t\t}\n\t}\n}\n\nfunc main() {\n\tstop := make(chan struct{}) // ❌ OLD\n\tgo worker(stop)\n\t// ...later:\n\tclose(stop) // ❌ OLD: sub-workers spawned by worker() never hear this\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Context cancellation tree",
+      "snippet": "ctx, cancel := context.WithCancel(context.Background()) // ✅ NEW\ndefer cancel()\n",
+      "fullFile": {
+        "filename": "worker.go",
+        "language": "go",
+        "code": "package main\n\nimport \"context\"\n\n// ✅ NEW: The context is passed down; cancellation cascades to every\n// goroutine that receives it (directly or through derived contexts).\nfunc worker(ctx context.Context) {\n\tfor {\n\t\tselect {\n\t\tcase <-ctx.Done(): // ✅ NEW: hears parent cancellation\n\t\t\treturn\n\t\tdefault:\n\t\t\tdoWork(ctx)\n\t\t}\n\t}\n}\n\nfunc doWork(ctx context.Context) {\n\t// ✅ NEW: sub-workers derive from the same ctx:\n\t// subCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)\n\t// defer cancel()\n\t// If ctx is cancelled, subCtx.Done() fires too — full cascade.\n}\n\nfunc main() {\n\tctx, cancel := context.WithCancel(context.Background()) // ✅ NEW\n\tdefer cancel() // ✅ NEW: cancels the whole tree when main exits\n\n\tgo worker(ctx)\n\n\t// Timeouts/deadlines integrate with the stdlib:\n\t// req, _ := http.NewRequestWithContext(ctx, \"GET\", url, nil)\n\t// db.QueryContext(ctx, ...) — all stop when ctx is done.\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does cancellation propagate through the context tree, and why must you always call the cancel function?",
+      "contextIntro": "This tests the tree model — interviewers want the parent→child propagation and the resource-leak consequence of forgetting cancel(), which is a common production bug.",
+      "detailedAnswer": "Derived contexts (WithCancel/WithTimeout/WithDeadline) are child nodes: each registers itself in its parent's children map. When cancel() is called on a context, it closes that context's done channel (once, guarded by a mutex), sets the err, and recursively cancels every registered child — so the signal flows down the entire subtree. Because children unregister themselves from the parent when they are cancelled, forgetting to call cancel() leaves the child registered: the parent retains a reference to the child (and its resources — timers, goroutines) for as long as the parent lives. In a long-lived root context, un-cancelled children accumulate — the classic context leak. The rule 'defer cancel()' exists precisely to unregister and release immediately.",
+      "trapWarning": "The naive answer is 'calling cancel is optional if the work finishes'. The child stays registered on the parent until cancelled — a slow leak in long-lived processes. Another trap: using context.WithTimeout without storing the cancel (withCancel(ctx, ...) style misreads) — the timer also holds the child until it fires. Candidates who describe the children map and the unregister-on-cancel behavior show real understanding."
+    },
+    {
+      "question": "When should you use context.WithValue, and why is it discouraged for passing parameters?",
+      "contextIntro": "This tests the values mechanism and its design constraints — interviewers want the key-type guidance and the 'context is for request-scoped data, not parameters' rule.",
+      "detailedAnswer": "context.WithValue attaches a key/value pair to the context for REQUEST-SCOPED data that flows across API boundaries — e.g. a request ID, a tracing span, an authenticated user. The rules: the key must be a custom, unexported type (or a type you own) to prevent collisions with other packages; the value must be safe for concurrent use (contexts are shared across goroutines); and values should be few. It is discouraged as a general parameter-passing mechanism because it's opaque (no compile-time checking), hides dependencies, and makes functions harder to test — prefer explicit parameters for the data a function genuinely needs. The lookup is a chain walk (valueCtx forwards to the parent), so deep chains are slightly slower. context.WithValue never cancels; it's purely a value carrier.",
+      "trapWarning": "The naive answer is 'use context for any shared data'. It's for request-scoped metadata crossing boundaries, not business parameters — overuse hides dependencies and breaks readability. Another trap: using a string or a built-in type as the key — two packages could collide; the convention is an unexported type per package. Candidates who state the key-type rule and the scope guidance show real understanding."
+    }
+  ]
+}

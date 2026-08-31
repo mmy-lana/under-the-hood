@@ -1,0 +1,68 @@
+{
+  "id": "go-sync-mutex-starvation-mode",
+  "title": "sync.Mutex: Normal vs Starvation Mode (Fairness Handoff)",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (sync.Mutex)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "sync",
+    "mutex",
+    "starvation",
+    "fairness",
+    "concurrency"
+  ],
+  "prerequisites": [
+    "Go goroutines and mutex basics",
+    "Understanding of lock contention"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A single bathroom key is passed between office workers. In normal times, whoever reaches for the key first gets it — even if someone has been waiting a long time, a fast newcomer can grab it first (a little unfair, but usually fine). But if one worker has been waiting a very long time, the office switches to a strict rule: the next person in line MUST get the key, no cutting in. That rule stops anyone from being locked out forever. The bathroom key is the lock; the strict rule is the fairness mode.",
+    "junior": "sync.Mutex is Go's mutual exclusion lock: mu.Lock() / mu.Unlock(). It has two modes: normal mode (default) and starvation mode. In normal mode, a newly-unlocking goroutine hands the lock to a waiting goroutine that was first in the queue (the head), but a NEW goroutine calling Lock() can 'barge' and grab it first if the lock is still free when it arrives — this favors throughput but can let a waiter starve. When a waiter waits longer than ~1ms, the mutex switches to starvation mode: the unlock hands the lock directly to the head waiter (FIFO), and new arrivals queue without barging. After the head waiter gets the lock (or waits <1ms), the mutex returns to normal mode.",
+    "senior": "Architecturally, Go's sync.Mutex is a fast-path CAS on an atomic state word (unlocked/locked), falling back to a semaphore-based wait queue (runtime semacquire/semrelease) when contended. The state word tracks: locked bit, waiter count, starving flag, and woken bit. In normal mode, an unlocking goroutine sets the woken bit and hands off to the first waiter in the queue via semrelease; a barging goroutine can CAS the lock from unlocked before the handoff completes. Starvation mode engages when a waiter exceeds the starvation threshold (~1ms): the unlock passes the lock directly to the head waiter, and barging is disabled (new Lock() calls queue). This bounds maximum lock-wait latency.",
+    "underTheHood": "The Mutex struct is a single uint32 state with fields: locked (1<<0), woken (1<<1), starving (1<<2), and waiters count (shifted). Lock(): atomic CAS to set locked; on failure, enters slow path — acquire the semaphore, increment waiter count, and loop (park via runtime semacquire). Unlock(): CAS to clear locked; if waiters exist, decide handoff: normal mode sets woken and semrelease one waiter; starvation mode hands off directly (the unlocking goroutine passes the lock to the head waiter without resetting the locked bit until the waiter takes over). Starvation timing uses the runtime's nanotime. The semaphore is a runtime primitive (gopark/ready) — parking a goroutine unmounts it from the OS thread."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Barging normal mode vs starvation-mode fairness",
+    "summary": "Normal mode lets new arrivals grab a just-released lock (higher throughput, possible starvation); starvation mode enforces FIFO handoff to bound worst-case latency.",
+    "legacyOrBad": {
+      "label": "Assuming mutex is strictly FIFO",
+      "snippet": "mu.Lock() // ❌ OLD: assuming 'first come, first served' always",
+      "fullFile": {
+        "filename": "mutex.go",
+        "language": "go",
+        "code": "package main\n\nimport \"sync\"\n\n// ❌ OLD: A common wrong assumption — that sync.Mutex hands the lock\n// to the longest-waiting goroutine every time. In NORMAL mode, a\n// goroutine that arrives just as the lock is released can BARGE ahead\n// of goroutines that have been waiting. Under heavy contention, a\n// unlucky waiter could wait far longer than the queue order suggests.\nvar mu sync.Mutex\n\nfunc worker() {\n\tmu.Lock() // ❌ OLD: may be barged by newcomers under contention\n\tdefer mu.Unlock()\n\t// critical section\n}\n\n// The mutex is still CORRECT (mutual exclusion holds) — the surprise\n// is the fairness behavior, not the safety."
+      }
+    },
+    "modernOrGood": {
+      "label": "Understanding the two modes",
+      "snippet": "mu.Lock() // ✅ NEW: normal mode (throughput) → starvation mode (fairness)",
+      "fullFile": {
+        "filename": "mutex.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"sync\"\n\t\"time\"\n)\n\n// ✅ NEW: Know that sync.Mutex self-balances throughput and fairness:\n// - Normal mode: barging allowed -> high throughput, some waiting\n//   goroutines may be overtaken.\n// - After a waiter waits ~1ms, the mutex switches to STARVATION mode:\n//   unlock hands the lock directly to the longest-waiting goroutine\n//   (FIFO), new arrivals queue, no barging — bounding worst-case\n//   wait latency.\n// - Once the starved waiter gets the lock (or its wait drops below\n//   1ms), it returns to normal mode.\nvar mu sync.Mutex\n\nfunc worker(id int) {\n\tmu.Lock()\n\tdefer mu.Unlock()\n\n\t// Heavy contention with short critical sections is the scenario\n\t// where starvation mode kicks in. If you need strict FIFO, that's\n\t// a different primitive (or acceptable here — the runtime\n\t// self-corrects).\n\ttime.Sleep(time.Microsecond)\n}\n\n// Key takeaway: you do NOT configure the mode — the runtime switches\n// automatically based on observed wait times."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between normal mode and starvation mode in sync.Mutex, and what triggers the switch?",
+      "contextIntro": "This tests the fairness mechanism — interviewers want the barging vs FIFO handoff distinction and the starvation threshold that drives the transition.",
+      "detailedAnswer": "In normal mode, a goroutine calling Lock() while the mutex is unlocked can acquire it immediately (barging), even if other goroutines are already waiting — this favors throughput because handoffs are expensive and the lock is used productively. The downside is that a waiting goroutine can be overtaken repeatedly. When a goroutine has been waiting for more than about 1 millisecond, the mutex switches to starvation mode: the unlock operation hands the lock DIRECTLY to the first goroutine in the wait queue (FIFO handoff, no barging), and newly arriving Lock() calls queue behind it. Once the starved goroutine acquires the lock (and its total wait drops below the threshold), the mutex returns to normal mode. This guarantees a maximum wait bound while preserving throughput in the common case.",
+      "trapWarning": "The naive answer is 'sync.Mutex is always FIFO'. It's FIFO only in starvation mode; normal mode allows barging. Another trap: thinking you can configure the mode — it's automatic and timing-based, not a knob. Candidates who describe the ~1ms threshold and the automatic transition show real understanding."
+    },
+    {
+      "question": "How does the mutex hand off the lock to a waiter, and what role do the semaphore and the 'woken' flag play?",
+      "contextIntro": "This probes the low-level handoff mechanics — interviewers want the semaphore-based parking, the woken flag, and why a barging goroutine can still beat a handoff.",
+      "detailedAnswer": "When the lock is contended, waiting goroutines park on a runtime semaphore (semacquire). The unlock path checks the state word: if there are waiters, it sets the 'woken' bit and releases ONE waiter via semrelease (in normal mode) — that waiter wakes and races to acquire the lock. The woken bit prevents two goroutines from both thinking they should wake a waiter. The race: between the unlock's decision and the woken waiter actually running, a NEW goroutine can CAS the lock from unlocked (barging) — this is legal in normal mode, which is why a handoff doesn't guarantee the lock reaches the waiter. In starvation mode, the unlock hands off directly by NOT clearing the locked bit (passing ownership), so a barger cannot acquire; the head waiter takes over. This is the core of the fairness switch.",
+      "trapWarning": "The naive answer is 'unlock wakes the next waiter and they always get it'. In normal mode, barging can beat the handoff. Another trap: assuming the mutex uses OS-level futexes directly — it uses the Go runtime's semaphore (gopark/ready), which is goroutine-level parking, not a raw OS mutex. Candidates who describe the woken bit and the handoff race show real depth."
+    }
+  ]
+}

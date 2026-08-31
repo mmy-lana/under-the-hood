@@ -1,0 +1,69 @@
+{
+  "id": "go-netpoller-epoll-kqueue",
+  "title": "Go Netpoller: OS epoll/kqueue Integration Without Blocking Threads",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (netpoll)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "netpoller",
+    "epoll",
+    "kqueue",
+    "io",
+    "goroutine",
+    "network"
+  ],
+  "prerequisites": [
+    "Go goroutines and network I/O",
+    "Understanding of non-blocking I/O and OS event loops"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A busy reception desk has one phone line that many callers wait on. Instead of assigning a dedicated staff member to sit and stare at each caller's phone (one worker per waiting caller), the desk has a single operator who watches a big board of many phones at once. When any phone rings, the operator taps the right staff member on the shoulder: 'your caller is ready.' That staff member was free to do other work until tapped. Thousands of callers can be handled with just a few staff members.",
+    "junior": "Go's netpoller lets goroutines do network I/O without each blocking an OS thread. When a goroutine reads from a socket with no data yet, it's parked; the netpoller (built on epoll on Linux, kqueue on BSD/macOS, IOCP on Windows) watches all sockets at once. When data arrives, the netpoller wakes the goroutine. This is why a Go server can handle tens of thousands of concurrent connections with a small number of threads. The standard library net package uses this automatically — you don't write epoll yourself; goroutines + netpoller give you the benefit of an event loop with the ergonomics of blocking code.",
+    "senior": "Architecturally, the netpoller is the Go runtime's event loop: a dedicated thread (or per-process poller) runs the OS readiness notification (epoll_wait/kqueue). When a goroutine performs a blocking socket operation, the runtime registers the fd with the poller and parks the goroutine (gopark) rather than blocking the OS thread. When the OS reports the fd ready, the poller unparks the goroutine, which resumes and retries the I/O. This decouples goroutine blocking from OS thread blocking: a blocked goroutine costs nothing, while a blocked thread consumes a stack and can't be used. The runtime uses this for net, os (pipes), and the timer heap.",
+    "underTheHood": "On Linux, the netpoller is implemented with epoll_create1, epoll_ctl (add/mod/del the fd with the goroutine's pollDesc), and a poll thread calling epoll_wait in a loop; ready events are dispatched to parked goroutines via their pollDesc. The pollDesc contains the fd, the waiting goroutine's g, and a lock. The runtime's netpollinit/netpollblock/netpollunblock functions integrate with the scheduler: when a goroutine blocks on I/O, it calls netpollblock → gopark (the thread is freed to run other goroutines). On event, netpollready wakes the goroutine. The same abstraction uses kqueue on macOS/BSD and IOCP on Windows. This is why GOMAXPROCS threads can serve millions of connections — goroutines block on the poller, not on threads."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Thread-per-connection vs goroutine + netpoller",
+    "summary": "A thread per connection caps concurrency and wastes stack memory; goroutines parked on the netpoller let one thread serve thousands of connections.",
+    "legacyOrBad": {
+      "label": "Thread-per-connection (other languages)",
+      "snippet": "while (true) {\n  conn = accept();\n  new Thread(() -> handle(conn)).start(); // ❌ OLD: thread per connection\n}",
+      "fullFile": {
+        "filename": "server.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD (as a pattern to avoid in Go): spawning one thread per\n// connection. Each connection consumes a full OS thread (MB of stack\n// + OS scheduling), so 10k concurrent connections needs 10k threads —\n// the OS and memory quickly cap out, and thread context switching\n// dominates. Many classic servers hit this wall.\n\n// In Go, the equivalent WRONG pattern is spawning a goroutine that\n// BLOCKS on a syscall directly (rare), or using cgo calls that block.\n// Normal Go socket I/O is already non-blocking via the netpoller."
+      }
+    },
+    "modernOrGood": {
+      "label": "Goroutine per connection on the netpoller",
+      "snippet": "ln, _ := net.Listen(\"tcp\", \":8080\")\nfor {\n  conn, _ := ln.Accept()\n  go handle(conn) // ✅ NEW: goroutine, parked on netpoller while idle\n}",
+      "fullFile": {
+        "filename": "server.go",
+        "language": "go",
+        "code": "package main\n\nimport \"net\"\n\n// ✅ NEW: A goroutine per connection, but the goroutines are CHEAP:\n// ~2KB stacks that grow, and while a connection waits for data the\n// goroutine parks on the NETPOLLER (epoll/kqueue), freeing the OS\n// thread entirely. One thread can serve thousands of connections.\nfunc main() {\n\tln, err := net.Listen(\"tcp\", \":8080\")\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\tfor {\n\t\tconn, err := ln.Accept()\n\t\tif err != nil {\n\t\t\tcontinue\n\t\t}\n\t\tgo handle(conn) // ✅ NEW: cheap goroutine, not a thread\n\t}\n}\n\nfunc handle(c net.Conn) {\n\tdefer c.Close()\n\tbuf := make([]byte, 4096)\n\tfor {\n\t\tn, err := c.Read(buf) // ✅ NEW: parks on the netpoller until data\n\t\tif err != nil {\n\t\t\treturn\n\t\t}\n\t\t// process n bytes...\n\t}\n}\n\n// Internally: c.Read -> pollDesc -> epoll_ctl + gopark. The OS thread\n// runs other goroutines while this one waits."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does a goroutine blocked on a socket read NOT block an OS thread, and what happens under the hood?",
+      "contextIntro": "This is the core netpoller question — interviewers want the park/register/wake cycle and how the runtime separates goroutine blocking from thread blocking.",
+      "detailedAnswer": "When a goroutine calls conn.Read and no data is available, the runtime's pollDesc registers the fd with the netpoller (epoll_ctl) and calls gopark on the goroutine. gopark suspends the goroutine and returns the OS thread to the scheduler, which immediately runs another goroutine on that thread. The netpoller has its own polling loop (epoll_wait) that blocks at the OS level on behalf of ALL goroutines. When the fd becomes readable, epoll returns the event, and the netpoller unparks the corresponding goroutine (ready), which resumes the Read call and copies the data. So a blocked goroutine consumes no thread, no stack growth beyond its current size, and no OS scheduling slot — the thread count stays near GOMAXPROCS while the connection count can be in the millions.",
+      "trapWarning": "The naive answer is 'a blocked goroutine blocks its thread'. It parks on the netpoller and the thread is reused. Another trap: thinking this applies to ALL I/O — it applies to the netpoller-backed fd types (sockets, pipes); truly blocking syscalls (via cgo or a wrapped blocking call) and file I/O on some platforms still occupy threads (the runtime may add threads for them). Candidates who describe gopark and the poll thread show real understanding."
+    },
+    {
+      "question": "What is the difference between epoll (Linux) and kqueue (macOS/BSD), and how does the runtime abstract them?",
+      "contextIntro": "This probes the OS-event abstractions — interviewers want to know the portability layer and the operational difference (level vs edge triggered, per-fd registration) behind the single 'netpoller' concept.",
+      "detailedAnswer": "The netpoller is a runtime abstraction with per-OS implementations: epoll on Linux, kqueue on BSD/macOS, IOCP on Windows. epoll: a single epoll fd watches many fds; you register interest with epoll_ctl (EPOLLIN/EPOLLOUT) and wait with epoll_wait; by default it's level-triggered (events keep firing while the condition holds) — Go uses this directly. kqueue: you register kevent filters per fd/process and wait with kevent; it's naturally edge-triggered and more flexible (also watches processes, signals, timers). The runtime hides these behind netpollinit/netpollopen/netpollwait, so the scheduler code is platform-independent. The practical differences (fd limits, registration cost, event semantics) are the OS's concern; Go's abstraction keeps goroutine semantics identical across platforms.",
+      "trapWarning": "The naive answer is 'Go uses epoll everywhere'. It uses the platform's native primitive via a portability layer. Another trap: assuming the netpoller is a separate OS thread per core — it's typically a single poller (or one per process) with a polling loop; the runtime manages it as part of the scheduler integration. Candidates who name the per-OS implementations show real cross-platform understanding."
+    }
+  ]
+}

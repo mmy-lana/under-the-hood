@@ -1,0 +1,68 @@
+{
+  "id": "go-profiling-pprof-execution-trace",
+  "title": "pprof CPU Profiling, Memory Allocation Profiling, Execution Tracer",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (runtime/pprof, net/http/pprof, runtime/trace)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "pprof",
+    "profiling",
+    "execution-trace",
+    "cpu",
+    "memory"
+  ],
+  "prerequisites": [
+    "Go programs and HTTP servers",
+    "Understanding of performance analysis concepts"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A factory wants to know why production is slow. Two tools: a stopwatch survey (CPU profile) that samples what each worker is doing every few moments — after an hour, the tally shows which stations eat the most time. A camera log (execution trace) records EVERY move in perfect order — every worker's start, pause, and handoff — so you can see the exact timeline, including who waited for whom. The survey is cheap and finds hot spots; the camera log is detailed but heavier to record and analyze.",
+    "junior": "Go profiling: import _ \"net/http/pprof\" and hit /debug/pprof/ endpoints. CPU profile: go tool pprof http://localhost:6060/debug/pprof/profile (samples for 30s). Heap profile: .../debug/pprof/heap. Then analyze with go tool pprof: top, list, web. The execution tracer: go run -trace trace.out and analyze with go tool trace — shows goroutine scheduling, GC, and system events over time. CPU profiling answers 'where is CPU time spent'; heap profiling answers 'where are allocations coming from'; the tracer answers 'why is my program waiting/slow in time'. Use pprof for CPU/memory hot spots, trace for concurrency/scheduling problems.",
+    "senior": "Architecturally, Go's CPU profiler is a SAMPLING profiler: the runtime interrupts each thread periodically (the SIGPROF signal at a default rate of 100 Hz, or 1ms), records the current program counter stack, and accumulates samples into a profile. The result is statistical — hot functions get proportionally more samples. The heap profile is sampled too (allocation profiling samples every N bytes by default) and reports both live and cumulative allocations. The execution tracer records ALL scheduling and runtime events (goroutine create/block/unblock, syscall, GC, timer) with timestamps and goroutine ids, enabling precise timeline analysis. pprof and trace serve different questions.",
+    "underTheHood": "The CPU profiler uses setitimer/SIGPROF: a signal handler captures the interrupted thread's stack (via runtime stack walking with PC values and symbolization). The pprof format is a protobuf with sample types (cpu, inuse_space, alloc_space). Heap profiling uses the allocator's sampling hooks: every N bytes allocated, a stack sample is recorded (with the number of bytes), and profiles can be 'inuse' (live) or 'alloc' (cumulative), and 'space' or 'objects'. The execution tracer uses the runtime's trace buffer: a lock-free per-P buffer of trace events flushed by a dedicated goroutine to the output; go tool trace parses it and renders goroutine states, heap/GC, and network blocking. This is why the tracer has higher overhead than CPU sampling."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go tooling concern.",
+    "angular": "N/A — Go tooling concern.",
+    "vue": "N/A — Go tooling concern.",
+    "svelte": "N/A — Go tooling concern."
+  },
+  "codeComparison": {
+    "title": "Guessing performance vs profiling",
+    "summary": "Optimizing by intuition targets the wrong code; pprof shows where CPU and allocations actually go, and the tracer shows scheduling waits.",
+    "legacyOrBad": {
+      "label": "Guess-based optimization",
+      "snippet": "// ❌ OLD: optimizing what 'feels slow' without measuring",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: Optimizing by intuition. A developer 'fixes' a function that\n// looks slow (e.g. adds caching to a cheap function) while the real\n// hot spot (a string concatenation in a loop elsewhere) goes\n// unmeasured and untouched. Without data, effort is misdirected.\nfunc handle(req []byte) []byte {\n\t// ❌ OLD: no idea whether this is the hot path — measure first\n\tnormalized := bytes.ToUpper(req)\n\tresult := transform(normalized)\n\treturn result\n}\n\n// The right process: capture a CPU profile first, find the actual\n// hot functions (pprof top), optimize THOSE, re-profile to confirm."
+      }
+    },
+    "modernOrGood": {
+      "label": "Profile-driven optimization",
+      "snippet": "// ✅ NEW: capture a CPU profile, find hot spots, optimize, re-profile\n// go tool pprof -top http://localhost:6060/debug/pprof/profile",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t_ \"net/http/pprof\" // ✅ NEW: registers /debug/pprof endpoints\n\t\"net/http\"\n)\n\n// ✅ NEW: Expose the profiler so you can measure the running app.\nfunc main() {\n\tgo func() {\n\t\thttp.ListenAndServe(\"localhost:6060\", nil) // ✅ NEW: pprof server\n\t}()\n\n\tserve()\n}\n\n// ✅ NEW: Measurement workflow:\n// 1. CPU:      go tool pprof -top http://localhost:6060/debug/pprof/profile?seconds=30\n//    -> the hottest functions (by CPU samples)\n// 2. Heap:     go tool pprof -top -alloc_space http://localhost:6060/debug/pprof/heap\n//    -> where allocations come from\n// 3. Trace:    curl -o trace.out http://localhost:6060/debug/pprof/trace?seconds=5\n//    go tool trace trace.out   -> scheduling/GC timeline\n// Optimize the measured hot spots, then re-profile to verify."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Go's CPU profiler a sampling profiler, and what are its limitations?",
+      "contextIntro": "This tests the profiling methodology — interviewers want the SIGPROF sampling mechanism, the statistical nature, and the blind spots (short-lived functions, I/O waits).",
+      "detailedAnswer": "The CPU profiler interrupts each thread with SIGPROF at a fixed rate (default 100 Hz) and records the current stack. It's SAMPLING, not instrumenting every call: hot functions accumulate proportionally more samples, so after enough samples the distribution approximates where CPU time is spent. Limitations: very short-lived functions that complete between samples can be missed; functions called rarely but each expensive may be under-sampled; the profile reflects CPU time ON the thread, not wall-clock waits — a goroutine blocked on I/O or a channel produces no CPU samples, so a CPU profile will NOT show 'waiting' problems. For waits, use the execution tracer or block profiles. Also, sampling rate and duration matter: short profiles may not represent steady state.",
+      "trapWarning": "The naive answer is 'the profile shows everything the program did'. It samples CPU on-thread stacks; I/O waits and lock blocks are invisible in the CPU profile. Another trap: profiling for 1 second and trusting the distribution — run long enough (30s+) for statistical significance, and under realistic load. Candidates who describe the sampling mechanism and the CPU-vs-wait distinction show real understanding."
+    },
+    {
+      "question": "What is the difference between a CPU profile, a heap profile, and the execution tracer, and when do you use each?",
+      "contextIntro": "This tests tool selection — interviewers want the question each tool answers and the overhead trade-off, which determines the right diagnostic for a symptom.",
+      "detailedAnswer": "A CPU profile answers 'where is CPU time spent?' — sampled stacks of on-thread execution; use it for CPU-bound hot spots (a function eating 80% of samples). A heap profile answers 'where do allocations come from?' — sampled allocation stacks, reported as live (inuse) or cumulative (alloc), by space or objects; use it for GC pressure, high allocation rates, or memory growth. The execution tracer answers 'why is the program slow in TIME?' — it records every scheduling event (goroutine lifecycle, syscalls, GC, timers) with timestamps, so you can see a goroutine blocked on a channel, a mutex convoy, GC spikes, or network waits that no CPU profile shows. Overhead: CPU/heap sampling is cheap; the tracer is heavier (records every event) and is meant for targeted analysis, not always-on production.",
+      "trapWarning": "The naive answer is 'the tracer replaces profiling'. They answer different questions — the tracer shows waits/scheduling, not CPU hot spots. Another trap: using the heap profile's default (inuse_space) when you need cumulative allocations to find allocation-rate problems — use -alloc_space. Candidates who map symptoms to tools show real diagnostic skill."
+    }
+  ]
+}

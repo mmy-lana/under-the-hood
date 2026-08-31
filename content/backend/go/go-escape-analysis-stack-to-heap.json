@@ -1,0 +1,68 @@
+{
+  "id": "go-escape-analysis-stack-to-heap",
+  "title": "Escape Analysis: Pointer Escapes, Interface Wrapping, Stack Growth",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (compiler escape analysis)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "escape-analysis",
+    "stack",
+    "heap",
+    "allocation",
+    "compiler"
+  ],
+  "prerequisites": [
+    "Go pointers and stack/heap basics",
+    "Understanding of compiler optimizations"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A baker decides whether an ingredient should stay on the counter or be stored in the big pantry. If the ingredient is only used in the current recipe (doesn't escape), it stays on the counter — fast to grab and automatically cleared when the recipe ends. If the recipe hands the ingredient to another kitchen (the pointer escapes), it must go to the pantry so it survives. The baker (the smart assistant) inspects the recipe to decide — and you never have to mark anything yourself.",
+    "junior": "Escape analysis is a compile-time optimization that decides whether a value can live on the goroutine's stack instead of the heap. If a value doesn't escape the function (no pointer returned, not stored in a global, not passed to an interface that leaks it), the compiler allocates it on the stack — zero GC pressure and fast allocation. If it escapes, it's heap-allocated. You can see the decision with go build -gcflags='-m' (allocs: x escapes to heap). This is why small local values are cheap; interfaces and pointers to returned values often trigger escapes.",
+    "senior": "Architecturally, the Go compiler's escape analysis is a dataflow analysis over the function (and across inlined calls): it tracks whether any pointer to a value can 'escape' the current stack frame. Triggers for escape: returning a pointer (or a value containing one), assigning to a global, passing to a function that stores it (e.g. an interface value, a map/slice that outlives the call, or a parameter the callee retains), and interface conversion (the interface header holds a pointer to the value). Values that don't escape are stack-allocated; the stack grows automatically (contiguous stack, copy-on-grow), so 'stack allocation' is safe for large values too. This is a major reason Go programs have low GC overhead for typical code.",
+    "underTheHood": "The escape analysis pass builds a graph of assignments/uses (the 'escape' lattice) and propagates escape status: a value's address taken and used in a way that outlives the frame marks it as heap-escaped. The compiler emits runtime.alloc (heap) only for escaping values; non-escaping values become stack slots. Interface assignment always escapes the underlying value (the itab/eface data word points to it). Closure captures escape if the closure escapes. Inlining extends the analysis across call boundaries. The '//go:noescape' pragma on a function tells the compiler its pointer arguments do not escape, which can enable stack allocation of otherwise-escaping values. The compiler prints decisions with -m flags for tuning."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go compiler concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Value that escapes (via interface) vs value that stays on the stack",
+    "summary": "Passing a value to an interface forces a heap allocation; keeping it concrete lets escape analysis stack-allocate it.",
+    "legacyOrBad": {
+      "label": "Interface wrapper forces escape",
+      "snippet": "var v any = 42 // ❌ OLD: interface conversion — escapes to heap",
+      "fullFile": {
+        "filename": "escape.go",
+        "language": "go",
+        "code": "package main\n\nimport \"fmt\"\n\n// ❌ OLD: Storing an int in an interface (any) escapes to the heap:\n// the interface header's data word points to a heap-allocated copy.\n// In a hot loop, this allocates per iteration (GC pressure).\nfunc printAll(n int) {\n\tfor i := 0; i < n; i++ {\n\t\tvar v any = i // ❌ OLD: i escapes to the heap each iteration\n\t\tfmt.Println(v)\n\t}\n}\n\n// Check: go build -gcflags='-m'  →  \"i escapes to heap\"\n// The escape happens because the interface value can outlive the\n// function (fmt.Println stores it), so the compiler must heap-allocate."
+      }
+    },
+    "modernOrGood": {
+      "label": "Concrete value stays on the stack",
+      "snippet": "func sum(n int) int { // ✅ NEW: local ints stay on the stack\n  var total int\n  for i := 0; i < n; i++ { total += i }\n  return total\n}",
+      "fullFile": {
+        "filename": "escape.go",
+        "language": "go",
+        "code": "package main\n\n// ✅ NEW: Concrete local values that don't escape are stack-allocated:\n// no heap, no GC pressure, allocation-free execution.\nfunc sum(n int) int {\n\tvar total int // ✅ NEW: does not escape → stack slot\n\tfor i := 0; i < n; i++ {\n\t\ttotal += i\n\t}\n\treturn total // ✅ NEW: an int return value doesn't escape\n}\n\n// ✅ NEW: Returning a pointer to a small struct:\nfunc newPoint(x, y int) *Point {\n\tp := Point{x, y} // ❓ escapes: the pointer is returned\n\treturn &p\n}\n// The compiler MAY still stack-allocate if the caller's use allows it\n// (e.g. the pointer is only used within the same function via\n// inlining). Verify with: go build -gcflags='-m'.\n\n// In general: prefer value receivers and concrete types on hot paths;\n// interfaces and returned pointers tend to force heap allocation."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly makes a value escape to the heap, and how do you find escaping allocations?",
+      "contextIntro": "This tests the escape analysis triggers — interviewers want the concrete conditions (returned pointers, interfaces, globals, closures) and the tooling to observe them.",
+      "detailedAnswer": "A value escapes when the compiler cannot prove it stays within the current stack frame. Common triggers: returning a pointer to it (or a struct containing one), storing it in a global, storing it in a heap-allocated structure (map/slice that outlives the call), passing it to a function that retains the reference (e.g. storing the argument in a field or a closure), and interface conversion — an interface value carries a pointer to the underlying data, so boxing a value into an interface (including any, fmt.Println, etc.) makes it escape. Closures escape when the closure itself escapes. To find escapes, use go build -gcflags='-m' (and -m -m for more detail) and look for 'escapes to heap'. The fix is usually to avoid interfaces/pointers in hot paths or restructure so the value stays local.",
+      "trapWarning": "The naive answer is 'pointers always escape'. A pointer used only within the function (or within inlined boundaries) can stay on the stack; returning it forces escape. Another trap: assuming small values in interfaces are cheap — any interface boxing of a value escapes and allocates. Candidates who enumerate the triggers and the -m tooling show real understanding."
+    },
+    {
+      "question": "Why does Go use stack allocation instead of a heap for non-escaping values, and how does stack growth work?",
+      "contextIntro": "This probes the stack model — interviewers want the contiguous growable stack and why stack allocation is cheaper than heap allocation + GC for short-lived values.",
+      "detailedAnswer": "Stack allocation is nearly free: the compiler assigns a stack slot, and the value dies when the frame pops — no allocation call, no GC involvement, and excellent cache locality (stack frames are contiguous). Heap allocation requires a call into the allocator, participates in GC scanning, and adds pressure. To allow large frames, Go uses contiguous growable stacks: a goroutine starts with a small stack (2KB), and when it runs out, the runtime copies the entire stack to a larger contiguous region and updates pointers (via stack copying, which requires all pointers to be located — the compiler emits stack maps). This is why deep recursion is safe in Go (unlike fixed-size stacks). The escape analysis decides which values use the stack vs heap, and the stack growth mechanism makes 'just stack it' safe even for large frames.",
+      "trapWarning": "The naive answer is 'stack allocation is only for tiny values'. Go's growable stack means size isn't the deciding factor — escape is. Another trap: assuming heap allocation is always bad — long-lived values (a server's shared state) SHOULD be on the heap; escape analysis optimizes the short-lived case. Candidates who describe stack copying and the escape decision show real Go runtime understanding."
+    }
+  ]
+}

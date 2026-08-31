@@ -1,0 +1,68 @@
+{
+  "id": "go-generics-dictionary-gcs",
+  "title": "Go Generics: GC Shape Stenciling & Dictionary Method Passing",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (generics)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "generics",
+    "type-parameters",
+    "gc-shape",
+    "stenciling",
+    "dictionary"
+  ],
+  "prerequisites": [
+    "Go type parameters and constraints",
+    "Understanding of code generation and interface dispatch"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A tool shop has a drill bit that works on any screw head. One way to make it: forge a SEPARATE bit for every screw type (lots of bits, each perfectly shaped). Another way: make ONE universal bit that reads a small card telling it how to grip each screw type (fewer bits, but each turn has to consult the card). Go does a mix: bits with the same shape (same size and arrangement) share one forging, and the grip card is passed along when the exact type matters.",
+    "junior": "Go generics (Go 1.18+) let you write functions/types parameterized by type: func Map[T any](s []T, f func(T) T) []T. The compiler instantiates generic code per type. Two implementation strategies exist: stenciling (specialize the code for each type — fast, but more code) and dictionary passing (pass type information as arguments — less code, small runtime cost). Go uses a hybrid: it 'monomorphizes' by GC shape (types with the same size and pointer structure share one instantiation) and passes a dictionary for operations that depend on the exact type (method calls, conversions).",
+    "senior": "Architecturally, Go's generic implementation was a deliberate design choice between two classic strategies. Full stenciling (C++ templates, Rust monomorphization) generates a separate copy per type — maximal optimization, minimal runtime overhead, but larger binaries and slower compilation. Dictionary passing (some functional languages, early Go proposals) compiles one copy that receives a dictionary of type-specific operations — smaller code, but every type-dependent operation goes through an indirection. Go's hybrid: it stencils by GC shape (each distinct shape — determined by size + pointer bits — gets its own instantiation), and uses a dictionary to supply type-specific data (e.g. the itab for a constraint method call) when the shape isn't enough.",
+    "underTheHood": "The compiler groups types by GC shape: two types with the same size and pointer layout share an instantiation (e.g. int and uint32 have the same shape on 64-bit). For a shape, the generic function is specialized once. Operations that need the EXACT type (calling a method from a constraint, converting, comparing with the == operator for non-scalar types) receive a dictionary — a pointer to a struct of type-descriptor-like entries (itabs, functions) chosen at the call site. This keeps code size bounded (not one copy per type) while keeping the common numeric/pointer cases fast (direct specialization). The dictionary is passed as a hidden first argument to the generic function."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go compiler concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Interface-based generic-ish code vs true generics",
+    "summary": "Using interface{} + type assertions is slower and less safe; generics specialize per shape and only pay dictionary costs where the type truly matters.",
+    "legacyOrBad": {
+      "label": "interface{} + type assertions",
+      "snippet": "func Map(s []interface{}, f func(interface{}) interface{}) []interface{} // ❌ OLD",
+      "fullFile": {
+        "filename": "generic.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: Pre-generics, you used interface{} everywhere. Every value is\n// boxed into an interface (heap escape), every operation needs a type\n// assertion (runtime checks), and the caller loses type safety — a\n// wrong type only fails at runtime.\nfunc Map(s []interface{}, f func(interface{}) interface{}) []interface{} {\n\tout := make([]interface{}, len(s))\n\tfor i, v := range s {\n\t\tout[i] = f(v) // ❌ OLD: interface boxing + dynamic dispatch\n\t}\n\treturn out\n}\n\n// Usage: Map([]interface{}{1,2,3}, func(v interface{}) interface{} {\n//   return v.(int) * 2   // ❌ OLD: type assertion, runtime risk\n// })"
+      }
+    },
+    "modernOrGood": {
+      "label": "Type-parameterized generic function",
+      "snippet": "func Map[T any](s []T, f func(T) T) []T { // ✅ NEW: type-safe\n  out := make([]T, len(s))\n  for i, v := range s { out[i] = f(v) }\n  return out\n}",
+      "fullFile": {
+        "filename": "generic.go",
+        "language": "go",
+        "code": "package main\n\n// ✅ NEW: True generics. The compiler instantiates Map per GC shape\n// (e.g. one for int, one for string) — type-safe, no interface boxing,\n// and the hot loops operate on concrete values.\nfunc Map[T any](s []T, f func(T) T) []T {\n\tout := make([]T, len(s))\n\tfor i, v := range s {\n\t\tout[i] = f(v) // ✅ NEW: no boxing, no assertions\n\t}\n\treturn out\n}\n\n// ✅ NEW: type-safe usage — compiler rejects wrong types\n// doubled := Map([]int{1, 2, 3}, func(v int) int { return v * 2 })\n// names := Map([]string{\"a\", \"b\"}, strings.ToUpper)\n\n// With a constraint:\n// func Max[T constraints.Ordered](a, b T) T { if a > b { return a }; return b }\n// For ==/method calls on the exact type, the compiler passes a\n// dictionary — a small indirection only where the type truly matters."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is GC shape stenciling, and why does Go use it instead of full monomorphization per type?",
+      "contextIntro": "This tests the implementation strategy — interviewers want the code-size vs specialization trade-off and what 'shape' means (size + pointer layout).",
+      "detailedAnswer": "GC shape stenciling groups types by their GC shape: types with the same size and pointer layout (e.g. int and int32 on a 64-bit platform, or two distinct structs with identical layout) are treated as one shape and get ONE specialized instantiation of the generic function. This bounds code bloat — the binary doesn't contain a copy per concrete type (as full C++-style monomorphization would). It also keeps the fast path fast: within a shape, the code is specialized (no interfaces, no indirection), so numeric/pointer-heavy generics perform like hand-written code. The cost: operations that depend on the EXACT type (not just the shape) can't be fully specialized, so the compiler passes a dictionary to supply the type-specific operations. This hybrid is the Go team's chosen balance between binary size, compile time, and runtime performance.",
+      "trapWarning": "The naive answer is 'Go generates one copy per type'. It generates one per GC SHAPE, which is coarser than per type. Another trap: assuming generics are free — type-dependent operations (method calls from constraints, == on non-scalars) go through the dictionary indirection. Candidates who explain the shape grouping and dictionary fallback show real understanding."
+    },
+    {
+      "question": "How does the dictionary mechanism work, and when does a generic function actually need it?",
+      "contextIntro": "This probes the dictionary-passing implementation — interviewers want to know which operations require type-specific data that stenciling by shape can't provide.",
+      "detailedAnswer": "The dictionary is a compile-time-generated data structure containing type-specific values needed at runtime: the itab for an interface method call required by a constraint, the descriptor for a conversion, or the comparison function for == on non-scalar types. It's passed as a hidden argument to the generic function (or to specific helpers), so the single shape-stenciled code body can consult it when it must behave differently per exact type. The compiler decides what goes in the dictionary: for a constraint like Comparable with a == operation, scalar types may be handled directly by shape, but struct types need a runtime equality function — that function pointer goes in the dictionary. This keeps the instantiation shared while still dispatching correctly per type.",
+      "trapWarning": "The naive answer is 'dictionaries are just method tables'. They carry any type-specific operation (equality, conversions), not only methods. Another trap: assuming every generic call pays the dictionary cost — scalar/shape-covered operations are specialized and direct; only type-dependent operations dereference the dictionary. Candidates who describe the hidden dictionary argument and its contents show real depth."
+    }
+  ]
+}

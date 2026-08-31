@@ -1,0 +1,69 @@
+{
+  "id": "go-maps-hmap-bmap-overflow",
+  "title": "Map Internals: hmap, bmap Buckets, Hash High-Bits, Evacuation",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "maps",
+    "hmap",
+    "bmap",
+    "hash",
+    "buckets",
+    "grow"
+  ],
+  "prerequisites": [
+    "Go map syntax and usage",
+    "Understanding of hash tables and hashing"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A library files books by a code on each book (the hash). The library has many small shelves (buckets), and the code's first few digits decide which shelf a book goes to. On a shelf, the books are stored in numbered slots. When a shelf gets too full, the library builds a bigger room with twice as many shelves and carefully moves every book to its new shelf (evacuation). Readers never notice the move — they just look up the code and find the book. If two books share a code, they both fit on the same shelf (overflow).",
+    "junior": "Go maps are hash tables: m := make(map[string]int); m[\"key\"] = 1. Lookup, insert, and delete are amortized O(1). Maps grow automatically when they exceed a load factor: the runtime rehashes and doubles the bucket count. Important behaviors: map iteration order is RANDOM (not insertion order) — never rely on order; maps are reference types (passing a map shares it); reading a missing key returns the zero value (use v, ok := m[k] to distinguish); maps are not safe for concurrent use (use sync.RWMutex or sync.Map); you cannot take the address of a map element (m[k] is not addressable).",
+    "senior": "Architecturally, a Go map is an hmap struct: { count, flags, B (log2 of bucket count), noverflow, hash0 (random seed), buckets, oldbuckets, nevacuate }. Buckets (bmap) are arrays of 8 key/value slots plus a bitmask of used slots and a pointer to an overflow bucket. Keys are hashed with a per-map random seed (hash0) using the runtime's hash function; the top 8 bits (tophash) are stored per slot for fast in-bucket comparison, and the low bits select the bucket index. Growing: when load factor exceeds ~6.5 (or too many overflow buckets), the map doubles (or grows incrementally for overflow-heavy maps) and evacuates entries incrementally during subsequent inserts/lookups (incremental evacuation, no big pause).",
+    "underTheHood": "The bmap layout: each bucket holds up to 8 entries; the tophash array stores the high byte of each key's hash for quick rejection (compare tophash before comparing full keys), and the actual key/value pairs are packed separately (keys together, values together, to reduce padding). The bucket's overflow pointer chains to another bucket when full. The hmap's hash0 seed makes each map's hash unpredictable (defending against hash-flooding DoS). On grow, oldbuckets points to the old array and nevacuate tracks progress; each map operation evacuates a few buckets until complete. Lookup: compute hash, select bucket by low bits, scan tophash slots, compare keys, follow overflow chain. Deletion marks slots but does not shrink the map (memory is retained until recreated)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go runtime concern.",
+    "vue": "N/A — Go runtime concern.",
+    "svelte": "N/A — Go runtime concern."
+  },
+  "codeComparison": {
+    "title": "Slice lookup vs map lookup",
+    "summary": "A slice index is O(1) direct addressing; a map lookup is a hash + bucket scan with a per-map seed and possible growth.",
+    "legacyOrBad": {
+      "label": "Map for a dense integer range",
+      "snippet": "m := make(map[int]string) // ❌ OLD: map where a slice would do",
+      "fullFile": {
+        "filename": "lookup.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: Using a map for a dense, bounded integer key range wastes\n// memory and adds hashing cost. A map of 0..999 hashes every key,\n// stores key/value pairs in buckets, and uses ~2-3x the memory of an\n// equivalent slice, with slower access.\nfunc lookup(m map[int]string, id int) string {\n\treturn m[id] // ❌ OLD: hash + bucket scan, random seed\n}\n\nfunc build() map[int]string {\n\tm := make(map[int]string, 1000)\n\tfor i := 0; i < 1000; i++ {\n\t\tm[i] = fmt.Sprintf(\"item-%d\", i)\n\t}\n\treturn m // ❌ OLD: inefficient for dense int keys\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Slice for dense integer keys",
+      "snippet": "s := make([]string, 1000) // ✅ NEW: direct addressing",
+      "fullFile": {
+        "filename": "lookup.go",
+        "language": "go",
+        "code": "package main\n\n// ✅ NEW: For a dense, bounded integer range, a slice is direct\n// addressing: s[id] is O(1) with no hashing, no bucket scan, and\n// minimal memory (just the values).\nfunc lookup(s []string, id int) string {\n\treturn s[id] // ✅ NEW: single bounds-checked index\n}\n\nfunc build() []string {\n\ts := make([]string, 1000) // ✅ NEW: one contiguous array\n\tfor i := 0; i < 1000; i++ {\n\t\ts[i] = fmt.Sprintf(\"item-%d\", i)\n\t}\n\treturn s\n}\n\n// Maps remain the right choice for sparse keys, string keys, or\n// dynamic key sets — the hash table pays off there.\n\n// Also remember: map iteration order is random, and maps are not\n// safe for concurrent use without a lock or sync.Map."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is map iteration order random in Go, and how is that randomness guaranteed?",
+      "contextIntro": "This tests the map iteration semantics — interviewers want the hash-seed randomization and the runtime's intentional order scrambling that prevents programs from depending on order.",
+      "detailedAnswer": "Go deliberately makes map iteration order random to prevent programs from depending on a specific order (which would break across versions and hide bugs). The mechanism: each map has a per-map random seed (hash0) chosen at creation, which affects the hash of every key and thus the bucket assignment — so the same keys map to different buckets across maps, making iteration order differ. Additionally, the runtime's mapiterinit picks a random starting bucket and offset within the iteration, so even iterating the SAME map twice can yield different orders. This is a correctness-by-design choice: the language spec explicitly says iteration order is not specified. If you need order, sort the keys yourself.",
+      "trapWarning": "The naive answer is 'iteration order is undefined but usually insertion order'. It is deliberately randomized, not just unspecified. Another trap: assuming adding/removing keys doesn't change order — it can, because growth (evacuation) moves keys to different buckets. Candidates who mention the hash seed and random start position show real understanding."
+    },
+    {
+      "question": "How does a map grow, and why is it incremental rather than a single pause?",
+      "contextIntro": "This probes the growth/evacuation mechanics — interviewers want the doubling + incremental evacuation design that keeps map growth latency bounded.",
+      "detailedAnswer": "A map grows when the load factor exceeds ~6.5 elements per bucket, or when there are too many overflow buckets relative to the bucket count (for delete-heavy maps). Growth allocates a new bucket array (2x size) and sets oldbuckets to the previous array. Rather than moving everything at once (which would pause the program), Go evacuates INCREMENTALLY: on every subsequent insert/lookup/delete, a few buckets are moved from oldbuckets to the new array, tracked by the nevacuate counter. The 'growing' flag routes operations to check both arrays until complete. This bounds the latency of any single operation during growth. The trade-off is that lookup during growth may check two buckets (old and new), and the old array is retained until fully evacuated.",
+      "trapWarning": "The naive answer is 'map growth is a stop-the-world rehash'. Go's is incremental. Another trap: assuming deleting keys shrinks the map — deletion marks slots but never shrinks the bucket array; memory is retained, and a delete-heavy workload triggers a growth to a larger array with many empty buckets unless you recreate the map. Candidates who describe incremental evacuation and the non-shrinking behavior show real depth."
+    }
+  ]
+}

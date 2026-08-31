@@ -1,0 +1,68 @@
+{
+  "id": "go-sync-pool-gc-lifecycle",
+  "title": "sync.Pool: Thread-Local Caches, Victim Caches, and GC Drain",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (sync.Pool)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "sync-pool",
+    "object-pool",
+    "gc",
+    "allocation",
+    "performance"
+  ],
+  "prerequisites": [
+    "Go goroutines and memory",
+    "Understanding of object reuse and GC"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A kitchen has a stack of clean mixing bowls at each chef's station. A chef grabs a bowl from their own stack (fast, no walking), uses it, and puts it back when done. If a chef's own stack is empty, they borrow from another station. When the kitchen closes for cleaning, the bowls are washed and the stacks are reset — so bowls never accumulate. The bowls are NOT guaranteed to be there when you reach for one, so you must be ready to grab a new bowl if the stack is empty.",
+    "junior": "sync.Pool reuses objects to reduce allocations: var pool = sync.Pool{ New: func() any { return &Buffer{} } }; b := pool.Get().(*Buffer); ...; pool.Put(b). Use it for frequently allocated, expensive-to-create objects (buffers, temporary structs). Critical rules: Get() may return nil if the pool is empty or was drained by GC (use New or handle nil); Put() returns an object for reuse; objects in the pool can be discarded at ANY time (especially after GC) — sync.Pool is NOT a persistent cache. It's for reducing allocation churn, not for guaranteeing object retention.",
+    "senior": "Architecturally, sync.Pool is designed for allocation reduction under concurrency with minimal contention. It uses per-P (per-processor) local pools: each scheduler P has its own private slice for fast, lock-free-ish access (Get/Put from the same P avoid the shared lock). When a P's pool is empty, it can steal from other P's shared pools. The pool also has a 'victim cache' mechanism: during GC, the current pool's objects are moved to a victim list (retained for one more GC cycle), giving recently-freed objects a chance to be reused even right after a collection. This design makes Pool extremely fast for the common case while degrading gracefully under contention.",
+    "underTheHood": "Internally, poolLocal holds a private (per-P) slice and a shared poolChain (a lock-free-ish structure of poolDequeue nodes). Get first tries the private slot, then the shared chain (popping from other P's), then the victim cache, then New(). Put pushes to the private slot or the shared chain. GC integration: the runtime's gcStart calls poolCleanup on each pool — it moves the current pools to the victim caches and clears the current ones, so after a GC the pool still has (one generation of) objects. Because a GC can drain the pool at any moment, Get is never guaranteed to return a pooled object — callers must handle nil via New. This is why Pool is for short-lived reuse, not for bounded caches."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime/library concern.",
+    "angular": "N/A — Go concern.",
+    "vue": "N/A — Go concern.",
+    "svelte": "N/A — Go concern."
+  },
+  "codeComparison": {
+    "title": "Allocating per request vs reusing from a pool",
+    "summary": "Creating a new buffer per request drives allocation and GC; pooling reuses buffers with the same zero-value semantics via Reset.",
+    "legacyOrBad": {
+      "label": "Allocate a buffer per call",
+      "snippet": "func handle(r io.Reader) error {\n  buf := make([]byte, 32*1024) // ❌ OLD: new allocation per call\n  ...\n}",
+      "fullFile": {
+        "filename": "handler.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: Allocating a fresh 32KB buffer per call, in a high-QPS\n// handler, creates heavy allocation churn: each buffer must be\n// allocated, zeroed, scanned by the GC (as a large object), and\n// collected. Under load this shows up as GC CPU and latency spikes.\nfunc handle(r io.Reader) error {\n\tbuf := make([]byte, 32*1024) // ❌ OLD: alloc per request\n\t_, err := io.ReadFull(r, buf)\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn process(buf)\n}\n\n// process(buf) may itself retain buf — but here it's used and\n// discarded, so its allocation was pure overhead."
+      }
+    },
+    "modernOrGood": {
+      "label": "sync.Pool buffer reuse",
+      "snippet": "var bufPool = sync.Pool{\n  New: func() any { b := make([]byte, 32*1024); return &b }, // ✅ NEW\n}\n\nfunc handle(r io.Reader) error {\n  buf := bufPool.Get().(*[]byte) // ✅ NEW: reuse\n  defer bufPool.Put(buf)         // ✅ NEW: return for reuse\n  ...\n}",
+      "fullFile": {
+        "filename": "handler.go",
+        "language": "go",
+        "code": "package main\n\nimport \"sync\"\n\n// ✅ NEW: Buffers are reused across calls. Get() returns a pooled\n// buffer or New() if empty; Put() returns it for the next caller.\n// The pool reduces allocation rate dramatically at high QPS.\nvar bufPool = sync.Pool{\n\tNew: func() any {\n\t\tb := make([]byte, 32*1024)\n\t\treturn &b // ✅ NEW: pointer to keep the slice header stable\n\t},\n}\n\nfunc handle(r io.Reader) error {\n\tbuf := bufPool.Get().(*[]byte) // ✅ NEW: reuse (or New if drained)\n\tdefer bufPool.Put(buf)         // ✅ NEW: return for reuse\n\n\t_, err := io.ReadFull(r, *buf)\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn process(*buf)\n}\n\n// ⚠️ Pool objects may be dropped by GC at any time — Get() returning\n// nil is expected; New covers it. Never rely on pooled state\n// surviving between Put and Get across a GC."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why can Get() return a nil or a stale object, and why is sync.Pool not a persistent cache?",
+      "contextIntro": "This tests the pool lifecycle semantics — interviewers want the GC-drain behavior and why Pool is only for reducing allocation churn, not for caching.",
+      "detailedAnswer": "The GC drains sync.Pool: on every GC cycle, the runtime moves the current pool objects to a victim cache and clears the live pools (the victim cache survives one more cycle). This means a pooled object can disappear at any collection — Get() may find the pool empty and return nil (or call New). Therefore sync.Pool guarantees NOTHING about retention: it is a best-effort reuse cache, designed purely to cut allocation rate for short-lived, frequently-created objects. It is the wrong tool for a persistent bounded cache (that's a purpose-built cache with eviction, or just holding references). Additionally, the pooled objects' state is whatever you left: you must Reset() them after Get if the previous user dirtied them, because Get returns the same object to different goroutines.",
+      "trapWarning": "The naive answer is 'sync.Pool caches objects so they're always there'. GC can drain it at any moment — Get returning nil is normal. Another trap: using pooled objects without resetting — they carry the previous user's state, causing cross-request data leaks. Candidates who describe the GC drain and the reset requirement show real understanding."
+    },
+    {
+      "question": "How does sync.Pool achieve high performance under concurrency, and what is the victim cache for?",
+      "contextIntro": "This probes the internal design — interviewers want the per-P local pools (contention avoidance) and the victim-cache mechanism (why recently-freed objects survive one GC).",
+      "detailedAnswer": "sync.Pool avoids global contention by giving each scheduler P (processor) its own poolLocal: Get/Put first touch the P's private slot and its shared poolChain, so the overwhelmingly common case (same goroutine, same P) does no cross-P locking. When a P's pool is empty, it steals from other P's shared chains, which uses a lock-free-ish deque. The victim cache addresses the GC timing problem: when GC drains the pool, rather than discarding everything instantly, the runtime moves the current generation into a victim list; Get checks the victim cache too, so objects freed right before/at a GC can still be reused for one more cycle — smoothing the post-GC allocation spike. This design makes Pool fast in the hot path and resilient to GC.",
+      "trapWarning": "The naive answer is 'sync.Pool is a single shared pool with a mutex'. It's sharded per-P to avoid contention. Another trap: assuming pooled objects are shared across goroutines safely — they are NOT; Get gives exclusive ownership to one caller, who must Put it back without sharing. Candidates who describe per-P sharding and the victim generation show real depth."
+    }
+  ]
+}

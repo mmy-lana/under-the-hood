@@ -1,0 +1,68 @@
+{
+  "id": "go-garbage-collector-tri-color-mark-sweep",
+  "title": "Tri-color Mark-Sweep GC, Write Barriers, and GOGC Pacing",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+ (concurrent GC)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "garbage-collector",
+    "tri-color",
+    "write-barrier",
+    "gogc",
+    "memory"
+  ],
+  "prerequisites": [
+    "Go memory model basics",
+    "Understanding of GC concepts (mark, sweep)"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A warehouse cleaner has a method for deciding which boxes to throw out. He starts with all boxes unmarked. He walks through, marking every box still reachable from the loading dock as 'keep' (grey while he's still checking it, black when fully checked). Any box left unmarked at the end is trash. Because the warehouse never closes, the cleaner must work while workers are still moving boxes — so he uses a special rule: whenever a worker moves a box from a 'keep' pile to a pile that might be thrown out, the cleaner is immediately told, so he doesn't accidentally throw away a box that just became reachable.",
+    "junior": "Go's GC is a concurrent, tri-color mark-sweep collector. Colors: white (unvisited), grey (found but not yet scanned), black (fully scanned). GC runs concurrently with your program, with brief stop-the-world pauses for phase transitions. It's triggered by allocation pressure: the GOGC environment variable (default 100) sets the target heap growth — GC runs when the heap grows ~100% since the last cycle. Tune with GOGC=200 (less frequent, more memory) or GOGC=50 (more frequent, less memory), or set debug.SetGCPercent. Modern Go also has a soft memory limit via GOMEMLIMIT.",
+    "senior": "Architecturally, Go's GC is concurrent mark and sweep with a non-moving heap (no compaction). The mark phase walks the object graph from roots (goroutine stacks, globals) using a work queue, coloring objects grey→black. The write barrier is the crucial part: when a goroutine writes a pointer during concurrent marking, the barrier records the write so the GC can re-scan the target — preserving the tri-color invariant (no black object may point to a white object without the barrier noticing). The sweep phase frees white objects. GC pacing is feedback-based: the trigger is computed from the live heap size and GOGC (or the memory limit), aiming to bound CPU overhead (~2% target).",
+    "underTheHood": "The GC uses a Dijkstra-style insert write barrier on the mutator (plus a Yuasa-style deletion barrier during the scan phase), implemented by the compiler inserting calls to writeBarrier at pointer stores. Marking uses a mark work queue (grey objects) with dedicated mark worker goroutines; the GC can also 'assist' — mutator goroutines allocate and must do marking work proportional to their allocation (GC assist), which is what keeps the heap from growing unboundedly. The trigger is computed via the GC controller (gcTrigger based on heap growth estimate). Sweep is lazy and concurrent, done in chunks. The heap is non-moving and non-compacting, so pointers never change — which is what makes the write barrier approach safe and keeps GC pause small (sub-millisecond typically)."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go runtime concern.",
+    "vue": "N/A — Go runtime concern.",
+    "svelte": "N/A — Go runtime concern."
+  },
+  "codeComparison": {
+    "title": "Default GOGC vs tuned GOGC for a latency-sensitive service",
+    "summary": "Default GC (GOGC=100) balances CPU vs memory; a lower GOGC keeps memory down at the cost of more GC cycles.",
+    "legacyOrBad": {
+      "label": "Untuned default GC",
+      "snippet": "// ❌ OLD: GOGC=100 default — GC pacing may cause latency spikes",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\n// ❌ OLD: Running with defaults (GOGC=100). The GC triggers when the\n// heap roughly doubles since the last collection. For a service with\n// bursty allocation, that means occasional large collections that\n// consume CPU (GC assists + mark workers) right when the service is\n// busiest — visible as latency spikes at the 99th percentile.\nfunc main() {\n\tserveRequests() // ❌ OLD: no tuning, GC decides when to run\n}\n\n// No GOMEMLIMIT either — the heap can grow to the machine limit\n// before pressure triggers a collection on spiky workloads."
+      }
+    },
+    "modernOrGood": {
+      "label": "GOMEMLIMIT + tuned GC percent",
+      "snippet": "// ✅ NEW: soft memory limit + explicit pacing\n// GOMEMLIMIT=512MiB GOGC=200 ./app",
+      "fullFile": {
+        "filename": "main.go",
+        "language": "go",
+        "code": "package main\n\nimport \"runtime/debug\"\n\n// ✅ NEW: Set a soft memory limit so GC runs as the heap approaches it\n// (rather than only on percentage growth), and raise GOGC to reduce\n// GC frequency when the limit bounds memory.\nfunc main() {\n\t// ✅ NEW: soft limit — GC paces to stay under ~512MiB\n\tdebug.SetMemoryLimit(512 << 20)\n\t// ✅ NEW: allow more growth between cycles (fewer, larger GCs)\n\tdebug.SetGCPercent(200)\n\n\tserveRequests()\n}\n\n// The memory limit makes GC behavior predictable on bursty workloads;\n// GOGC=200 reduces per-request GC CPU. Monitor runtime/metrics (e.g.\n// /gc/heap/goal) to verify pacing."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does Go's GC need a write barrier, and what invariant does it preserve?",
+      "contextIntro": "This tests the concurrent-GC correctness mechanism — interviewers want the tri-color invariant and why the barrier exists, not just 'it's concurrent'.",
+      "detailedAnswer": "During concurrent marking, the mutator (your program) continues running and can modify the object graph. The tri-color invariant requires that no BLACK (fully-scanned) object holds a pointer to a WHITE (unmarked) object — otherwise the GC could finish marking, consider the white object garbage, and free it while a live black object still points to it. The write barrier intercepts pointer stores: when a goroutine writes a pointer, the barrier records the write (in Go's case, the Dijkstra insert barrier marks the newly-referenced object grey, or the Yuasa deletion barrier re-scans during the scan phase). This guarantees the GC never frees a reachable object. Without the barrier, the GC would need to stop the world for the entire mark, destroying concurrency.",
+      "trapWarning": "The naive answer is 'the write barrier makes GC faster'. It's a correctness mechanism for concurrent marking, not a speed optimization (it adds a small per-pointer-store cost). Another trap: assuming the heap is compacted — Go's GC is non-moving, so pointers stay valid and the barrier approach is safe. Candidates who state the tri-color invariant and the insert-barrier behavior show real GC understanding."
+    },
+    {
+      "question": "How does GOGC determine when to run GC, and how does GOMEMLIMIT change that?",
+      "contextIntro": "This tests the pacing model — interviewers want the heap-growth trigger and how the memory limit overrides/adjusts it, which is the modern Go tuning story.",
+      "detailedAnswer": "GOGC (default 100) sets a percentage: the GC triggers when the estimated live heap grows by that percentage since the end of the last cycle. So GOGC=100 means 'collect when the heap has roughly doubled in size'. This gives a fixed CPU/memory trade-off (roughly 2% CPU overhead target) but can let memory spike on bursty allocation. GOMEMLIMIT (set via GOMEMLIMIT env or debug.SetMemoryLimit) is a soft memory limit: the GC controller incorporates the limit into its pacing, triggering collection earlier as the heap approaches the limit so total memory stays bounded. The two interact: the GC uses whichever trigger comes first, and the limit is soft (the runtime may exceed it under allocation pressure rather than risk live-set failure, but it aggressively collects to return).",
+      "trapWarning": "The naive answer is 'GOMEMLIMIT is a hard cap'. It's a soft limit — the runtime can exceed it briefly rather than crash, but it will collect hard to get back under. Another trap: thinking GOGC is a CPU limit — it's a heap-growth percentage; actual CPU used depends on live-set size and allocation rate. Candidates who describe the trigger math and the soft-limit behavior show real depth."
+    }
+  ]
+}

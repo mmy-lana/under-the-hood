@@ -1,0 +1,69 @@
+{
+  "id": "go-interfaces-eface-iface",
+  "title": "Interface Internals: iface (with itab) vs eface (Empty Interface)",
+  "category": "backend",
+  "subcategory": "go",
+  "versionContext": "Go 1.21+",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "go",
+    "interfaces",
+    "iface",
+    "eface",
+    "itab",
+    "dynamic-dispatch",
+    "type-assertion"
+  ],
+  "prerequisites": [
+    "Go interface basics",
+    "Understanding of static vs dynamic types"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A delivery service has two kinds of labels. A plain 'any box' label (empty interface) just says the parcel exists — it holds the box and a note saying what kind of box it is. A specialized label (typed interface) is pre-printed with the contract: 'this parcel can be delivered by bike' — it holds the box, the note, and a cheat-sheet of how to perform each promised action on this specific box. Both labels wrap the box; the specialized one adds the action instructions.",
+    "junior": "An interface value in Go holds a concrete value plus its type information. The empty interface (interface{}) is represented as eface: { type, data } — just the type and the value pointer. A non-empty interface (e.g. io.Reader) is iface: { tab (itab), data } — where itab is a pointer to a table containing the interface type, the concrete type, and the function pointers for the interface methods implemented by the concrete type. Assigning a concrete value to an interface does an implicit conversion; calling a method through the interface is a dynamic dispatch through the itab. Interface equality compares type + data.",
+    "senior": "Architecturally, interfaces are two-word headers. eface (empty interface) = { type *rtype, data unsafe.Pointer }. iface = { tab *itab, data unsafe.Pointer } where itab = { inter *interfacetype, _type *_type, hash uint32, fun [1]uintptr } — fun is the method table (variable-length, holding the concrete type's implementations of the interface's methods). The itab is computed lazily and cached globally (keyed by interface type + concrete type), so the first conversion is slower, subsequent ones reuse the cached itab. The data word points to the value (or to a heap copy if the value is non-pointer). Method dispatch through an interface is a function-pointer call through the itab — one indirection.",
+    "underTheHood": "When you assign a concrete value to an interface, the compiler generates a conversion that: (1) looks up (or creates) the itab for (interface type, concrete type) — the itab caches the method table; (2) copies the value: if the value fits in a word and is a pointer/word type, data points to it or holds it; if not (large struct), it's heap-allocated and data points to the copy. Type assertions and type switches use the itab's type pointer (or the eface's type) with runtime type equality. The itab's hash field supports fast interface comparison. The compiler also has an optimization: if the static type is known to implement the interface, the itab can be resolved at compile time (devirtualization) for direct calls in some cases."
+  },
+  "rosettaStone": {
+    "react": "N/A — Go runtime concern.",
+    "angular": "N/A — Go runtime concern.",
+    "vue": "N/A — Go runtime concern.",
+    "svelte": "N/A — Go runtime concern."
+  },
+  "codeComparison": {
+    "title": "Concrete calls vs interface dispatch",
+    "summary": "Calling a method on a concrete type is a direct call; through an interface it's an indirect call via the itab — one more indirection, with an escape to the heap for non-pointer values.",
+    "legacyOrBad": {
+      "label": "Interface in a hot loop (unnecessary)",
+      "snippet": "var w io.Writer = bufio.NewWriter(f) // ❌ OLD: interface everywhere\nfor i := 0; i < n; i++ { w.Write(b) }",
+      "fullFile": {
+        "filename": "writer.go",
+        "language": "go",
+        "code": "package main\n\nimport (\n\t\"bufio\"\n\t\"io\"\n)\n\n// ❌ OLD: Holding the concrete writer behind an interface forces a\n// dynamic dispatch (itab lookup + indirect call) on every Write, and\n// the interface conversion can cause heap allocation for the\n// interface header. In a hot loop, that indirection is measurable.\nfunc writeAll(f *os.File, b []byte, n int) {\n\tvar w io.Writer = bufio.NewWriter(f) // ❌ OLD: dynamic type\n\tfor i := 0; i < n; i++ {\n\t\tw.Write(b) // ❌ OLD: indirect call through the itab each iteration\n\t}\n}\n\n// The compiler cannot inline the call because the receiver is only\n// known at runtime through the interface."
+      }
+    },
+    "modernOrGood": {
+      "label": "Concrete type in the hot path",
+      "snippet": "w := bufio.NewWriter(f) // ✅ NEW: concrete type\nfor i := 0; i < n; i++ { w.Write(b) } // ✅ NEW: direct, inlinable call",
+      "fullFile": {
+        "filename": "writer.go",
+        "language": "go",
+        "code": "package main\n\nimport \"bufio\"\n\n// ✅ NEW: Use the concrete type where the code is hot and the type is\n// fixed. w.Write is a direct call the compiler can inline; no itab, no\n// interface header allocation, no dynamic dispatch.\nfunc writeAll(f *os.File, b []byte, n int) {\n\tw := bufio.NewWriter(f) // ✅ NEW: static type known\n\tfor i := 0; i < n; i++ {\n\t\tw.Write(b) // ✅ NEW: direct call, inlinable\n\t}\n}\n\n// Keep interfaces at API boundaries (for polymorphism, testing, and\n// decoupling) and use concrete types internally where performance and\n// inlining matter."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between iface and eface, and why does the empty interface have no method table?",
+      "contextIntro": "This tests the runtime representation — interviewers want the two-word header layout and why interface{} is special-cased for efficiency.",
+      "detailedAnswer": "eface is the empty interface (interface{} or any): a two-word header { type *rtype, data unsafe.Pointer }. It holds only the concrete type and the value — there are no methods to dispatch, so no method table is needed. iface is a non-empty interface: { tab *itab, data unsafe.Pointer }, where itab contains the interface type, the concrete type, a hash (for fast comparison), and a variable-length array of function pointers — the concrete type's implementations of the interface's methods. Method calls through a non-empty interface go through this table. The empty interface is cheaper (no itab), which is why interface{} is the universal 'any' container. The data word points to the value (pointer types) or to a heap-allocated copy (non-pointer values).",
+      "trapWarning": "The naive answer is 'iface and eface are the same thing'. They differ by the presence of the itab/method table. Another trap: assuming interface conversion never allocates — a large non-pointer value assigned to an interface escapes to the heap for the data word. Candidates who describe the two-word layout and the itab contents show real Go internals knowledge."
+    },
+    {
+      "question": "Why is the first interface conversion slower than subsequent ones, and how does the itab cache work?",
+      "contextIntro": "This probes the lazy itab construction — interviewers want the global itab cache and its keying, which explains the warm-up pattern in Go programs.",
+      "detailedAnswer": "The first time a concrete type is converted to a given interface type, the runtime must build the itab: it walks the concrete type's method set, matches the interface's methods, and records the function pointers. This construction is non-trivial. The itab is then cached in a global hash table keyed by the pair (interface type, concrete type), so subsequent conversions of the same pair reuse the cached itab — a fast lookup. This is why benchmark code that converts once before the timed loop sees warm behavior: the itab is already built and cached. The cache also handles the negative case (a type that doesn't implement the interface) by caching a 'failed' entry, so the check is also fast on subsequent attempts.",
+      "trapWarning": "The naive answer is 'interface conversion is always fast'. The first conversion pays the itab construction; only the cache makes repeats cheap. Another trap: assuming the itab lookup is per-call — it's per (interface, concrete) pair, cached globally, so a repeated conversion in a loop costs one hash lookup. Candidates who mention the global itab cache and its keying show real understanding."
+    }
+  ]
+}
