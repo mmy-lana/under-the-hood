@@ -1,0 +1,58 @@
+{
+  "id": "bun-test-runner-fast-path",
+  "title": "bun test: Snapshot Engine, Native Mock Hoisting, and Jest Compatibility",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`bun test`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "test", "bun-test", "jest", "mocking", "snapshots", "testing"],
+  "prerequisites": ["Jest / Vitest testing basics", "Unit testing and mocking concepts"],
+  "progressiveExplaining": {
+    "eli5": "Jest and Vitest are like heavy test trucks that take seconds just to warm up and load their tools. `bun test` is built directly into Bun in native code: it runs thousands of tests, mocks functions, and checks snapshots in milliseconds before Jest even finishes starting up.",
+    "junior": "`bun test` is Bun's built-in, Jest-compatible test runner. Run tests with `bun test`. It imports standard `describe`, `it`, `test`, `expect`, `beforeEach`, `afterEach`, and `mock` from `bun:test`. It natively supports TypeScript and JSX out of the box with zero configuration files (`babel.config.js` or `tsconfig.json` test loaders are not required).",
+    "senior": "Architecturally, `bun test` achieves extreme test velocity by avoiding transpilation overhead. Jest and Vitest must spin up worker processes in Node, initialize Babel/esbuild transforms, and serialize results across IPC. `bun test` runs test files directly inside JavaScriptCore native isolates, leveraging SIMD snapshot string comparisons and native module mock hoisting via `mock.module()`.",
+    "underTheHood": "The `bun:test` runner is implemented in Zig and C++. When `bun test` executes, it discovers matching test files (`*.test.ts`, `*.spec.tsx`), batches them across CPU cores, compiles them with the native Zig transpiler, and evaluates them inside JSC. `expect().toMatchSnapshot()` reads and writes to `__snapshots__/*.snap` using native fast file I/O, and `mock.module()` directly overrides entries in the module map."
+  },
+  "rosettaStone": {
+    "node": "Jest / Vitest runner running in Node.js.",
+    "deno": "`Deno.test()` with `@std/assert`.",
+    "bun": "`bun test` with `import { test, expect } from 'bun:test'`.",
+    "browser": "Playwright / Cypress browser testing."
+  },
+  "codeComparison": {
+    "title": "Jest Configuration Overload vs Zero-Config bun:test",
+    "summary": "Jest requires multiple npm loaders and config files for TypeScript; `bun test` works out of the box.",
+    "legacyOrBad": {
+      "label": "Jest TypeScript Setup",
+      "snippet": "npm i -D jest ts-jest @types/jest; // ❌ Complex config and slow startup",
+      "fullFile": {
+        "filename": "jest.config.js",
+        "language": "js",
+        "code": "// ❌ OLD: Required installing ts-jest, babel-jest, and maintaining config files.\nmodule.exports = {\n  preset: 'ts-jest',\n  testEnvironment: 'node',\n  transform: {\n    '^.+\\.tsx?$': 'ts-jest'\n  }\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "Native bun:test Suite",
+      "snippet": "import { test, expect, mock } from 'bun:test'; // ✅ NEW: Built-in, zero config",
+      "fullFile": {
+        "filename": "math.test.ts",
+        "language": "ts",
+        "code": "import { describe, it, expect, mock } from 'bun:test';\n\n// ✅ NEW: Native TypeScript execution with zero extra npm packages\ndescribe('Math utilities', () => {\n  it('adds numbers correctly', () => {\n    expect(2 + 2).toBe(4);\n  });\n\n  it('supports function spies and mocking', () => {\n    const fn = mock((x: number) => x * 2);\n    fn(5);\n    expect(fn).toHaveBeenCalledTimes(1);\n    expect(fn).toHaveReturnedWith(10);\n  });\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does module mocking work in `bun:test` via `mock.module`?",
+      "contextIntro": "Interviewers test your knowledge of dependency mocking in Bun.",
+      "detailedAnswer": "Use `mock.module('module-name', () => { return { myExport: () => 'mocked' }; })`. `mock.module` intercepts the module resolution map inside the JavaScriptCore runtime. Any subsequent import of `'module-name'` throughout the test suite will receive the mocked exports.",
+      "trapWarning": "`mock.module` hoists automatically, but to restore original module implementations, call `mock.restore()` or `mock.module()` with the original factory."
+    },
+    {
+      "question": "Can `bun test` run tests in a simulated browser DOM environment (like jsdom)?",
+      "contextIntro": "Checks knowledge of DOM testing setups in Bun.",
+      "detailedAnswer": "Yes. You can install `happy-dom` or `jsdom` and configure Bun to use it by creating a preload script: `bun test --preload ./setup-dom.ts` where `setup-dom.ts` attaches `window`, `document`, and DOM globals to `globalThis`.",
+      "trapWarning": "Bun does not ship with built-in DOM elements in the runtime core; DOM globals must be provided via `happy-dom` or `jsdom` for React/Vue component tests."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "bun-stream-web-standards",
+  "title": "ReadableStream & TransformStream: BYOB Buffer Zero-Copy Piping",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (Web Streams API)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "web-streams", "readablestream", "byob", "transformstream", "zero-copy"],
+  "prerequisites": ["WHATWG Web Streams standard", "TypedArrays and ArrayBuffer"],
+  "progressiveExplaining": {
+    "eli5": "Normally, reading a stream is like a water fountain that pours water into new paper cups over and over, throwing each cup away. A 'BYOB' (Bring Your Own Buffer) stream lets you bring your own durable thermos: the fountain pours directly into your thermos with zero wasted cups and zero extra copying.",
+    "junior": "Bun natively implements the WHATWG Web Streams API: `ReadableStream`, `WritableStream`, and `TransformStream`. You can consume streams using `for await (const chunk of stream)`, pipe streams with `stream.pipeThrough(transform).pipeTo(dest)`, and use BYOB ('Bring Your Own Buffer') readers (`stream.getReader({ mode: 'byob' })`) to read raw binary data into pre-allocated `Uint8Array` buffers with zero garbage collection overhead.",
+    "senior": "Architecturally, Bun's Web Streams implementation is written in native Zig, binding Web Streams directly to operating system file descriptors and TCP sockets. In Node.js, Web Streams were historically implemented as a JavaScript compatibility wrapper over legacy `EventEmitter` streams (`node:stream`), adding allocation overhead. Bun's native implementation supports BYOB readers to read kernel bytes directly into user-allocated memory pages.",
+    "underTheHood": "When calling `reader.read(new Uint8Array(buffer))`, Bun passes the raw memory address of the TypedArray's backing store directly to the underlying `read(2)` / `recv(2)` syscall. This eliminates intermediate chunk buffer allocations in the JavaScriptCore heap, maximizing L1/L2 CPU cache utilization during high-speed data transcoding."
+  },
+  "rosettaStone": {
+    "node": "Node.js `node:stream/web` (wrapped on top of `EventEmitter` streams).",
+    "deno": "Deno native Web Streams implementation.",
+    "bun": "Bun native Zig Web Streams (`ReadableStream`, `TransformStream`, BYOB).",
+    "browser": "Browser native WHATWG Web Streams API."
+  },
+  "codeComparison": {
+    "title": "Node.js Stream Conversion vs Bun Native Web Stream Processing",
+    "summary": "Node requires bridging legacy streams; Bun pipes WHATWG Web Streams natively with zero-copy transforms.",
+    "legacyOrBad": {
+      "label": "Node.js Stream Wrapper Bridging",
+      "snippet": "const webStream = Readable.toWeb(nodeStream); // ❌ Stream wrapper translation overhead",
+      "fullFile": {
+        "filename": "stream-node.js",
+        "language": "js",
+        "code": "// ❌ OLD: Bridging Node.js EventEmitter streams to Web Streams\n// creates multiple layer wrappers and memory copies.\nconst { Readable } = require('node:stream');\nconst fs = require('node:fs');\n\nconst nodeStream = fs.createReadStream('input.txt');\nconst webStream = Readable.toWeb(nodeStream);\n// Processing requires complex pipeline bridging"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Native BYOB Web Stream",
+      "snippet": "const reader = stream.getReader({ mode: 'byob' }); await reader.read(buffer); // ✅ NEW",
+      "fullFile": {
+        "filename": "stream-bun.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Pure Web Standard BYOB Stream reading directly into pre-allocated memory\nconst file = Bun.file('large-data.bin');\nconst stream = file.stream();\nconst reader = stream.getReader({ mode: 'byob' });\n\nconst buffer = new Uint8Array(64 * 1024); // 64KB reused buffer\n\nwhile (true) {\n  // Kernel reads directly into our buffer with zero GC allocation:\n  const { done, value } = await reader.read(buffer);\n  if (done) break;\n  processChunk(value);\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does BYOB stand for in the Web Streams standard, and why does it improve performance?",
+      "contextIntro": "Interviewers test your knowledge of low-level memory allocation in streams.",
+      "detailedAnswer": "BYOB stands for **'Bring Your Own Buffer'**. In standard streams (`reader.read()`), the stream engine allocates a *new* `Uint8Array` chunk on every single read, creating garbage collection pressure. With BYOB (`stream.getReader({ mode: 'byob' })`), the consumer passes an *existing* `Uint8Array` to `reader.read(buffer)`. The runtime reads bytes directly into that pre-allocated memory, eliminating all per-chunk memory allocations.",
+      "trapWarning": "A stream must be a byte stream (backed by a byte source) to support `mode: 'byob'`; calling it on an object stream throws a `TypeError`."
+    },
+    {
+      "question": "How do you pipe a Web Stream into an HTTP response in Bun?",
+      "contextIntro": "Checks knowledge of response stream piping in Bun servers.",
+      "detailedAnswer": "Simply pass the `ReadableStream` directly into the `Response` constructor: `return new Response(myReadableStream)`. Bun handles backpressure, chunk encoding, and socket closing automatically.",
+      "trapWarning": "Do not buffer the stream with `await stream.text()` before creating the response; pass the stream itself."
+    }
+  ]
+}

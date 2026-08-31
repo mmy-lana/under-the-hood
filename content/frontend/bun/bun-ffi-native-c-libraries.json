@@ -1,0 +1,58 @@
+{
+  "id": "bun-ffi-native-c-libraries",
+  "title": "bun:ffi: Direct dlopen C Memory Pointers Without Compilation Bindings",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`bun:ffi`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "ffi", "c-interop", "dlopen", "pointers", "native", "performance"],
+  "prerequisites": ["C ABI (Application Binary Interface) basics", "Pointers and data types (`uint8`, `ptr`)"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, calling a C or Rust library requires a translator (node-gyp / N-API) that takes hours to compile. `bun:ffi` is a direct phone line: you point Bun at any `.so` or `.dylib` file, declare the function name, and Bun calls the C function directly in memory with zero translation delay.",
+    "junior": "`bun:ffi` allows Bun to call compiled native C/Rust/Zig shared libraries (`.so`, `.dylib`, `.dll`) directly from JavaScript without writing C++ addons or compiling with `node-gyp`. `import { dlopen, FFIType } from 'bun:ffi'`. You define the symbol signature, and Bun returns a directly callable JavaScript function.",
+    "senior": "Architecturally, `bun:ffi` generates Just-In-Time native call trampolines directly in JavaScriptCore. It maps JavaScript arguments (numbers, TypedArrays, strings) to native C calling conventions (System V AMD64, ARM64 AAPCS) and executes native CPU instructions with zero Marshalling abstraction penalty. It supports raw memory pointer arithmetic (`ptr()`, `toArrayBuffer()`), C callbacks (`JSCallback`), and struct layouts.",
+    "underTheHood": "When `dlopen` runs, Bun loads the dynamic library into memory via POSIX `dlopen(3)` or Windows `LoadLibrary`. For each symbol, Bun generates an FTL/JSC JIT stub that unboxes JS values into native CPU registers (`rdi`, `rsi`, `rdx` on x86-64 / `x0`-`x7` on ARM64), issues a native `call` instruction to the function pointer, and boxes the return value back into a JSC `JSValue`."
+  },
+  "rosettaStone": {
+    "node": "Node.js N-API / `node-addon-api` (requires C++ compilation) or `node:ffi-napi`.",
+    "deno": "`Deno.dlopen()` foreign function interface.",
+    "bun": "`import { dlopen, FFIType } from 'bun:ffi';`.",
+    "java": "Project Panama Foreign Function & Memory API (`Linker.nativeLinker()`)."
+  },
+  "codeComparison": {
+    "title": "Node.js N-API C++ Wrapper vs Bun Zero-Code FFI",
+    "summary": "Node requires C++ wrapper files and build tools; `bun:ffi` dynamically calls C shared libraries directly from TS.",
+    "legacyOrBad": {
+      "label": "Node.js N-API C++ Wrapper",
+      "snippet": "Napi::Value Add(const Napi::CallbackInfo& info); // ❌ Requires C++ wrapper file + binding.gyp",
+      "fullFile": {
+        "filename": "addon.cpp",
+        "language": "cpp",
+        "code": "// ❌ OLD: Required writing C++ glue code, configuring binding.gyp,\n// and compiling with node-gyp on every machine.\n#include <napi.h>\n\nNapi::Number AddWrapped(const Napi::CallbackInfo& info) {\n  Napi::Env env = info.Env();\n  int a = info[0].As<Napi::Number>().Int32Value();\n  int b = info[1].As<Napi::Number>().Int32Value();\n  return Napi::Number::New(env, a + b);\n}\n\nNapi::Object Init(Napi::Env env, Napi::Object exports) {\n  exports.Set(\"add\", Napi::Function::New(env, AddWrapped));\n  return exports;\n}\nNODE_API_MODULE(addon, Init)"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Native bun:ffi",
+      "snippet": "const { symbols: { add } } = dlopen('libmath.so', { add: { args: ['i32', 'i32'], returns: 'i32' } }); // ✅ NEW",
+      "fullFile": {
+        "filename": "math-ffi.ts",
+        "language": "ts",
+        "code": "import { dlopen, FFIType, suffix } from 'bun:ffi';\n\n// ✅ NEW: Open raw pre-compiled shared library directly in TypeScript!\nconst libPath = `./libmath.${suffix}`;\n\nconst { symbols } = dlopen(libPath, {\n  add: {\n    args: [FFIType.i32, FFIType.i32],\n    returns: FFIType.i32,\n  },\n  get_version: {\n    args: [],\n    returns: FFIType.cstring,\n  }\n});\n\nconsole.log('Result:', symbols.add(10, 20)); // 30\nconsole.log('Version:', symbols.get_version());"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is `suffix` in `bun:ffi` and why should you use it?",
+      "contextIntro": "Interviewers test your knowledge of cross-platform native library loading.",
+      "detailedAnswer": "`suffix` is a string exported by `bun:ffi` that resolves to the platform-specific shared library file extension: `'dylib'` on macOS, `'so'` on Linux, and `'dll'` on Windows. Using `const path = `./libmycode.${suffix}`` ensures your FFI loading code runs cross-platform without manual OS checks.",
+      "trapWarning": "Hardcoding `./lib.so` will crash on macOS where dynamic libraries use `.dylib`."
+    },
+    {
+      "question": "What are the memory safety risks when using `bun:ffi`?",
+      "contextIntro": "Checks awareness of native pointer crashes and memory corruption.",
+      "detailedAnswer": "`bun:ffi` bypasses JavaScript's memory safety guarantees. If a C function is called with incorrect argument types, accesses an out-of-bounds pointer, or attempts to read memory freed by C's `free()`, the **entire Bun process will crash immediately with a Segmentation Fault (`SIGSEGV`)** that cannot be caught by JavaScript `try/catch`.",
+      "trapWarning": "Always ensure buffer pointers passed to C libraries remain in memory (not garbage collected) for the duration of the native call."
+    }
+  ]
+}

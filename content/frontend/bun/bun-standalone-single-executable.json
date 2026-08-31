@@ -1,0 +1,58 @@
+{
+  "id": "bun-standalone-single-executable",
+  "title": "bun build --compile: Packaging JSC, Assets, and Code into a Single Binary",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`bun build --compile`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "single-executable", "binary", "compilation", "cli", "deployment"],
+  "prerequisites": ["Bun.build bundler", "Operating system executable formats (ELF, Mach-O, PE)"],
+  "progressiveExplaining": {
+    "eli5": "Normally, running a JavaScript program on a friend's computer requires them to install Bun or Node first. `bun build --compile` packages your code, all your images, all npm packages, and the entire JavaScript engine into a single executable file (`my-app.exe` or `my-app`). You can give it to anyone, and it runs instantly with zero installation.",
+    "junior": "`bun build --compile ./cli.ts --outfile my-tool` compiles your TypeScript/JavaScript application and all its dependencies into a standalone, single-file binary executable. The resulting binary runs on target machines without requiring Bun or Node.js to be installed. You can cross-compile for other operating systems via `--target` (e.g. `--target=bun-linux-x64`).",
+    "senior": "Architecturally, single-executable compilation embeds the pre-bundled JavaScript code and an embedded Virtual File System directly into a specialized copy of the Bun runtime binary. It appends the bundle payload and asset metadata to the executable's trailer. When the binary launches, it detects the embedded payload, mounts the in-memory VFS, and hands the entrypoint bytecode directly to the statically linked JavaScriptCore engine.",
+    "underTheHood": "The compilation process takes a pre-compiled Bun runtime executable skeleton, bundles the entrypoint into an optimized single chunk via `Bun.build`, packages static assets referenced by `Bun.file` into an embedded zip/archive, and appends a binary header and trailer containing offsets to the end of the executable. On launch, Bun inspects its own binary via `argv[0]`, finds the trailer offset, and boots without touching disk files."
+  },
+  "rosettaStone": {
+    "node": "Node.js Single Executable Applications (SEA) via `node --experimental-sea-config`.",
+    "deno": "`deno compile --allow-all main.ts`.",
+    "bun": "`bun build --compile ./src/index.ts --outfile my-app`.",
+    "go": "`go build -o my-app .` (native static compilation)."
+  },
+  "codeComparison": {
+    "title": "Node.js Container Deployment vs Bun Standalone Single Binary",
+    "summary": "Deploying Node requires shipping gigabytes of node_modules and runtime images; Bun compiles to a single 50MB standalone binary.",
+    "legacyOrBad": {
+      "label": "Docker Container with Node.js & node_modules",
+      "snippet": "FROM node:20; COPY . .; RUN npm install; CMD [\"node\", \"index.js\"] // ❌ 1GB Container",
+      "fullFile": {
+        "filename": "Dockerfile.legacy",
+        "language": "dockerfile",
+        "code": "# ❌ OLD: Shipping Node applications requires base Linux OS,\n# Node.js runtime, npm dependencies, and source files (500MB - 1GB image size).\nFROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --only=production\nCOPY . .\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Single Binary Distroless Image",
+      "snippet": "bun build --compile ./server.ts --outfile /dist/server // ✅ NEW: Single static binary",
+      "fullFile": {
+        "filename": "Dockerfile.modern",
+        "language": "dockerfile",
+        "code": "# ✅ NEW: Multi-stage build compiles a standalone binary.\n# Final production image contains ONLY the binary (distroless ~60MB total size).\nFROM oven/bun:latest AS builder\nWORKDIR /app\nCOPY . .\nRUN bun install\nRUN bun build --compile --minify ./server.ts --outfile /dist/server\n\nFROM gcr.io/distroless/base\nCOPY --from=builder /dist/server /server\nEXPOSE 3000\nCMD [\"/server\"]"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can you cross-compile a standalone binary for Linux while working on a macOS machine using Bun?",
+      "contextIntro": "Interviewers test your knowledge of cross-compilation targets in `bun build --compile`.",
+      "detailedAnswer": "Yes. Bun supports cross-compilation via the `--target` flag: `bun build --compile --target=bun-linux-x64 ./server.ts --outfile server-linux`. Bun downloads the pre-compiled standalone runtime skeleton for the target architecture and embeds your bundle into it.",
+      "trapWarning": "Supported targets include `bun-linux-x64`, `bun-linux-arm64`, `bun-darwin-x64`, `bun-darwin-arm64`, and `bun-windows-x64`."
+    },
+    {
+      "question": "Can static files and assets (like `.html` or `.sqlite` databases) be embedded inside the compiled binary?",
+      "contextIntro": "Checks knowledge of Virtual File System (VFS) embedding in Bun binaries.",
+      "detailedAnswer": "Yes. If your code references assets via `import icon from './icon.png' with { type: 'file' }` or `Bun.file('./schema.sql')`, Bun bundles the binary asset directly into the executable's embedded filesystem. At runtime, `Bun.file('./schema.sql')` reads directly from the embedded executable binary memory without needing external files on disk.",
+      "trapWarning": "Dynamic path lookups like `fs.readFileSync(dynamicVariable)` cannot be statically analyzed for embedding; use explicit `with { type: 'file' }` or static path literals."
+    }
+  ]
+}

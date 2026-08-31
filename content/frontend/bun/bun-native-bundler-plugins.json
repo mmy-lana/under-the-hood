@@ -1,0 +1,58 @@
+{
+  "id": "bun-native-bundler-plugins",
+  "title": "Bun.build(): Zig AST Parser & Multi-Threaded Chunk Splitting",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (`Bun.build`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "bundler", "bun-build", "zig", "plugins", "code-splitting", "tree-shaking"],
+  "prerequisites": ["Module bundlers (Webpack, esbuild, Rollup)", "JavaScript AST concepts"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, bundling a website means a JavaScript program slowly reads every file and glues them together. In Bun, a high-speed machine written in Zig reads your code, strips TypeScript, splits it into small fast chunks, and builds the entire application in a fraction of a second.",
+    "junior": "`Bun.build()` is Bun's built-in, native JavaScript/TypeScript bundler. You run it from the CLI with `bun build ./src/index.ts --outdir ./dist` or via JavaScript: `await Bun.build({ entrypoints: ['./src/index.ts'], outdir: './dist', minify: true, splitting: true })`. It replaces Webpack, Rollup, and esbuild with zero npm dependencies and natively supports TypeScript, JSX, and custom plugins.",
+    "senior": "Architecturally, `Bun.build` uses a custom parallel AST parser and code generator written in Zig. It constructs an in-memory module graph, resolves imports using Bun's native module resolver, performs dead-code elimination (tree-shaking), and handles multi-threaded code-splitting into ES module chunks. The plugin API (`bun:plugins`) allows intercepting import resolutions (`onResolve`) and asset loading (`onLoad`) with minimal overhead.",
+    "underTheHood": "The Zig compiler pipeline parses source files into a custom binary AST using SIMD scanners. Imports are resolved concurrently across native threads. The bundler builds an internal topological sort of dependencies, eliminates unused exports via scope-reachability analysis, allocates shared chunks for common dependencies, and generates output `.js` bundles using a parallel printer that writes directly to disk via native system calls."
+  },
+  "rosettaStone": {
+    "node": "Webpack / Rollup / esbuild build configurations.",
+    "deno": "`deno bundle` (deprecated) or esbuild via Deno tasks.",
+    "bun": "`await Bun.build({ entrypoints: ['./src/index.ts'], outdir: './dist' });`.",
+    "browser": "In-browser bundlers like `@esbuild/wasm`."
+  },
+  "codeComparison": {
+    "title": "Webpack Config Boilerplate vs Native Bun.build()",
+    "summary": "Webpack requires multiple JS plugins to handle TS and bundling; `Bun.build` bundles TypeScript natively in milliseconds.",
+    "legacyOrBad": {
+      "label": "Webpack 5 Configuration",
+      "snippet": "module.exports = { entry: './src/index.ts', module: { rules: [...] } }; // ❌ Slow JS bundler",
+      "fullFile": {
+        "filename": "webpack.config.js",
+        "language": "js",
+        "code": "// ❌ OLD: Webpack configuration with babel/ts-loader and minifiers.\nconst path = require('path');\nconst TerserPlugin = require('terser-webpack-plugin');\n\nmodule.exports = {\n  entry: './src/index.ts',\n  module: {\n    rules: [\n      { test: /\\.tsx?$/, use: 'ts-loader', exclude: /node_modules/ }\n    ]\n  },\n  optimization: {\n    minimize: true,\n    minimizer: [new TerserPlugin()]\n  },\n  output: {\n    filename: 'bundle.js',\n    path: path.resolve(__dirname, 'dist')\n  }\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun.build Native Script",
+      "snippet": "await Bun.build({ entrypoints: ['./src/index.ts'], outdir: './dist', minify: true }); // ✅ NEW",
+      "fullFile": {
+        "filename": "build.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Bun native bundler script with built-in TS/JSX transpilation and minification.\nconst result = await Bun.build({\n  entrypoints: ['./src/index.ts'],\n  outdir: './dist',\n  target: 'browser',\n  minify: true,\n  splitting: true,\n  sourcemap: 'external'\n});\n\nif (!result.success) {\n  console.error('Build failed', result.logs);\n} else {\n  console.log(`Successfully built ${result.outputs.length} chunks!`);\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you write a custom loader plugin for Bun.build to import non-standard files (like `.yaml` or `.svg`)?",
+      "contextIntro": "Interviewers test your knowledge of Bun's plugin lifecycle API.",
+      "detailedAnswer": "Create a plugin object with a `setup(build)` function. Use `build.onLoad({ filter: /\\.yaml$/ }, async (args) => { const text = await Bun.file(args.path).text(); return { exports: parseYaml(text), loader: 'object' }; })`. Register the plugin in `Bun.build({ plugins: [myYamlPlugin] })`.",
+      "trapWarning": "Plugins in `Bun.build` execute asynchronously, but excessive JavaScript plugin calls can reduce raw Zig bundler throughput."
+    },
+    {
+      "question": "Can `Bun.build` bundle applications targeting Node.js as well as the browser?",
+      "contextIntro": "Checks knowledge of compilation targets in `Bun.build`.",
+      "detailedAnswer": "Yes. Set `target: 'node'` or `target: 'browser'` or `target: 'bun'`. Setting `target: 'node'` ensures that built-in Node modules (`node:fs`, `node:path`) are treated as external imports rather than bundled into the output.",
+      "trapWarning": "The default target is `'browser'`; forgetting to set `target: 'node'` when bundling server tools will cause runtime errors if Node built-ins are bundled unexpectedly."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "bun-dotenv-native-injection",
+  "title": "Native .env Parsing: Automatic Environment Injection Without dotenv Packages",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (Environment)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "dotenv", "env", "configuration", "performance", "process-env"],
+  "prerequisites": ["Environment variables (`process.env`)", "dotenv npm package"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, your app cannot read `.env` configuration files unless you install and import a special library (`dotenv`) on line 1. Bun reads `.env` files automatically in fast native code before your first line of JavaScript even starts running.",
+    "junior": "Bun automatically loads environment variables from `.env` files into `process.env` and `import.meta.env` at startup. You do not need to install `dotenv` or write `require('dotenv').config()`. It loads files in a defined priority order: `.env.local` -> `.env.production` (or `.env.development`) -> `.env`.",
+    "senior": "Architecturally, Bun's environment injection executes during early native runtime boot before the JavaScript VM is initialized. The `.env` parser is written in Zig and handles multiline values, variable expansion (`PORT=${PORT:-3000}`), export prefixes (`export KEY=val`), and quote stripping with SIMD acceleration. Variables are accessible via both Node's `process.env` and the Web Standard `import.meta.env`.",
+    "underTheHood": "During process startup, Bun scans the current working directory for `.env` files. It reads bytes using fast kernel I/O, parses keys and values into the process environment table in C memory, and exposes them as getters on the global `process.env` Proxy."
+  },
+  "rosettaStone": {
+    "node": "`require('dotenv').config()` or `node --env-file=.env` (Node 20+).",
+    "deno": "`Deno.env.get('KEY')` with `--env` flag.",
+    "bun": "Automatic `.env` loading into `process.env` and `import.meta.env`.",
+    "vite": "`import.meta.env.VITE_KEY` (client build inlining)."
+  },
+  "codeComparison": {
+    "title": "Node.js dotenv Boilerplate vs Bun Automatic Injection",
+    "summary": "Node requires importing dotenv at the top of entry files; Bun loads `.env` files natively before code runs.",
+    "legacyOrBad": {
+      "label": "Node.js dotenv Boilerplate",
+      "snippet": "require('dotenv').config(); // ❌ Requires npm package + line-1 import ordering",
+      "fullFile": {
+        "filename": "app-node.js",
+        "language": "js",
+        "code": "// ❌ OLD: Required npm install dotenv and fragile top-of-file imports\nrequire('dotenv').config();\n\nconst dbUrl = process.env.DATABASE_URL;\nconsole.log('Connecting to:', dbUrl);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Automatic .env Loading",
+      "snippet": "const dbUrl = process.env.DATABASE_URL; // ✅ NEW: Automatically loaded",
+      "fullFile": {
+        "filename": "app-bun.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Zero imports, zero packages. Loaded automatically by Bun at boot\nconst dbUrl = process.env.DATABASE_URL;\nconst apiKey = import.meta.env.API_KEY;\n\nconsole.log('Connecting to:', dbUrl);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the exact lookup priority order for `.env` files in Bun?",
+      "contextIntro": "Interviewers test your knowledge of environment cascade overrides.",
+      "detailedAnswer": "Bun loads `.env` files in the following priority order (higher overrides lower):\n1. Existing system shell environment variables (highest)\n2. `.env.local` (local developer overrides)\n3. `.env.[NODE_ENV].local` (e.g. `.env.development.local`)\n4. `.env.[NODE_ENV]` (e.g. `.env.production`)\n5. `.env` (lowest / baseline defaults)",
+      "trapWarning": "Variables already defined in the host operating system shell take absolute precedence and will not be overwritten by `.env` files."
+    },
+    {
+      "question": "How do you specify a custom `.env` file path when running a Bun script?",
+      "contextIntro": "Checks CLI parameter knowledge.",
+      "detailedAnswer": "Use the **`--env-file`** CLI flag: `bun --env-file=.env.custom run server.ts`. This instructs Bun to bypass default file discovery and load the specified file.",
+      "trapWarning": "Passing `--env-file` multiple times allows chaining multiple custom configuration files."
+    }
+  ]
+}

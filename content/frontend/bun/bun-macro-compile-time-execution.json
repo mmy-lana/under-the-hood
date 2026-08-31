@@ -1,0 +1,58 @@
+{
+  "id": "bun-macro-compile-time-execution",
+  "title": "Bun Macros: with { type: 'macro' } Build-Time Code Evaluation",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (JavaScript Macros)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "macros", "compile-time", "metaprogramming", "ast", "inlining"],
+  "prerequisites": ["ES Module imports", "Compile-time code generation / Babel plugins"],
+  "progressiveExplaining": {
+    "eli5": "Imagine you have a complex math equation or database lookup that never changes. Instead of forcing your user's computer to calculate it every time, Bun runs the JavaScript function *during the build step* and replaces the function call with the final calculated answer directly in the code.",
+    "junior": "Bun Macros let you run JavaScript functions at **bundle time** and inline the returned result directly into the generated bundle. Import any function with macro attribute syntax: `import { getGitCommit } from './git.ts' with { type: 'macro' };`. When you call `const commit = getGitCommit();`, Bun executes `getGitCommit()` during bundling and replaces the call with the static returned string/object.",
+    "senior": "Architecturally, Bun Macros provide safe, native metaprogramming without Babel plugins or external AST transformer dependencies. Macros execute inside an isolated JavaScriptCore context at compile time. The return value (primitives, objects, arrays, Blobs, `Response` objects) is serialized via AST literal synthesis and substituted directly into the call site. This enables build-time fetching, static regex pre-compilation, and embedding git hashes or environment metadata.",
+    "underTheHood": "When Bun's parser encounters an import with `{ type: 'macro' }`, it loads and executes the module inside a compile-time JSC runtime. When a macro call is parsed in the AST, Bun evaluates the function synchronously, takes the returned JavaScript value, and transforms it into a concrete AST literal node (`StringLiteral`, `NumericLiteral`, `ObjectExpression`), eliminating the function call from the output bundle."
+  },
+  "rosettaStone": {
+    "rust": "Rust procedural/declarative macros (`macro_rules!`).",
+    "c": "C preprocessor `#define` and macro expansions.",
+    "node": "Babel macros (`babel-plugin-macros`) requiring custom build plugins.",
+    "bun": "`import { fn } from './macro.ts' with { type: 'macro' };`."
+  },
+  "codeComparison": {
+    "title": "Runtime File Reading vs Compile-Time Bun Macro Inlining",
+    "summary": "Runtime file reading adds I/O latency to every startup; Bun Macros inline file contents directly at build time.",
+    "legacyOrBad": {
+      "label": "Runtime Git/File Read",
+      "snippet": "const gitHash = execSync('git rev-parse HEAD'); // ❌ Slow runtime shell spawn",
+      "fullFile": {
+        "filename": "version-runtime.js",
+        "language": "js",
+        "code": "// ❌ OLD: Spawning a child process at runtime to get git metadata\n// slows down server cold boot and fails if git is not installed in the Docker image.\nconst { execSync } = require('child_process');\n\nexport function getVersion() {\n  return execSync('git rev-parse --short HEAD').toString().trim();\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Compile-Time Bun Macro",
+      "snippet": "import { getGitHash } from './macro.ts' with { type: 'macro' }; const hash = getGitHash(); // ✅ NEW",
+      "fullFile": {
+        "filename": "version-macro.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Macro runs once at build time and inlines the string directly into code!\nimport { getGitCommit } from './git-macro.ts' with { type: 'macro' };\n\n// Compiled output becomes: const commit = \"a1b2c3d\"; (ZERO runtime cost!)\nexport const CURRENT_COMMIT = getGitCommit();\n\n// git-macro.ts:\n// export function getGitCommit() {\n//   return require('child_process').execSync('git rev-parse --short HEAD').toString().trim();\n// }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What types can a Bun macro return to be inlined into the AST?",
+      "contextIntro": "Interviewers test your knowledge of macro serialization boundaries.",
+      "detailedAnswer": "Bun Macros can return: (1) **JSON-serializable data** (strings, numbers, booleans, arrays, objects), (2) **`Response` objects** (whose text or JSON will be inlined), (3) **`Blob` / `TypedArray`** (inlined as base64 or binary data), or (4) **AST function wrappers**.",
+      "trapWarning": "A macro cannot return complex runtime instances like active database connection pools, live sockets, or un-serializable symbols."
+    },
+    {
+      "question": "Can a Bun macro make asynchronous network `fetch()` requests during the build?",
+      "contextIntro": "Checks understanding of asynchronous compile-time execution.",
+      "detailedAnswer": "Yes. A macro can be an `async` function that executes `await fetch('https://api.cms.com/schema')`. Bun will await the promise during the bundling phase and inline the resolved data directly into the client bundle.",
+      "trapWarning": "If the remote API is down during build time, the `Bun.build` compile step will fail."
+    }
+  ]
+}

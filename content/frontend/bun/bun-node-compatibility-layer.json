@@ -1,0 +1,58 @@
+{
+  "id": "bun-node-compatibility-layer",
+  "title": "Native C++ Reimplementation of node:crypto, node:buffer, and node:fs",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (Node.js compatibility)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "node-compat", "crypto", "buffer", "fs", "boringssl", "zig"],
+  "prerequisites": ["Node.js core modules (`node:crypto`, `node:buffer`, `node:fs`)"],
+  "progressiveExplaining": {
+    "eli5": "Most tools built for Node.js expect specific commands like `crypto.createHash()` or `Buffer.from()`. Bun doesn't copy Node's slow code—it wrote brand-new, ultra-fast versions of those exact same commands in C++ and Zig, so existing npm packages work immediately with zero changes.",
+    "junior": "Bun provides a built-in compatibility layer for Node.js core modules (`node:fs`, `node:crypto`, `node:buffer`, `node:path`, `node:http`, `node:events`, `node:child_process`). You can import them directly (`import crypto from 'node:crypto'`) or run existing npm packages (like Express, Prisma, Next.js, Lodash) with near 100% compatibility.",
+    "senior": "Architecturally, Bun's Node compatibility is not a polyfill written in JavaScript; it is a native C++ and Zig reimplementation. `node:crypto` is implemented directly on top of **BoringSSL** (Google's optimized C crypto library), `node:buffer` wraps JavaScriptCore `ArrayBuffer` internals with fast SIMD base64/hex encoders, and `node:events` is implemented in native code for maximum event dispatch throughput.",
+    "underTheHood": "When an application imports `node:crypto`, Bun maps it to internal Zig bindings that invoke BoringSSL EVP methods directly. `Buffer.from(str, 'base64')` uses AVX2 / NEON SIMD vector instructions to decode strings at multi-gigabyte-per-second speeds, significantly outperforming Node.js V8 buffer transformations."
+  },
+  "rosettaStone": {
+    "node": "Original Node.js C++ and JS core module implementations.",
+    "deno": "Deno `std/node` compatibility layer.",
+    "bun": "Native Zig/C++ BoringSSL reimplementation of Node core modules.",
+    "browser": "Browserify / webpack polyfills."
+  },
+  "codeComparison": {
+    "title": "Node.js Core Module Compatibility",
+    "summary": "Existing Node.js code runs unmodified in Bun, utilizing fast native BoringSSL crypto and SIMD buffers.",
+    "legacyOrBad": {
+      "label": "Standard Node.js Code",
+      "snippet": "const crypto = require('node:crypto'); const hash = crypto.createHash('sha256').update(data).digest('hex');",
+      "fullFile": {
+        "filename": "node-crypto.js",
+        "language": "js",
+        "code": "const crypto = require('node:crypto');\nconst fs = require('node:fs');\n\n// Runs in Node.js:\nconst hash = crypto.createHash('sha256').update('Hello World').digest('hex');\nconsole.log('SHA256:', hash);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Same Code Running in Bun (BoringSSL)",
+      "snippet": "import crypto from 'node:crypto'; // ✅ NEW: Executes 2-3x faster via native BoringSSL",
+      "fullFile": {
+        "filename": "bun-crypto.ts",
+        "language": "ts",
+        "code": "// ✅ Unchanged syntax: Bun runs existing node:crypto code with zero code changes,\n// powered by native Zig + BoringSSL underneath.\nimport crypto from 'node:crypto';\nimport fs from 'node:fs/promises';\n\nconst hash = crypto.createHash('sha256').update('Hello World').digest('hex');\nconsole.log('SHA256 in Bun:', hash);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Which crypto engine powers `node:crypto` in Bun vs Node.js?",
+      "contextIntro": "Interviewers test your knowledge of underlying native dependencies in modern runtimes.",
+      "detailedAnswer": "Node.js uses **OpenSSL**. Bun uses **BoringSSL** (Google's lightweight, high-performance fork of OpenSSL used in Chromium and Android). BoringSSL reduces binary footprint and contains optimized assembly for modern x86-64 and ARM64 cryptographic operations.",
+      "trapWarning": "Some legacy, deprecated cryptographic algorithms (like outdated SSLv3 ciphers or obscure DES modes) are intentionally removed in BoringSSL and therefore unsupported in Bun."
+    },
+    {
+      "question": "Can you run Express.js or NestJS directly on Bun?",
+      "contextIntro": "Checks practical enterprise framework compatibility.",
+      "detailedAnswer": "Yes. Express.js, Fastify, and NestJS run directly on Bun using Bun's `node:http` and `node:net` compatibility layer without modifications. However, using native `Bun.serve()` is 2-4x faster than running Express over the `node:http` compatibility layer.",
+      "trapWarning": "While Express runs on Bun, running it on Bun still incurs the overhead of Express's middleware design; for maximum performance, migrate to `Bun.serve` or Elysia/Hono."
+    }
+  ]
+}

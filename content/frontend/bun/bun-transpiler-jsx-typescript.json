@@ -1,0 +1,58 @@
+{
+  "id": "bun-transpiler-jsx-typescript",
+  "title": "Native Zig Transpiler: Running .ts and .jsx with Zero Build Step",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (Native Transpiler)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "typescript", "jsx", "transpiler", "zig", "developer-experience"],
+  "prerequisites": ["TypeScript compiler (`tsc`)", "JSX transpilation"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, the computer cannot understand TypeScript or JSX directly; you must install tools like `ts-node` or run `tsc` first to turn it into plain JavaScript. Bun understands TypeScript and React JSX natively: you run `bun run app.tsx` directly, and it strips the types at the speed of light in memory.",
+    "junior": "Bun natively executes `.ts`, `.tsx`, `.js`, and `.jsx` files without any build step, loader, or compilation script. When you run `bun run index.ts`, Bun parses and strips TypeScript types on the fly in memory and sends the bytecode directly to JavaScriptCore. JSX is transformed into `React.createElement` or modern JSX runtime (`jsx-dev`) calls automatically.",
+    "senior": "Architecturally, Bun implements a high-throughput, single-pass lexical scanner and parser written in Zig. Unlike `tsc` (which performs semantic type-checking and AST validation), Bun's transpiler is a **type-stripping transpiler**: it skips type declarations, interfaces, and annotations in a single linear pass over the byte stream. This enables transpilation speeds exceeding millions of lines of code per second.",
+    "underTheHood": "The transpiler reads source bytes via memory-mapped files. The Zig lexer scans tokens, ignores TypeScript syntax structures (such as `interface`, `type`, `as Type`, `<Type>`), converts JSX elements to runtime helper calls, and writes cleaned JavaScript tokens directly into JavaScriptCore's bytecode parser. Type checking is left to editor IDEs or `tsc --noEmit`."
+  },
+  "rosettaStone": {
+    "node": "`ts-node` / `tsx` / `esbuild-register` wrappers for running TypeScript files.",
+    "deno": "Deno built-in TypeScript engine (using SWC).",
+    "bun": "`bun run file.ts` (native Zig type-stripping transpiler).",
+    "browser": "Babel / SWC build-time compilation."
+  },
+  "codeComparison": {
+    "title": "Node.js ts-node Overhead vs Native Bun TypeScript Execution",
+    "summary": "Node requires third-party transpilers with startup lag; Bun executes `.ts` and `.tsx` natively in milliseconds.",
+    "legacyOrBad": {
+      "label": "Node.js ts-node (Slow Startup)",
+      "snippet": "npx ts-node app.ts // ❌ 1-2 second startup latency for type compilation",
+      "fullFile": {
+        "filename": "app.ts",
+        "language": "ts",
+        "code": "// ❌ Running this in Node requires: npm install -D typescript ts-node\n// Execution incurs significant startup lag as ts-node boots.\ninterface User {\n  id: number;\n  name: string;\n}\n\nconst user: User = { id: 1, name: 'Ada' };\nconsole.log(`Hello, ${user.name}!`);"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Direct Execution",
+      "snippet": "bun app.ts // ✅ NEW: Instant execution with zero dependencies",
+      "fullFile": {
+        "filename": "app.ts",
+        "language": "ts",
+        "code": "// ✅ Native: Run directly with `bun app.ts` (starts in <5ms)\ninterface User {\n  id: number;\n  name: string;\n}\n\nconst user: User = { id: 1, name: 'Ada' };\nconsole.log(`Hello, ${user.name}!`);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Does Bun perform type-checking when running `bun run script.ts`?",
+      "contextIntro": "This is a fundamental question regarding how fast TypeScript runtimes operate.",
+      "detailedAnswer": "**No, Bun does not type-check your code at runtime.** Bun's transpiler is a pure type stripper: it removes type annotations and executes the remaining JavaScript code directly. If your code has a TypeScript type mismatch (e.g. assigning a number to a string type), Bun will still execute it without error. To enforce type safety, run `tsc --noEmit` in your CI/CD pipeline.",
+      "trapWarning": "Never assume that code running under Bun is type-safe without running `tsc --noEmit` in your test/lint scripts."
+    },
+    {
+      "question": "How does Bun configure JSX transformations (e.g. React vs SolidJS vs Preact)?",
+      "contextIntro": "Checks knowledge of compiler configuration via `tsconfig.json` in Bun.",
+      "detailedAnswer": "Bun reads your `tsconfig.json` or `jsconfig.json`. You configure JSX compilation via the `compilerOptions.jsx` and `compilerOptions.jsxImportSource` fields: for React 19 (`\"jsx\": \"react-jsx\"`), for Preact (`\"jsxImportSource\": \"preact\"`), or for custom factories (`\"jsxFactory\": \"h\"`).",
+      "trapWarning": "If no `tsconfig.json` is present, Bun defaults to standard `react-jsx` (React 17+ automatic JSX runtime)."
+    }
+  ]
+}

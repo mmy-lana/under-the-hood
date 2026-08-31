@@ -1,0 +1,58 @@
+{
+  "id": "bun-websockets-native-scaling",
+  "title": "Native uSockets Integration: permessage-deflate & 1M Connection Scaling",
+  "category": "frontend",
+  "subcategory": "bun",
+  "versionContext": "Bun 1.x (WebSockets)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["bun", "websockets", "usockets", "scaling", "real-time", "pubsub"],
+  "prerequisites": ["WebSocket protocol basics", "Node.js `ws` package"],
+  "progressiveExplaining": {
+    "eli5": "In Node.js, running a chat room with 100,000 people open at once takes tons of memory and slows down the server. Bun uses a hyper-optimized networking engine (`uSockets`) that uses tiny amounts of RAM per connection, allowing a single server to easily keep 1,000,000 chat connections open at the same time.",
+    "junior": "Bun has native WebSocket support built into `Bun.serve()`. You handle WebSocket connections using the `websocket` object handlers (`open`, `message`, `close`, `drain`). Bun includes built-in **Server-Side Pub/Sub**: `ws.subscribe('chat-room')`, `server.publish('chat-room', 'Hello everyone!')`. This eliminates the need for Redis or external brokers for local broadcast clustering.",
+    "senior": "Architecturally, Bun's WebSockets are powered by `uWebSockets` and `uSockets` in C++ and Zig. Rather than allocating individual JavaScript EventEmitter instances per connection, Bun maintains WebSocket state in lightweight native C structs (~2KB RAM per socket). It supports native `permessage-deflate` compression, automatic ping/pong heartbeats, backpressure buffer monitoring (`ws.getBufferedAmount()`), and zero-copy string broadcasting.",
+    "underTheHood": "The socket descriptor is registered on a non-blocking `epoll`/`kqueue` event loop. When `server.publish(topic, message)` is invoked, Bun's C++ layer loops through the native topic subscriber linked list and writes the WebSocket frame directly into each socket descriptor's TCP buffer in a single native pass, completely bypassing JavaScript VM heap allocation for subscribers."
+  },
+  "rosettaStone": {
+    "node": "Node.js with `ws` package (`const wss = new WebSocketServer({ server })`).",
+    "deno": "`Deno.upgradeWebSocket(req)`.",
+    "bun": "`Bun.serve({ websocket: { message(ws, msg) {} } })` with built-in Pub/Sub.",
+    "go": "Gorilla WebSocket / `nhooyr.io/websocket`."
+  },
+  "codeComparison": {
+    "title": "Node.js ws Manual Broadcast vs Bun Native Pub/Sub",
+    "summary": "Node requires manually iterating Set collections in JS to broadcast; Bun publishes natively in C++.",
+    "legacyOrBad": {
+      "label": "Node.js ws Manual Set Iteration",
+      "snippet": "clients.forEach(client => client.send(data)); // ❌ Slow JS loop for 50k connections",
+      "fullFile": {
+        "filename": "ws-node.js",
+        "language": "js",
+        "code": "// ❌ OLD: Managing custom client Sets and looping in JavaScript to broadcast\nconst { WebSocketServer } = require('ws');\nconst wss = new WebSocketServer({ port: 8080 });\nconst clients = new Set();\n\nwss.on('connection', (ws) => {\n  clients.add(ws);\n  ws.on('message', (data) => {\n    // Iterating 50,000 clients in JS blocks the event loop:\n    for (const client of clients) {\n      if (client.readyState === 1) client.send(data);\n    }\n  });\n  ws.on('close', () => clients.delete(ws));\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bun Native C++ Pub/Sub",
+      "snippet": "server.publish('room-1', message); // ✅ NEW: Fast native broadcast",
+      "fullFile": {
+        "filename": "ws-bun.ts",
+        "language": "ts",
+        "code": "// ✅ NEW: Built-in native topic subscription and C++ broadcasting\nconst server = Bun.serve({\n  port: 8080,\n  fetch(req, server) {\n    const success = server.upgrade(req, { data: { createdAt: Date.now() } });\n    return success ? undefined : new Response('Upgrade failed', { status: 400 });\n  },\n  websocket: {\n    open(ws) {\n      ws.subscribe('general-chat'); // Subscribes in native C++ layer\n    },\n    message(ws, message) {\n      // Broadcasts to all subscribers with zero JS looping overhead!\n      server.publish('general-chat', `User says: ${message}`);\n    },\n    close(ws) {\n      ws.unsubscribe('general-chat');\n    }\n  }\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the memory footprint difference for 100,000 WebSocket connections in Node.js vs Bun?",
+      "contextIntro": "Interviewers test your knowledge of concurrent socket connection economics.",
+      "detailedAnswer": "In Node.js with the `ws` package, each WebSocket connection consumes ~30-50KB of RAM (due to JS object instances, event emitter listeners, and buffer wrappers), requiring **3 to 5 Gigabytes** of RAM for 100k connections. In Bun, connections are managed as compact C structs (~2KB per socket), requiring only **~200-300 Megabytes** of RAM for the same 100k connections.",
+      "trapWarning": "Do not claim Bun WebSockets are faster only because of CPU; the primary advantage is memory efficiency and C++ level broadcast loop execution."
+    },
+    {
+      "question": "How does `ws.send()` handle backpressure when sending data to a slow client?",
+      "contextIntro": "Checks knowledge of socket buffer overflow management.",
+      "detailedAnswer": "`ws.send(data)` returns a number: `-1` if dropped, `0` if dropped due to backpressure, or a positive byte length indicating bytes queued. You can check `ws.getBufferedAmount()` and listen to the `drain(ws)` handler to resume sending data when the slow client's TCP socket buffer drains.",
+      "trapWarning": "Ignoring `ws.getBufferedAmount()` on high-volume streams can cause unconstrained memory buffering for slow clients."
+    }
+  ]
+}
