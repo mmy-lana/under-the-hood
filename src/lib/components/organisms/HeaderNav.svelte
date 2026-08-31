@@ -19,6 +19,11 @@
 
   const currentFilter = $derived(browser ? (page.url.searchParams.get('filter') ?? 'all') : 'all');
 
+  // The framework filter only makes sense on the homepage library grid, so it
+  // is rendered there only (still gated behind lg+). page.url.pathname is
+  // deterministic during prerender, so there is no hydration mismatch.
+  const isHome = $derived(page.url.pathname === '/');
+
   function onFilterChange(event: Event): void {
     const value = (event.currentTarget as HTMLSelectElement).value;
     if (value === 'all') {
@@ -66,20 +71,22 @@
     </nav>
 
     <div class="ml-auto flex items-center gap-2">
-      <label class="hidden items-center gap-1 text-xs text-text-muted lg:flex">
-        <span class="sr-only">Filter topics by framework</span>
-        <select
-          class="min-h-11 rounded-md border border-border bg-surface px-2 py-2 text-sm text-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
-          value={currentFilter}
-          onchange={onFilterChange}
-          aria-label="Filter topics by framework"
-        >
-          <option value="all">All frameworks</option>
-          {#each subcategoryNames as name (name)}
-            <option value={name}>{name}</option>
-          {/each}
-        </select>
-      </label>
+      {#if isHome}
+        <label class="hidden items-center gap-1 text-xs text-text-muted lg:flex">
+          <span class="sr-only">Filter topics by framework</span>
+          <select
+            class="min-h-11 rounded-md border border-border bg-surface px-2 py-2 text-sm text-text focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+            value={currentFilter}
+            onchange={onFilterChange}
+            aria-label="Filter topics by framework"
+          >
+            <option value="all">All frameworks</option>
+            {#each subcategoryNames as name (name)}
+              <option value={name}>{name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
 
       <div class="hidden w-56 sm:block" role="search">
         <SearchBar onopen={onsearch} />

@@ -9,7 +9,7 @@
   import { isCmdK } from '$lib/utils/keyboard';
 
   /** Context key shared with the homepage so its hero search can open the palette. */
-  export const SEARCH_OPEN_KEY = 'uth:search-open';
+  const SEARCH_OPEN_KEY = 'uth:search-open';
 
   interface LayoutProps {
     children: import('svelte').Snippet;

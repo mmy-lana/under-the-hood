@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { allTopics, findTopic } from '$lib/content';
-import type { TopicSchema, RosettaFramework } from '$lib/content/schema';
+import type { TopicSchema } from '$lib/content/schema';
 import { highlight } from '$lib/shiki/highlight';
 import type { DiffPaneData } from '$lib/types';
 

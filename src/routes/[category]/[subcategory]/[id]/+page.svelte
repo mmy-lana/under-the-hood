@@ -10,7 +10,6 @@
   import ProgressiveReader from '$lib/components/organisms/ProgressiveReader.svelte';
   import { getDepth, setDepth, initDepthFromUrl, DEPTH_TIERS } from '$lib/stores/depth.svelte';
   import type { HighlightedCode } from '$lib/types';
-  import type { RosettaFramework } from '$lib/content/schema';
   import type { TopicPageData } from './+page.server';
 
   let { data }: { data: TopicPageData } = $props();

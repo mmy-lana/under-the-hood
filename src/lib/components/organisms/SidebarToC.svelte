@@ -57,8 +57,12 @@
   // and collapse the rest. $effect.pre runs before DOM update → no flash.
   // autoOpenMap() reads activeId, so this effect re-runs on navigation.
   // Does NOT read openSubcats → user toggles persist until the next navigation.
-  $effect.pre(() => {
+  function resetOpenSubcats(): void {
     openSubcats = autoOpenMap();
+  }
+
+  $effect.pre(() => {
+    resetOpenSubcats();
   });
 
   function toggleSubcat(name: string): void {
