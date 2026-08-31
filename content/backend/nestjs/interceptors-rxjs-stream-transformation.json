@@ -1,0 +1,58 @@
+{
+  "id": "interceptors-rxjs-stream-transformation",
+  "title": "Interceptors: CallHandler, next.handle(), and RxJS Response Pipelines",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "interceptors", "rxjs", "callHandler", "aop", "response-mapping"],
+  "prerequisites": ["NestJS ExecutionContext", "RxJS Observables and Operators (`map`, `tap`, `catchError`)"],
+  "progressiveExplaining": {
+    "eli5": "An interceptor is like a wrapper around a gift box. Before the present is made, the interceptor can check the stopwatch (`tap`). After the present is built, the interceptor wraps it in shiny paper and adds a greeting card (`map`) or catches it if it drops and breaks (`catchError`).",
+    "junior": "Interceptors implement the `NestInterceptor` interface with `intercept(context, next: CallHandler): Observable<any>`. They use Aspect-Oriented Programming (AOP) to bind extra logic before and after method execution. By calling `next.handle()`, you invoke the route handler and receive an RxJS `Observable` of the response, which you can transform using operators like `map()` (wrap response in `{ data: ... }`), `tap()` (log execution time), or `timeout()`.",
+    "senior": "Architecturally, Interceptors wrap the execution pipeline using the RxJS stream contract. Unlike Guards (which only control binary entry), Interceptors have dual access: synchronous pre-execution logic runs before `next.handle()`, while asynchronous post-execution logic runs in the returned Observable pipeline. This makes them ideal for response envelope serialization, cache management, distributed tracing span injection, and request timing metrics.",
+    "underTheHood": "`CallHandler.handle()` returns an Observable stream originating from the controller method. NestJS's internal `InterceptorsConsumer` nests all bound interceptors into a single chained Observable composition: `interceptor1(context, { handle: () => interceptor2(context, next) })`. The final resolved stream is subscribed to by the HTTP adapter, which serializes the emitted value to the client socket."
+  },
+  "rosettaStone": {
+    "nestjs": "`return next.handle().pipe(map(data => ({ data })))`.",
+    "spring": "Spring AOP `@Around` advice with `ProceedingJoinPoint.proceed()`.",
+    "fastapi": "Starlette middleware `response = await call_next(request)`.",
+    "node": "Express response wrapping middleware overriding `res.json`."
+  },
+  "codeComparison": {
+    "title": "Manual Controller Response Wrapping vs Global Transform Interceptor",
+    "summary": "Manually wrapping responses in `{ data: ... }` pollutes controller logic; an Interceptor normalizes all API responses cleanly.",
+    "legacyOrBad": {
+      "label": "Manual Controller Envelope Wrapping",
+      "snippet": "return { data: users, timestamp: Date.now() }; // ❌ Duplicated across every controller",
+      "fullFile": {
+        "filename": "users.controller.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Every single endpoint manually structures standard response envelopes.\n// If the company envelope schema changes, hundreds of controllers must be modified.\nimport { Controller, Get } from '@nestjs/common';\n\n@Controller('users')\nexport class UsersController {\n  @Get()\n  findAll() {\n    const users = [{ id: 1, name: 'Ada' }];\n    return {\n      data: users,\n      timestamp: new Date().toISOString(),\n      status: 'success'\n    }; // ❌ Boilerplate\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "RxJS Transform Interceptor",
+      "snippet": "return next.handle().pipe(map(data => ({ data, timestamp: new Date().toISOString() }))); // ✅ NEW",
+      "fullFile": {
+        "filename": "transform.interceptor.ts",
+        "language": "typescript",
+        "code": "import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';\nimport { Observable } from 'rxjs';\nimport { map } from 'rxjs/operators';\n\nexport interface Response<T> {\n  data: T;\n  timestamp: string;\n}\n\n@Injectable()\nexport class TransformInterceptor<T> implements NestInterceptor<T, Response<T>> {\n  intercept(context: ExecutionContext, next: CallHandler): Observable<Response<T>> {\n    // ✅ NEW: Automatically transforms the returned stream for ALL endpoints globally\n    return next.handle().pipe(\n      map((data) => ({\n        data,\n        timestamp: new Date().toISOString(),\n        statusCode: context.switchToHttp().getResponse().statusCode\n      }))\n    );\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if you do NOT call `next.handle()` inside an Interceptor?",
+      "contextIntro": "Interviewers test your knowledge of interceptor pipeline propagation.",
+      "detailedAnswer": "If you do not call `next.handle()`, the **route handler method will never be executed**. You can use this behavior deliberately to short-circuit requests (e.g. returning cached responses directly from memory via `of(cachedData)` without hitting the controller or database).",
+      "trapWarning": "Returning a plain value without calling `next.handle()` or returning an `Observable` will hang the HTTP connection."
+    },
+    {
+      "question": "How can an Interceptor handle request timeouts in NestJS?",
+      "contextIntro": "Checks knowledge of RxJS operator integration with NestJS interceptors.",
+      "detailedAnswer": "Pipe the `timeout()` operator onto `next.handle()` and catch `TimeoutError` via `catchError()`:\n```typescript\nreturn next.handle().pipe(\n  timeout(5000),\n  catchError(err => {\n    if (err instanceof TimeoutError) throw new RequestTimeoutException();\n    return throwError(() => err);\n  })\n);\n```",
+      "trapWarning": "Ensure `RequestTimeoutException` from `@nestjs/common` is thrown so NestJS serializes an HTTP 408 response."
+    }
+  ]
+}

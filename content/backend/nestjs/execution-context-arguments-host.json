@@ -1,0 +1,58 @@
+{
+  "id": "execution-context-arguments-host",
+  "title": "ExecutionContext & ArgumentsHost: HTTP, WebSocket, and Microservice Abstraction",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "execution-context", "arguments-host", "guards", "interceptors", "microservices"],
+  "prerequisites": ["NestJS Guards and Interceptors", "HTTP vs WebSocket vs RPC transports"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a universal power adapter that can plug into a standard wall socket (HTTP), a high-voltage machine (WebSockets), or a ship generator (Microservices). `ArgumentsHost` is that adapter: it lets your guards and error filters work identically no matter what kind of connection the user is using.",
+    "junior": "`ArgumentsHost` is an abstraction provided to filters, guards, and interceptors that gives access to the underlying protocol arguments. You use `host.switchToHttp()` (to get `req`, `res`), `host.switchToWs()` (to get `client`, `data`), or `host.switchToRpc()` (to get `data`, `context`). `ExecutionContext` extends `ArgumentsHost` by adding metadata about the current controller class (`context.getClass()`) and method handler (`context.getHandler()`).",
+    "senior": "Architecturally, `ArgumentsHost` decouples cross-cutting concerns (guards, exception filters, interceptors) from specific transport layers. A single `@Catch()` filter or `@Injectable()` guard can inspect `host.getType()` (`'http' | 'ws' | 'rpc' | 'graphql'`) and dynamically extract the appropriate protocol payload. `ExecutionContext` enables reflection-driven access control by pairing `context.getHandler()` with the `Reflector` service to read `@SetMetadata()` annotations.",
+    "underTheHood": "Under the hood, `ArgumentsHost` wraps an `args: any[]` array corresponding to the underlying transport driver. In HTTP (Express), `args = [req, res, next]`. In WebSockets, `args = [client, data]`. In Microservices, `args = [data, context]`. `switchToHttp()` returns an `HttpArgumentsHost` wrapper with helper methods `getRequest()` (`args[0]`) and `getResponse()` (`args[1]`), avoiding brittle array indexing."
+  },
+  "rosettaStone": {
+    "nestjs": "`context.switchToHttp().getRequest()` / `context.getHandler()`.",
+    "spring": "Spring `HandlerMethod` and `ServletServerHttpRequest`.",
+    "fastapi": "Starlette `Request` and ASGI `scope` dictionary.",
+    "node": "Express `(req, res, next)` raw middleware arguments."
+  },
+  "codeComparison": {
+    "title": "Express-Coupled Middleware vs Multi-Protocol ExecutionContext Guard",
+    "summary": "Hardcoding `req.headers` breaks WebSockets and RPC; `ExecutionContext` provides multi-protocol abstraction.",
+    "legacyOrBad": {
+      "label": "Express-Coupled Guard (Brittle)",
+      "snippet": "const req = context.getArgs()[0]; // ❌ Breaks in WebSockets / Microservices",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Indexing raw arguments directly assumes the app is running on Express HTTP.\n// If this guard is applied to a WebSocket gateway or Microservice controller, it crashes!\nimport { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';\n\n@Injectable()\nexport class BrittleAuthGuard implements CanActivate {\n  canActivate(context: ExecutionContext): boolean {\n    const req = context.getArgs()[0]; // ❌ Hardcoded index assumption\n    const token = req.headers['authorization'];\n    return !!token;\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Protocol-Aware ExecutionContext Guard",
+      "snippet": "const req = context.switchToHttp().getRequest(); const handler = context.getHandler(); // ✅ NEW",
+      "fullFile": {
+        "filename": "auth.guard.ts",
+        "language": "typescript",
+        "code": "import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';\nimport { Reflector } from '@nestjs/core';\n\n@Injectable()\nexport class UniversalAuthGuard implements CanActivate {\n  constructor(private reflector: Reflector) {}\n\n  canActivate(context: ExecutionContext): boolean {\n    // ✅ Read metadata from controller handler or class:\n    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [\n      context.getHandler(),\n      context.getClass()\n    ]);\n    if (isPublic) return true;\n\n    // ✅ Safely extract request based on protocol type:\n    if (context.getType() === 'http') {\n      const req = context.switchToHttp().getRequest();\n      return !!req.headers['authorization'];\n    }\n    if (context.getType() === 'ws') {\n      const client = context.switchToWs().getClient();\n      return !!client.handshake?.headers?.authorization;\n    }\n    return true;\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `ArgumentsHost` and `ExecutionContext`?",
+      "contextIntro": "Interviewers test your precision with NestJS core interface hierarchies.",
+      "detailedAnswer": "`ArgumentsHost` provides access *only* to the underlying transport arguments (`switchToHttp()`, `switchToWs()`, `switchToRpc()`, `getArgs()`). It is passed to Exception Filters. `ExecutionContext` **extends `ArgumentsHost`** and adds metadata about the execution pipeline: `getClass()` (the Controller class constructor) and `getHandler()` (the route handler method reference). It is passed to Guards and Interceptors.",
+      "trapWarning": "Exception Filters receive `ArgumentsHost`, not `ExecutionContext`, so they cannot call `context.getHandler()`."
+    },
+    {
+      "question": "How do you inspect custom metadata set on a controller method using `ExecutionContext` and `Reflector`?",
+      "contextIntro": "Checks knowledge of reflection and role-based access control.",
+      "detailedAnswer": "Inject the `Reflector` service and call `reflector.get('roles', context.getHandler())` or `reflector.getAllAndOverride('roles', [context.getHandler(), context.getClass()])` to merge and override class-level metadata with method-level metadata.",
+      "trapWarning": "Always pass `[context.getHandler(), context.getClass()]` to `getAllAndOverride` so method-level decorators take precedence over controller-level decorators."
+    }
+  ]
+}

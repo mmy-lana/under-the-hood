@@ -1,0 +1,58 @@
+{
+  "id": "cqrs-command-query-bus",
+  "title": "CQRS Pattern: CommandBus, QueryBus, EventBus, and Sagas",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+ (`@nestjs/cqrs`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "cqrs", "command-bus", "query-bus", "event-bus", "sagas", "architecture"],
+  "prerequisites": ["NestJS Services and Dependency Injection", "CQRS & Event Sourcing patterns"],
+  "progressiveExplaining": {
+    "eli5": "In a busy restaurant, ordering food (making changes to the kitchen) uses a completely separate order counter than asking 'what are the daily specials?' (reading data). CQRS splits your application into two lanes: **Commands** (do something / mutate) and **Queries** (read something / fast view), keeping massive systems clean and organized.",
+    "junior": "The CQRS package (`@nestjs/cqrs`) separates read and write operations. **Commands** represent state-changing actions executed via `CommandBus.execute(new CreateUserCommand(data))`. **Queries** represent read-only operations executed via `QueryBus.execute(new GetUserQuery(id))`. **Events** announce past occurrences via `EventBus.publish(new UserCreatedEvent(id))`. **Sagas** listen to events and trigger subsequent commands asynchronously.",
+    "senior": "Architecturally, CQRS enforces strict Command-Query Separation (CQS) at the domain level. Commands have dedicated single-responsibility `ICommandHandler` implementations, ensuring write models contain domain validation and business invariants without query-joining clutter. Queries use dedicated `IQueryHandler` implementations optimized for direct database views or read replicas. Sagas are RxJS stream processors (`@Saga()`) coordinating long-running, multi-service distributed transactions.",
+    "underTheHood": "The `CqrsModule` maintains internal handler registries (`Map<string, ICommandHandler>`). When `commandBus.execute(command)` is called, it resolves the command constructor name, locates the registered handler from the IoC container, executes `handler.execute(command)`, and returns the promise. Sagas subscribe to the global `EventBus` stream (`events$.pipe(ofType(...), map(...))`), automatically dispatching mapped output commands into the `CommandBus`."
+  },
+  "rosettaStone": {
+    "nestjs": "`commandBus.execute(new CreateUserCommand())` and `@CommandHandler(CreateUserCommand)`.",
+    "spring": "Axon Framework `@CommandHandler` and `@QueryHandler` buses in Java.",
+    "dotnet": "MediatR `IMediator.Send(new CreateUserCommand())` in C# .NET.",
+    "go": "Watermill / custom Go channel-based Command/Query message buses."
+  },
+  "codeComparison": {
+    "title": "Monolithic Service with Mixed Read/Write vs Clean CQRS Handlers",
+    "summary": "Monolithic services become bloated with hundreds of mixed methods; CQRS breaks features into isolated command and query handlers.",
+    "legacyOrBad": {
+      "label": "Monolithic Bloated Service",
+      "snippet": "userService.createAndEmailAndLogAndAudit(data); // ❌ 2000-line service god object",
+      "fullFile": {
+        "filename": "user-god.service.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: A massive service class handling validation, database writing,\n// email dispatching, caching, search indexing, and complex queries in one giant file.\n@Injectable()\nexport class UserGodService {\n  async createUser(dto: any) {\n    const user = await this.db.save(dto);\n    await this.emailService.sendWelcome(user);\n    await this.elasticSearch.index(user);\n    await this.analytics.track('signup');\n    return user;\n  }\n\n  async getUserDashboardReport(id: string) {\n    // 50 lines of complex SQL join queries sitting in the same file as mutations...\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Decoupled CQRS Command Handler",
+      "snippet": "commandBus.execute(new CreateUserCommand(dto)); // ✅ NEW: Single-responsibility handler",
+      "fullFile": {
+        "filename": "create-user.handler.ts",
+        "language": "typescript",
+        "code": "import { CommandHandler, ICommandHandler, EventBus } from '@nestjs/cqrs';\n\nexport class CreateUserCommand {\n  constructor(public readonly email: string, public readonly name: string) {}\n}\n\n@CommandHandler(CreateUserCommand)\nexport class CreateUserHandler implements ICommandHandler<CreateUserCommand> {\n  constructor(private repository: UserRepository, private eventBus: EventBus) {}\n\n  async execute(command: CreateUserCommand) {\n    const user = await this.repository.create({ email: command.email, name: command.name });\n    \n    // ✅ Publish event: Sagas or event handlers handle emails/analytics independently!\n    this.eventBus.publish(new UserCreatedEvent(user.id));\n    return user;\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is a 'Saga' in the NestJS CQRS architecture and how does it differ from an Event Handler?",
+      "contextIntro": "Interviewers test your knowledge of event-driven distributed transactions.",
+      "detailedAnswer": "An **Event Handler** (`@EventsHandler`) is a terminal listener that performs side effects (e.g. sending an email or writing a log) when an event occurs. A **Saga** (`@Saga()`) is an RxJS stream operator that listens to events and **translates them into NEW Commands** to be dispatched to the `CommandBus`. Sagas orchestrate multi-step, asynchronous business workflows (e.g. `OrderCreatedEvent` -> maps to -> `ExecutePaymentCommand`).",
+      "trapWarning": "A Saga must return an `Observable<ICommand>`. If a saga returns `void`, it will not dispatch commands."
+    },
+    {
+      "question": "Can multiple Command Handlers handle the same Command in NestJS?",
+      "contextIntro": "Checks precision regarding Command vs Event semantics in CQRS.",
+      "detailedAnswer": "**No.** In CQRS, a **Command has exactly ONE handler** (1:1 relationship) because a command represents an explicit intent to mutate state. An **Event can have ZERO or MANY handlers** (1:N broadcast relationship) because an event represents a past fact that multiple components may react to.",
+      "trapWarning": "Registering two handlers for the same `ICommand` will throw a runtime error in NestJS."
+    }
+  ]
+}

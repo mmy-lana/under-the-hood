@@ -1,0 +1,58 @@
+{
+  "id": "exception-filters-http-exception",
+  "title": "Exception Filters: @Catch(), HttpException Normalization, and Error Boundaries",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "exception-filters", "http-exception", "error-handling", "catch-decorator"],
+  "prerequisites": ["NestJS ArgumentsHost", "JavaScript Error and Exception Handling"],
+  "progressiveExplaining": {
+    "eli5": "When a computer program crashes unexpectedly, it usually vomits an ugly stack trace. An Exception Filter is an emergency triage team: it catches any error before it leaves the building, translates it into a polite JSON message with an error code, and logs the crash safely.",
+    "junior": "Exception Filters catch unhandled exceptions across your application. Create one with `@Catch()` implementing `ExceptionFilter`: `catch(exception, host: ArgumentsHost)`. You extract `const ctx = host.switchToHttp()`, get `response` and `request`, and format a custom error response: `response.status(status).json({ ... })`. NestJS includes built-in classes like `NotFoundException`, `BadRequestException`, and `UnauthorizedException` inheriting from `HttpException`.",
+    "senior": "Architecturally, Exception Filters provide centralized, transport-agnostic error normalization. Unhandled domain errors (like TypeORM `QueryFailedError` or Prisma `P2002` unique constraint violations) are intercepted before leaking database schemas or internal stack traces to the public internet. Binding `@Catch()` with no arguments creates an **All-Exceptions Filter** acting as the ultimate boundary for both recognized `HttpException`s and unexpected `Error` instances.",
+    "underTheHood": "When an error is thrown during pipeline execution, NestJS catches it in an internal `try/catch` wrapper and passes it to the `ExceptionsHandler`. The handler searches registered filters (method -> controller -> global). It invokes `filter.catch(exception, host)`. If no custom filter handles the error, NestJS's `BaseExceptionFilter` formats a default JSON response (`statusCode: 500`, `message: 'Internal server error'`)."
+  },
+  "rosettaStone": {
+    "nestjs": "`@Catch()` implementing `ExceptionFilter` with `host.switchToHttp()`.",
+    "spring": "Spring Boot `@ControllerAdvice` with `@ExceptionHandler` methods.",
+    "fastapi": "FastAPI `@app.exception_handler(CustomException)` decorators.",
+    "express": "Express 4-parameter error middleware `(err, req, res, next)`."
+  },
+  "codeComparison": {
+    "title": "Try-Catch Controller Boilerplate vs Centralized Exception Filter",
+    "summary": "Writing try/catch blocks in every controller leaks implementation details; an Exception Filter normalizes errors globally.",
+    "legacyOrBad": {
+      "label": "Manual Try-Catch in Controllers",
+      "snippet": "try { await service.find(); } catch (err) { res.status(500).json({ err }); } // ❌ Leaks raw errors",
+      "fullFile": {
+        "filename": "users.controller.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Cluttered try/catch blocks in every route handler.\n// Raw database errors (like SQL injection syntax errors) leak to the client!\nimport { Controller, Get, Res, HttpStatus } from '@nestjs/common';\n\n@Controller('users')\nexport class UsersController {\n  @Get()\n  async findAll(@Res() res: any) {\n    try {\n      const users = await this.service.getUsers();\n      return res.json(users);\n    } catch (err: any) {\n      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({\n        error: err.message,\n        stack: err.stack // ❌ Dangerous security leak!\n      });\n    }\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Global All-Exceptions Filter",
+      "snippet": "@Catch() export class AllExceptionsFilter implements ExceptionFilter { ... } // ✅ NEW: Centralized & sanitized",
+      "fullFile": {
+        "filename": "http-exception.filter.ts",
+        "language": "typescript",
+        "code": "import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';\nimport { Request, Response } from 'express';\n\n@Catch() // Catches ALL unhandled exceptions (HttpException and raw Error)\nexport class AllExceptionsFilter implements ExceptionFilter {\n  private readonly logger = new Logger(AllExceptionsFilter.name);\n\n  catch(exception: unknown, host: ArgumentsHost) {\n    const ctx = host.switchToHttp();\n    const response = ctx.getResponse<Response>();\n    const request = ctx.getRequest<Request>();\n\n    const status =\n      exception instanceof HttpException\n        ? exception.getStatus()\n        : HttpStatus.INTERNAL_SERVER_ERROR;\n\n    const message =\n      exception instanceof HttpException\n        ? exception.getResponse()\n        : 'Internal server error';\n\n    this.logger.error(`HTTP ${status} Error on ${request.url}`, exception instanceof Error ? exception.stack : '');\n\n    // ✅ Sanitized, standardized enterprise error envelope:\n    response.status(status).json({\n      statusCode: status,\n      timestamp: new Date().toISOString(),\n      path: request.url,\n      error: typeof message === 'object' ? message : { message }\n    });\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you bind an Exception Filter globally while still allowing Dependency Injection (e.g. injecting `ConfigService` or a `Logger`)?",
+      "contextIntro": "Interviewers test your knowledge of global provider tokens vs `app.useGlobalFilters()`.",
+      "detailedAnswer": "Register the filter in `AppModule` using the **`APP_FILTER`** token:\n```typescript\n{ provide: APP_FILTER, useClass: AllExceptionsFilter }\n```\nThis ensures the filter is managed by the NestJS IoC container with full dependency injection support. Using `app.useGlobalFilters(new AllExceptionsFilter())` in `main.ts` prevents constructor dependency injection.",
+      "trapWarning": "Never use `new Filter()` in `main.ts` if your filter requires injected services."
+    },
+    {
+      "question": "What is the difference between `@Catch(HttpException)` and `@Catch()` with no arguments?",
+      "contextIntro": "Checks precision regarding exception inheritance filtering.",
+      "detailedAnswer": "`@Catch(HttpException)` will **only catch exceptions that inherit from `HttpException`** (like `NotFoundException`, `BadRequestException`). Unhandled native errors (e.g. `TypeError`, `DatabaseConnectionError`) will bypass the filter. `@Catch()` (with no arguments) acts as an **All-Exceptions catch-all** that intercepts every single error thrown in the app.",
+      "trapWarning": "If using `@Catch(HttpException)`, unhandled database crashes will bypass your filter and be handled by the default fallback."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "typeorm-vs-prisma-in-nestjs",
+  "title": "ORM Architecture: TypeORM Active Record / Data Mapper vs Prisma Client Engine",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+ (TypeORM / Prisma)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "typeorm", "prisma", "orm", "database", "sql"],
+  "prerequisites": ["Relational Databases (Postgres/MySQL)", "TypeScript Decorators vs Code Generation"],
+  "progressiveExplaining": {
+    "eli5": "TypeORM is like decorating your apartment with stickers (`@Entity()`, `@Column()`): you write TypeScript classes and TypeORM uses reflection to guess what the database should look like. Prisma is like generating blueprints with a computer: you write a clear schema file, and a fast Rust engine generates 100% type-safe database code with zero guesswork.",
+    "junior": "TypeORM uses TypeScript class decorators (`@Entity()`, `@PrimaryGeneratedColumn()`, `@ManyToOne()`) and repository injection (`@InjectRepository(User)`). Prisma uses a dedicated schema file (`schema.prisma`) and generates a custom, strongly-typed `PrismaClient` via `npx prisma generate`, injected into NestJS as a singleton service extending `OnModuleInit`.",
+    "senior": "Architecturally, TypeORM implements the **Data Mapper / Active Record** pattern via runtime decorator metadata and `reflect-metadata`. It constructs dynamic SQL strings at runtime, which can cause subtle N+1 queries and type mismatches. Prisma uses an **Engine-based Query Generator** written in Rust (the query engine binary) that communicates via shared memory/IPC. Prisma eliminates runtime reflection, guarantees query-level return type safety (selecting specific fields narrows the TypeScript return type), and automatically batches queries to eliminate N+1 relations.",
+    "underTheHood": "In TypeORM, `@InjectRepository()` resolves a `Repository<T>` connected to an active `DataSource`. It builds SQL queries using dynamic AST string concatenation. In Prisma, `@prisma/client` connects via a Node-API C++ binding directly to the precompiled Rust query engine binary. When executing `prisma.user.findUnique()`, the Rust engine optimizes the AST, executes the query over a connection pool, and returns pre-typed JSON objects directly."
+  },
+  "rosettaStone": {
+    "nestjs": "TypeORM `@InjectRepository(User)` vs Prisma `this.prisma.user.findMany()`.",
+    "spring": "Spring Data JPA (Hibernate entity annotations) vs jOOQ (generated types).",
+    "fastapi": "SQLAlchemy (declarative models) vs Tortoise ORM / Prisma Python.",
+    "go": "GORM (struct tags) vs sqlc / Ent (generated type-safe queries)."
+  },
+  "codeComparison": {
+    "title": "TypeORM Decorator Repository vs Prisma Type-Safe Client Service",
+    "summary": "TypeORM requires decorators and runtime type casting; Prisma generates strict types from the schema.",
+    "legacyOrBad": {
+      "label": "TypeORM Repository Injection",
+      "snippet": "@InjectRepository(User) private userRepo: Repository<User>; // Decorator metadata reflection",
+      "fullFile": {
+        "filename": "users-typeorm.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { User } from './user.entity';\n\n@Injectable()\nexport class UsersServiceTypeORM {\n  constructor(\n    @InjectRepository(User)\n    private usersRepository: Repository<User>\n  ) {}\n\n  async findOne(id: number): Promise<User | null> {\n    // TypeORM return type is always full User, even if fields are unselected:\n    return this.usersRepository.findOne({\n      where: { id },\n      relations: ['profile']\n    });\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Prisma Client Service Injection",
+      "snippet": "this.prisma.user.findUnique({ where: { id }, select: { id: true, email: true } }); // ✅ Exact return type",
+      "fullFile": {
+        "filename": "users-prisma.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable, OnModuleInit, OnApplicationShutdown } from '@nestjs/common';\nimport { PrismaClient } from '@prisma/client';\n\n@Injectable()\nexport class PrismaService extends PrismaClient implements OnModuleInit, OnApplicationShutdown {\n  async onModuleInit() {\n    await this.$connect();\n  }\n  async onApplicationShutdown() {\n    await this.$disconnect();\n  }\n}\n\n@Injectable()\nexport class UsersServicePrisma {\n  constructor(private prisma: PrismaService) {}\n\n  async findOne(id: number) {\n    // ✅ Return type is automatically narrowed to { id: number, email: string }:\n    return this.prisma.user.findUnique({\n      where: { id },\n      select: { id: true, email: true }\n    });\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does Prisma eliminate the N+1 query problem on relations compared to TypeORM?",
+      "contextIntro": "Interviewers test your knowledge of ORM query planning and batching.",
+      "detailedAnswer": "When fetching nested relations (e.g. `users.map(u => u.posts)`), naive TypeORM queries execute 1 query for users and N queries for each user's posts (unless explicitly using `JOIN FETCH` / `relations`). Prisma's Rust Query Engine uses an **automatic query dataloader batching mechanism**: it automatically coalesces nested relation queries into a single batched `WHERE id IN (...)` SQL query, eliminating N+1 queries without requiring manual joins.",
+      "trapWarning": "In TypeORM, forgetting to specify `relations: ['posts']` will leave the relation `undefined` at runtime if lazy loading is disabled."
+    },
+    {
+      "question": "Why does TypeORM sometimes cause runtime crashes with circular entity relationships in NestJS?",
+      "contextIntro": "Checks understanding of ES module evaluation and circular entity imports.",
+      "detailedAnswer": "In TypeORM, bidirectional relationships (`@OneToMany(() => Post, post => post.user)`) require entity classes to import each other. If module loading evaluates `User` before `Post`, the reference to `Post` is `undefined` at decorator evaluation time, causing TypeORM metadata initialization to throw an error. This is why TypeORM relationship decorators strictly require the arrow function wrapper syntax `() => TargetEntity` to defer evaluation.",
+      "trapWarning": "Writing `@OneToMany(Post, ...)` directly instead of `@OneToMany(() => Post, ...)` will crash on startup due to circular dependency TDZ."
+    }
+  ]
+}

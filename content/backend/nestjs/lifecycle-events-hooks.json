@@ -1,0 +1,58 @@
+{
+  "id": "lifecycle-events-hooks",
+  "title": "Lifecycle Hooks: OnModuleInit, OnApplicationBootstrap, and Graceful Shutdown",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "lifecycle", "onModuleInit", "onApplicationBootstrap", "shutdown-hooks", "graceful-shutdown"],
+  "prerequisites": ["NestJS ApplicationContext", "Node.js process signals (SIGTERM, SIGINT)"],
+  "progressiveExplaining": {
+    "eli5": "When a factory starts up, a checklist runs in order: turn on electricity (`onModuleInit`), connect to suppliers (`onApplicationBootstrap`), and open the front doors to customers (`listen`). When the factory closes, an exit checklist shuts off the machines gracefully without corrupting products (`beforeApplicationShutdown` / `onApplicationShutdown`).",
+    "junior": "NestJS providers and modules can hook into application startup and shutdown events by implementing lifecycle interfaces: `OnModuleInit` (called immediately after module dependencies resolve), `OnApplicationBootstrap` (called right before the app starts listening), `BeforeApplicationShutdown` (called when SIGTERM is received), and `OnApplicationShutdown` (called after connections close). To enable shutdown hooks, call `app.enableShutdownHooks()`.",
+    "senior": "Architecturally, lifecycle hooks provide deterministic initialization and cleanup ordering across the dependency graph. During startup, `onModuleInit` and `onApplicationBootstrap` execute in topological dependency order (deepest child dependencies first). During shutdown (e.g. Kubernetes pod termination via `SIGTERM`), NestJS pauses incoming HTTP requests, executes `beforeApplicationShutdown` to drain in-flight jobs, and closes database connections in reverse order, preventing connection leaks and half-written transactions.",
+    "underTheHood": "NestJS's `NestApplication` manages lifecycle stages. Startup iterates the `ModuleRef` dependency graph invoking `onModuleInit()` on all providers, followed by `onApplicationBootstrap()`. When `app.enableShutdownHooks()` is called, NestJS binds listeners to `process.on('SIGTERM')` and `SIGINT`. Upon signal receipt, it stops the underlying HTTP server (e.g. Express/Fastify `server.close()`), iterates providers invoking `beforeApplicationShutdown(signal)`, calls `onApplicationShutdown(signal)`, and exits the process cleanly."
+  },
+  "rosettaStone": {
+    "nestjs": "`implements OnModuleInit, OnApplicationShutdown` with `app.enableShutdownHooks()`.",
+    "spring": "Spring `@PostConstruct`, `InitializingBean`, `@PreDestroy`, and `DisposableBean`.",
+    "fastapi": "FastAPI `@asynccontextmanager` lifespan events (`yield` for startup/shutdown).",
+    "node": "`process.on('SIGTERM', async () => { await db.close(); process.exit(0); })`."
+  },
+  "codeComparison": {
+    "title": "Ad-hoc Process Signal Handlers vs Native NestJS Lifecycle Hooks",
+    "summary": "Manual `process.on('SIGTERM')` handlers create race conditions with the HTTP server; NestJS lifecycle hooks ensure clean drained shutdowns.",
+    "legacyOrBad": {
+      "label": "Manual Process Listeners",
+      "snippet": "process.on('SIGTERM', () => db.disconnect()); // ❌ Drops in-flight requests and causes race conditions",
+      "fullFile": {
+        "filename": "database.service.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Manual process signal listeners bypass NestJS's dependency tree,\n// closing the database while active HTTP requests are still executing queries!\nimport { Injectable } from '@nestjs/common';\n\n@Injectable()\nexport class DatabaseService {\n  constructor() {\n    process.on('SIGTERM', async () => {\n      console.log('Closing DB connection...');\n      await this.dbClient.close(); // ❌ Kills active queries in flight!\n    });\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Native NestJS Lifecycle Hooks",
+      "snippet": "export class DatabaseService implements OnModuleInit, OnApplicationShutdown { ... } // ✅ NEW",
+      "fullFile": {
+        "filename": "database.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable, OnModuleInit, OnApplicationShutdown } from '@nestjs/common';\n\n@Injectable()\nexport class DatabaseService implements OnModuleInit, OnApplicationShutdown {\n  // ✅ NEW: Guaranteed to run before the app accepts incoming HTTP traffic\n  async onModuleInit() {\n    await this.connectWithRetry();\n  }\n\n  // ✅ NEW: Guaranteed to run only AFTER the HTTP server stops accepting new connections\n  async onApplicationShutdown(signal?: string) {\n    console.log(`Received ${signal}, draining connection pool gracefully...`);\n    await this.pool.drain();\n    await this.pool.clear();\n  }\n}\n\n// main.ts:\n// const app = await NestFactory.create(AppModule);\n// app.enableShutdownHooks(); // Required for SIGTERM handling\n// await app.listen(3000);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does `onApplicationShutdown` fail to fire on `SIGTERM` by default in NestJS?",
+      "contextIntro": "Interviewers test your real-world production deployment experience on Kubernetes / Docker.",
+      "detailedAnswer": "By default, NestJS **does not enable system signal listeners** to save memory and avoid unintended process exits. You **must explicitly call `app.enableShutdownHooks()`** in `main.ts` before `app.listen()`. Without calling `enableShutdownHooks()`, receiving a `SIGTERM` signal (e.g. from Kubernetes during pod termination) will terminate the Node.js process immediately without running any `onApplicationShutdown` or `beforeApplicationShutdown` hooks.",
+      "trapWarning": "Always call `app.enableShutdownHooks()` in production entrypoints to prevent database connection drop corruption during rolling deploys."
+    },
+    {
+      "question": "What is the execution order difference between `onModuleInit` and `onApplicationBootstrap`?",
+      "contextIntro": "Checks knowledge of initialization phases in the NestJS container.",
+      "detailedAnswer": "`onModuleInit()` runs for each module as soon as its individual dependencies are resolved (can be called while other sibling modules are still initializing). `onApplicationBootstrap()` runs **only after ALL modules in the entire application have finished their `onModuleInit`**, guaranteeing that all services across the entire dependency graph are fully ready.",
+      "trapWarning": "Do not call cross-module dependent initialization logic in `onModuleInit()`; use `onApplicationBootstrap()` to ensure cross-module dependencies are initialized."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "guards-and-metadata-reflection",
+  "title": "Guards: CanActivate, Reflector Metadata, and Role-Based Authorization",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "guards", "canActivate", "reflector", "authorization", "rbac"],
+  "prerequisites": ["NestJS ExecutionContext", "TypeScript Decorators & Metadata"],
+  "progressiveExplaining": {
+    "eli5": "A guard is a bouncer at a VIP club door. Before you are allowed to enter any room, the bouncer checks your badge (JWT token) and reads the sign on the door (`@Roles('admin')`). If your badge doesn't match the door's sign, the bouncer turns you away with a `403 Forbidden` before you ever take a step inside.",
+    "junior": "Guards determine whether a request should be handled by a route handler. They implement `CanActivate` with a `canActivate(context: ExecutionContext): boolean | Promise<boolean>`. If it returns `true`, the request proceeds; if `false`, NestJS returns `403 Forbidden`. Use `@UseGuards(AuthGuard)` at the controller or method level, or register globally with `APP_GUARD`.",
+    "senior": "Architecturally, Guards execute **after all middleware** but **before interceptors, pipes, and handlers**. This positioning makes them optimal for authentication and Role-Based Access Control (RBAC) because invalid requests are rejected before expensive pipes, validation logic, and body transformations execute. By utilizing the `Reflector` service, guards dynamically extract metadata defined via `@SetMetadata()` or `Reflector.createDecorator()`.",
+    "underTheHood": "During the request pipeline, NestJS's `GuardsConsumer` iterates all bound guards in order. It calls `canActivate(context)`. If a guard returns an Observable, NestJS converts it via `lastValueFrom()`. If any guard returns `false`, NestJS halts the execution chain immediately and throws a `ForbiddenException`."
+  },
+  "rosettaStone": {
+    "nestjs": "`@UseGuards(RolesGuard)` implementing `CanActivate` with `Reflector`.",
+    "spring": "Spring Security `@PreAuthorize(\"hasRole('ADMIN')\")` expression evaluator.",
+    "fastapi": "FastAPI `Security(get_current_user, scopes=[\"admin\"])` dependencies.",
+    "express": "Custom `(req, res, next)` authentication middleware functions."
+  },
+  "codeComparison": {
+    "title": "Middleware Route Protection vs Declarative NestJS RBAC Guard",
+    "summary": "Express middleware requires hardcoded URL regex matching; NestJS Guards use declarative metadata decorators.",
+    "legacyOrBad": {
+      "label": "Imperative Middleware Check",
+      "snippet": "if (req.path.startsWith('/admin') && req.user.role !== 'admin') res.status(403).send(); // ❌ Brittle regex routes",
+      "fullFile": {
+        "filename": "auth.middleware.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Hardcoding path prefixes and role requirements inside procedural middleware\n// easily breaks when routes change or nested controllers are introduced.\nexport function RoleMiddleware(req: any, res: any, next: any) {\n  if (req.path.startsWith('/admin') && req.user?.role !== 'admin') {\n    return res.status(403).json({ message: 'Forbidden' });\n  }\n  next();\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Declarative Roles Guard with Reflector",
+      "snippet": "@Roles(Role.Admin) @UseGuards(RolesGuard) // ✅ NEW: Declarative, type-safe metadata",
+      "fullFile": {
+        "filename": "roles.guard.ts",
+        "language": "typescript",
+        "code": "import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';\nimport { Reflector } from '@nestjs/core';\n\nexport const Roles = Reflector.createDecorator<string[]>();\n\n@Injectable()\nexport class RolesGuard implements CanActivate {\n  constructor(private reflector: Reflector) {}\n\n  canActivate(context: ExecutionContext): boolean {\n    const requiredRoles = this.reflector.getAllAndOverride(Roles, [\n      context.getHandler(),\n      context.getClass()\n    ]);\n    if (!requiredRoles) return true; // No roles required -> public\n\n    const request = context.switchToHttp().getRequest();\n    const user = request.user;\n    return requiredRoles.some((role) => user?.roles?.includes(role));\n  }\n}\n\n// Usage on controller:\n// @Roles(['admin'])\n// @UseGuards(AuthGuard, RolesGuard)\n// @Delete(':id')\n// remove(@Param('id') id: string) { ... }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "In what order do Middleware, Guards, Interceptors, and Pipes execute in the NestJS request lifecycle?",
+      "contextIntro": "This is one of the most frequently asked NestJS architectural lifecycle questions.",
+      "detailedAnswer": "The exact incoming request execution order is:\n1. **Global / Module Middleware**\n2. **Guards** (Global -> Controller -> Route)\n3. **Interceptors (Pre-controller logic)**\n4. **Pipes** (Global -> Controller -> Route -> Parameter)\n5. **Controller Route Handler**\n6. **Interceptors (Post-controller RxJS response mapping)**\n7. **Exception Filters** (if an error is thrown anywhere)",
+      "trapWarning": "Guards run *before* Pipes. This means parameter validation and type transformation have not occurred yet when a Guard executes."
+    },
+    {
+      "question": "How do you register a global guard that requires dependency injection (e.g. injecting `Reflector` or `AuthService`)?",
+      "contextIntro": "Checks understanding of multi-provider tokens vs `app.useGlobalGuards()`.",
+      "detailedAnswer": "Do not instantiate it in `main.ts` with `new Guard()`. Instead, bind it in your `AppModule` using the **`APP_GUARD`** token:\n```typescript\n{ provide: APP_GUARD, useClass: RolesGuard }\n```\nThis ensures the guard is instantiated within the NestJS IoC container with full dependency injection support.",
+      "trapWarning": "Using `app.useGlobalGuards(new RolesGuard())` in `main.ts` prevents dependency injection because the instance is created outside the NestJS container."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "microservices-tcp-redis-transporters",
+  "title": "Microservices: @MessagePattern(), TCP, Redis, and Kafka Transporters",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+ (`@nestjs/microservices`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "microservices", "message-pattern", "event-pattern", "redis", "kafka", "tcp"],
+  "prerequisites": ["NestJS Controllers and Services", "Message Brokers / RPC concepts"],
+  "progressiveExplaining": {
+    "eli5": "In a regular web app, a user sends a request and waits for an answer. In a microservice mesh, services talk to each other across private channels (like Redis or Kafka). `@MessagePattern` is a walkie-talkie where Service A asks a question and waits for Service B to reply. `@EventPattern` is a loudspeaker where Service A announces 'an order was placed!' and doesn't wait for a reply.",
+    "junior": "NestJS Microservices use transport layers (TCP, Redis, NATS, MQTT, RabbitMQ, Kafka, gRPC) instead of HTTP. Services receive messages using `@MessagePattern('cmd')` (Request-Response pattern) or `@EventPattern('event')` (Event-driven / Fire-and-Forget). Clients connect and emit messages using `ClientProxy` (`client.send('cmd', data)` for request-response, `client.emit('event', data)` for events).",
+    "senior": "Architecturally, NestJS abstracts transport communication behind a unified serializer/deserializer RPC pipeline. The `@MessagePattern` decorator registers handlers in the transport listener map. `client.send()` returns an RxJS `Observable` that handles correlation IDs, timeouts, and response framing transparently. Switching transports (e.g. migrating from TCP in development to Kafka or Redis Pub/Sub in production) requires modifying only the client/server configuration without changing business controller logic.",
+    "underTheHood": "Under the hood, `ServerTCP` / `ServerRedis` / `ServerKafka` listen on the underlying network socket or broker consumer group. When a message arrives, the transport deserializes the payload, looks up the handler matching the pattern string, executes the controller method, and publishes the serialized result back to the client's ephemeral reply queue using the incoming `correlationId` header."
+  },
+  "rosettaStone": {
+    "nestjs": "`@MessagePattern({ cmd: 'get_user' })` and `client.send({ cmd: 'get_user' }, id)`.",
+    "spring": "Spring Cloud Stream / Spring Kafka `@KafkaListener` and `KafkaTemplate.send()`.",
+    "fastapi": "FastAPI background tasks or Celery `@app.task` RPC worker queues.",
+    "go": "Go gRPC protobuf services with `pb.RegisterUserServiceServer()`."
+  },
+  "codeComparison": {
+    "title": "HTTP REST Service-to-Service vs NestJS Microservice MessagePattern",
+    "summary": "HTTP REST introduces DNS and header serialization overhead; Microservice transports use binary framing and message brokers.",
+    "legacyOrBad": {
+      "label": "HTTP Service-to-Service Call",
+      "snippet": "await axios.post('http://billing-service:3000/charge', data); // ❌ Tight HTTP coupling",
+      "fullFile": {
+        "filename": "order.service.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Direct HTTP REST calls between internal microservices\n// introduce connection overhead, DNS lookups, and lack built-in message queuing.\nimport { Injectable } from '@nestjs/common';\nimport axios from 'axios';\n\n@Injectable()\nexport class OrderService {\n  async createOrder(orderData: any) {\n    // Synchronous HTTP coupling:\n    const res = await axios.post('http://billing-service:3001/charge', orderData);\n    return res.data;\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "NestJS MessagePattern ClientProxy",
+      "snippet": "return this.client.send({ cmd: 'charge' }, orderData); // ✅ NEW: Transport-agnostic RPC",
+      "fullFile": {
+        "filename": "order.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable, Inject } from '@nestjs/common';\nimport { ClientProxy } from '@nestjs/microservices';\nimport { firstValueFrom } from 'rxjs';\n\n@Injectable()\nexport class OrderService {\n  constructor(@Inject('BILLING_SERVICE') private client: ClientProxy) {}\n\n  async createOrder(orderData: any) {\n    // ✅ NEW: RPC call via TCP/Redis/Kafka with automatic correlation IDs:\n    const result$ = this.client.send({ cmd: 'charge' }, orderData);\n    return await firstValueFrom(result$);\n  }\n}\n\n// In Billing Controller:\n// @MessagePattern({ cmd: 'charge' })\n// handleCharge(data: any) { return { success: true }; }"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `client.send()` and `client.emit()` in NestJS microservices?",
+      "contextIntro": "Interviewers test your knowledge of communication patterns (RPC vs Event-driven).",
+      "detailedAnswer": "`client.send('pattern', data)` implements the **Request-Response pattern**: it returns an `Observable` and waits for the remote service to process the message and return a response. `client.emit('event', data)` implements the **Event-Driven / Fire-and-Forget pattern**: it returns an `Observable` that completes immediately once the message is published to the broker, without waiting for any response.",
+      "trapWarning": "Using `client.send()` on an endpoint decorated with `@EventPattern()` will hang indefinitely because `@EventPattern` handlers do not send replies."
+    },
+    {
+      "question": "How do correlation IDs work under the hood in NestJS Request-Response microservices?",
+      "contextIntro": "Checks understanding of asynchronous message matching over brokers like RabbitMQ or Redis.",
+      "detailedAnswer": "When `client.send()` executes, NestJS generates a unique UUID `correlationId` and attaches it to the message header along with a `replyTo` queue name. The client subscribes to the reply queue. When the receiver finishes processing, it publishes the result back to `replyTo` with the same `correlationId`. The client matches the incoming response's `correlationId` to the active Observable and resolves it.",
+      "trapWarning": "If a broker payload strips header metadata, correlation ID matching will fail and the client Observable will time out."
+    }
+  ]
+}
