@@ -1,0 +1,58 @@
+{
+  "id": "web-worker-off-main-thread-architecture",
+  "title": "Web Workers: Dedicated Thread Creation, Message Queues & Memory Isolation",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "HTML Web Workers / DedicatedWorkerGlobalScope",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "web-workers", "threads", "concurrency", "postmessage", "main-thread"],
+  "prerequisites": ["JavaScript single-threaded event loop", "DOM vs WorkerGlobalScope"],
+  "progressiveExplaining": {
+    "eli5": "The main browser thread is a single clerk helping customers at the front desk. If a customer asks the clerk to solve a massive 10,000-piece puzzle, all other customers have to wait in a frozen line. A Web Worker is a separate helper hired in a back room: the clerk mails the puzzle to the back room, keeps serving customers with zero delay, and receives the solved puzzle by mail later.",
+    "junior": "Web Workers let you run heavy JavaScript computations on background OS threads without blocking the main UI thread. Created via `const worker = new Worker('worker.js')`. Communication happens through asynchronous message passing via `worker.postMessage()` and `onmessage`. Workers do not have access to the DOM, `window`, or `document`, but can access `fetch`, `IndexedDB`, `crypto`, and `WebSockets`.",
+    "senior": "Architecturally, a Web Worker represents an independent V8 Isolate and operating system thread possessing its own discrete event loop, microtask queue, call stack, and heap. Memory is strictly isolated: objects passed via `postMessage` are serialized via the Structured Clone algorithm or zero-copy transferred (`Transferable` like `ArrayBuffer`). Offloading heavy operations (cryptography, physics, parsing, image processing) prevents main thread Long Tasks (>50ms) and keeps INP under 200ms.",
+    "underTheHood": "Instantiating a `Worker` makes the browser process allocate a native OS thread (POSIX thread or Windows thread). The thread initializes a new `DedicatedWorkerGlobalScope` and V8 Isolate. The parent and worker maintain thread-safe message queues connected via cross-thread task runners in C++. `postMessage()` serializes payload bytes on the sender thread, posts a task to the receiver's event loop queue, and deserializes the object into the receiver's private heap."
+  },
+  "rosettaStone": {
+    "react": "`useWorker` hook or Comlink proxy offloading calculations outside render.",
+    "angular": "Angular CLI Web Worker generator (`ng generate web-worker`).",
+    "vue": "Vue composables wrapping Worker instances with reactive ref bindings.",
+    "svelte": "Svelte actions or services communicating with Workers over typed ports."
+  },
+  "codeComparison": {
+    "title": "Main-Thread Blocking Canvas Processing vs Dedicated Web Worker",
+    "summary": "Processing 50MB image pixels on the main thread freezes the entire UI; offloading to a Web Worker keeps the page interactive.",
+    "legacyOrBad": {
+      "label": "Main Thread Freezing Loop",
+      "snippet": "const processed = applyHeavyFilters(imageData); // ❌ Freezes UI for 2 seconds",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "js",
+        "code": "// ❌ OLD: Processing large image buffers directly on the main thread\n// blocks user clicks, animations, and typing, triggering a severe INP failure.\nfunction processImage(imageData) {\n  // 2-second blocking loop on UI thread:\n  for (let i = 0; i < imageData.data.length; i += 4) {\n    imageData.data[i] = heavyColorCompute(imageData.data[i]);\n  }\n  ctx.putImageData(imageData, 0, 0);\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Web Worker Offload",
+      "snippet": "worker.postMessage({ buffer }, [buffer]); // ✅ NEW: Off-main-thread zero-copy",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "js",
+        "code": "// ✅ NEW: Transfer the raw buffer to a background Worker thread (0ms transfer),\n// keeping the main thread free to handle 60fps animations and user input.\nconst worker = new Worker(new URL('./filter.worker.js', import.meta.url), { type: 'module' });\n\nfunction processImage(imageData) {\n  const buffer = imageData.data.buffer;\n  // Transferable zero-copy handoff:\n  worker.postMessage({ buffer, width: imageData.width, height: imageData.height }, [buffer]);\n}\n\nworker.onmessage = (event) => {\n  const outputData = new ImageData(new Uint8ClampedArray(event.data.buffer), event.data.width, event.data.height);\n  ctx.putImageData(outputData, 0, 0);\n};"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can a Web Worker directly manipulate a DOM element or access `localStorage`?",
+      "contextIntro": "Tests understanding of thread-safety and environment boundaries in the browser.",
+      "detailedAnswer": "No. Web Workers cannot access the DOM (`document`, `window`), nor can they access synchronous `localStorage` (which is thread-unsafe). Allowing multi-threaded access to DOM tree pointers without locks would cause race conditions and memory corruption. However, Workers *can* render to a canvas via `OffscreenCanvas` and use asynchronous storage via `IndexedDB`.",
+      "trapWarning": "Do not say that Workers have no storage access at all. They have full access to `IndexedDB`, `CacheStorage`, and the Origin Private File System (OPFS)."
+    },
+    {
+      "question": "What is the overhead of creating a Web Worker, and how should workers be managed in high-throughput apps?",
+      "contextIntro": "Checks architecture scaling and thread pool management knowledge.",
+      "detailedAnswer": "Creating a Web Worker is relatively heavy: it spawns an OS thread and boots an independent V8 Isolate, taking ~20-50ms and consuming several megabytes of RAM. In high-throughput applications, spawning a new Worker per task is an anti-pattern. Instead, use a **Worker Pool** (a fixed set of pre-warmed workers matching `navigator.hardwareConcurrency`) with a task queue to distribute jobs.",
+      "trapWarning": "Spawning hundreds of concurrent Workers will exhaust system threads and crash the browser tab."
+    }
+  ]
+}

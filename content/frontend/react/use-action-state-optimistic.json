@@ -1,0 +1,58 @@
+{
+  "id": "use-action-state-optimistic",
+  "title": "useActionState & useOptimistic: Form Transitions & Instant UI Updates",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "useActionState", "useOptimistic", "forms", "actions", "react-19"],
+  "prerequisites": ["React 19 Actions", "HTML Forms and FormData"],
+  "progressiveExplaining": {
+    "eli5": "When you hit 'Like' on a social media app, the heart turns red immediately without waiting for the server in another country to say OK. If the internet fails, the heart turns back off and shows an error. `useOptimistic` lets your UI instantly guess success, while `useActionState` manages the real server reply.",
+    "junior": "`useActionState` (formerly `useFormState`) manages form action lifecycles: `const [state, formAction, isPending] = useActionState(actionFn, initialState)`. `useOptimistic` allows you to render optimistic state while an action is in flight: `const [optimisticList, addOptimistic] = useOptimistic(list, (current, newItem) => [...current, newItem])`. When the action completes, React replaces the optimistic state with the true server result automatically.",
+    "senior": "Architecturally, React 19 integrates Server Actions, form state, and optimistic updates into a single transaction pipeline. When `formAction` triggers, `useOptimistic` immediately computes a temporary visual branch. React schedules the underlying transition; if the action succeeds, the server state updates and the optimistic layer drops. If the action throws or fails, React rolls back the optimistic layer without tearing the UI.",
+    "underTheHood": "Under the hood, `useOptimistic` creates an internal hook record that overlays an update reducer on top of the parent component's committed state during active transition lanes. The optimistic update executes synchronously within the transition start pass. Once the action's promise settles and the final state is committed, React clears the pending optimistic queue, resolving the view to the true committed state."
+  },
+  "rosettaStone": {
+    "react": "`useActionState` + `useOptimistic` for declarative form actions and rollbacks.",
+    "angular": "Manual RxJS BehaviorSubject tap/catchError rollback patterns.",
+    "vue": "Pinia optimistic store mutations with catch error rollback.",
+    "svelte": "SvelteKit `enhance()` action with custom optimistic UI callbacks."
+  },
+  "codeComparison": {
+    "title": "Manual Try-Catch Rollback vs useActionState + useOptimistic",
+    "summary": "Manual optimistic state requires messy error flags and duplicate rollback state; React 19 handles optimistic rollbacks declaratively.",
+    "legacyOrBad": {
+      "label": "Manual Rollback State",
+      "snippet": "setList(prev => [...prev, item]); try { await save(); } catch { setList(backup); } // ❌ Fragile",
+      "fullFile": {
+        "filename": "TodoList.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Manually juggling optimistic state, error backups, loading flags,\n// and race conditions when multiple submissions occur in parallel.\nimport { useState } from 'react';\n\nexport default function TodoList({ initialTodos, addTodoAction }) {\n  const [todos, setTodos] = useState(initialTodos);\n  const [loading, setLoading] = useState(false);\n\n  async function handleAdd(formData) {\n    const title = formData.get('title');\n    const previous = todos;\n    setTodos([...todos, { id: 'temp', title, pending: true }]);\n    setLoading(true);\n    try {\n      const saved = await addTodoAction(title);\n      setTodos([...previous, saved]);\n    } catch (e) {\n      setTodos(previous); // Rollback manually on error\n    } finally {\n      setLoading(false);\n    }\n  }\n\n  return <form action={handleAdd}><input name=\"title\" /><button disabled={loading}>Add</button></form>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "useActionState & useOptimistic",
+      "snippet": "const [optimisticTodos, setOptimistic] = useOptimistic(todos, (state, newTodo) => [...state, newTodo]); // ✅ NEW",
+      "fullFile": {
+        "filename": "TodoList.jsx",
+        "language": "jsx",
+        "code": "import { useActionState, useOptimistic } from 'react';\n\n// ✅ NEW: React 19 handles optimistic rendering and automatic rollback on failure.\nexport default function TodoList({ initialTodos, updateServerAction }) {\n  const [todos, formAction, isPending] = useActionState(updateServerAction, initialTodos);\n  const [optimisticTodos, addOptimistic] = useOptimistic(\n    todos,\n    (current, newTodoTitle) => [...current, { id: 'temp', title: newTodoTitle, pending: true }]\n  );\n\n  async function handleSubmit(formData) {\n    const title = formData.get('title');\n    addOptimistic(title); // Instantly shows in UI\n    await formAction(formData); // Automatically settles or rolls back\n  }\n\n  return (\n    <div>\n      <form action={handleSubmit}>\n        <input name=\"title\" required />\n        <button disabled={isPending}>Add Todo</button>\n      </form>\n      <ul>\n        {optimisticTodos.map((t) => (\n          <li key={t.id} style={{ opacity: t.pending ? 0.5 : 1 }}>\n            {t.title}\n          </li>\n        ))}\n      </ul>\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens to the optimistic state if the server action throws an exception?",
+      "contextIntro": "Interviewers test your knowledge of automatic error recovery in React 19 actions.",
+      "detailedAnswer": "If the action throws an error or rejects, the transition fails. React automatically discards the optimistic overlay during the next render cycle, snapping the UI back to the current committed state without requiring manual rollback code.",
+      "trapWarning": "Optimistic updates only stay alive while the enclosing transition is pending. As soon as the transition completes (successfully or with an error), the optimistic value is discarded."
+    },
+    {
+      "question": "Can `useOptimistic` be used outside of an action or transition?",
+      "contextIntro": "Tests lifecycle scope requirements of the hook.",
+      "detailedAnswer": "Calling the update function returned by `useOptimistic` outside a transition (such as inside a raw `onClick` handler without `startTransition` or `<form action>`) will trigger a React warning, and the optimistic update will be ignored or immediately reverted on the next render.",
+      "trapWarning": "Always ensure optimistic mutations occur inside a `startTransition` callback or an async `<form action>`."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "javascript-scheduler-post-task",
+  "title": "scheduler.postTask(): Prioritized Task Queues (user-blocking, user-visible, background)",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "W3C Prioritized Task Scheduling API / Chrome 94+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "scheduler", "posttask", "performance", "event-loop", "prioritization"],
+  "prerequisites": ["Browser Event loop macrotasks and microtasks", "Interaction to Next Paint (INP)"],
+  "progressiveExplaining": {
+    "eli5": "In a hospital emergency room, doctors treat critical trauma patients first, regular sick patients second, and do filing paperwork last. `scheduler.postTask()` is an ER triage system for JavaScript: instead of treating all tasks equally like `setTimeout`, you tell the browser which code is critical for the user and which code can wait.",
+    "junior": "`scheduler.postTask(callback, options)` is the modern standard for scheduling prioritized asynchronous tasks on the main thread. It replaces ad-hoc hacks like `setTimeout(fn, 0)`, `requestIdleCallback()`, and `MessageChannel`. It provides three distinct priority levels: `'user-blocking'` (highest: urgent rendering/input), `'user-visible'` (default: normal rendering), and `'background'` (lowest: analytics, prefetching).",
+    "senior": "Architecturally, the Prioritized Task Scheduling API integrates directly with the browser engine's internal task runner. Tasks submitted via `postTask` bypass generic macrotask FIFO queues and are scheduled into priority-ordered buckets evaluated before standard timers. It supports dynamic priority manipulation and cancellation via `TaskController` (an extension of `AbortController`), allowing long-running background tasks to be boosted or aborted.",
+    "underTheHood": "Blink's `MainThreadScheduler` maintains separate task queues for each priority. During the event loop cycle, the scheduler pulls from the highest non-empty priority queue (`user-blocking` -> `user-visible` -> `background`). `scheduler.postTask` returns a native `Promise` that resolves with the callback's return value. `scheduler.yield()` is a specialized helper that splits a Long Task while retaining the inherited task priority."
+  },
+  "rosettaStone": {
+    "react": "React Concurrent Mode scheduler (`Scheduler.js`) internal priority lanes.",
+    "angular": "Zoneless change detection scheduling microtasks vs postTask batches.",
+    "vue": "Vue component async chunk pre-fetching in idle time.",
+    "svelte": "Svelte transition scheduling prioritizing active DOM animations."
+  },
+  "codeComparison": {
+    "title": "Unprioritized setTimeout Hacks vs scheduler.postTask",
+    "summary": "`setTimeout(fn, 0)` lumps background analytics in the same queue as urgent UI work; `scheduler.postTask` gives explicit priority control.",
+    "legacyOrBad": {
+      "label": "setTimeout Priority Hack",
+      "snippet": "setTimeout(sendAnalytics, 0); // ❌ Competes equally with urgent user rendering",
+      "fullFile": {
+        "filename": "tasks.js",
+        "language": "js",
+        "code": "// ❌ OLD: setTimeout(fn, 0) and requestIdleCallback are unreliable:\n// setTimeout competes with critical tasks, and requestIdleCallback can be\n// delayed indefinitely on busy tabs.\nfunction logUserInteraction() {\n  setTimeout(() => {\n    // Heavy analytics processing delays upcoming button clicks:\n    sendHeavyTelemetry();\n  }, 0);\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Prioritized postTask Scheduling",
+      "snippet": "scheduler.postTask(sendAnalytics, { priority: 'background' }); // ✅ NEW",
+      "fullFile": {
+        "filename": "tasks.js",
+        "language": "js",
+        "code": "// ✅ NEW: Explicitly triage non-urgent work to the background queue,\n// ensuring zero impact on user input responsiveness (INP).\nfunction logUserInteraction() {\n  scheduler.postTask(\n    () => {\n      sendHeavyTelemetry();\n    },\n    { priority: 'background' }\n  );\n}\n\n// Urgent task that should jump ahead of normal work:\nfunction renderUrgentModal() {\n  return scheduler.postTask(() => renderModal(), { priority: 'user-blocking' });\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What are the three priority levels of `scheduler.postTask()`, and what are their use cases?",
+      "contextIntro": "Tests knowledge of the Prioritized Task Scheduling API specification.",
+      "detailedAnswer": "The three priority levels are: (1) `'user-blocking'` for critical tasks that directly block the user from interacting (e.g. rendering immediately after a click), (2) `'user-visible'` (the default) for normal UI updates that are visible to the user but not critical for input latency, and (3) `'background'` for non-urgent tasks like analytics logging, data prefetching, or indexing.",
+      "trapWarning": "Do not confuse `scheduler.postTask` with microtasks (`Promise.then`). `postTask` schedules tasks into the *task (macrotask)* queue system, not the microtask queue."
+    },
+    {
+      "question": "How can you dynamically change the priority of a task or cancel it after scheduling?",
+      "contextIntro": "This tests advanced usage of `TaskController`.",
+      "detailedAnswer": "Use a `TaskController` (which extends `AbortController`): `const controller = new TaskController({ priority: 'background' });`. Pass its signal: `scheduler.postTask(task, { signal: controller.signal })`. To elevate priority, call `controller.setPriority('user-blocking')`. To cancel, call `controller.abort()`.",
+      "trapWarning": "A standard `AbortController` can cancel a `postTask`, but only a `TaskController` can dynamically update priority via `setPriority()`."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "core-web-vitals-inp-under-the-hood",
+  "title": "Interaction to Next Paint (INP): Input Delay, Processing, and Presentation",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "W3C Event Timing API / Chrome 122+ Core Web Vital",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "web-vitals", "inp", "performance", "event-timing", "main-thread"],
+  "prerequisites": ["Browser Event Loop phases", "Layout reflow & compositor paint pipeline"],
+  "progressiveExplaining": {
+    "eli5": "Imagine pressing an elevator button. The delay has three parts: how long before the elevator computer notices you pushed it (input delay), how long it takes the computer to decide what to do (processing time), and how long before the light behind the button actually turns on (presentation delay). INP measures the total time from your physical touch until you see the visual response.",
+    "junior": "Interaction to Next Paint (INP) is a Core Web Vital replacing First Input Delay (FID). It measures responsiveness by tracking the latency of all user interactions (clicks, taps, keypresses) throughout the entire page lifecycle. INP represents the worst (or 98th percentile) interaction latency, divided into three phases: Input Delay, Processing Duration (event handler execution), and Presentation Delay (style, layout, paint, and frame rendering). Good INP is <= 200ms.",
+    "senior": "Architecturally, INP captures the end-to-end time from hardware event queue ingestion to display frame presentation. Unlike FID (which only measured the input delay of the first interaction), INP evaluates total event duration across all interactions. The Event Timing API records timestamps for `startTime`, `processingStart`, `processingEnd`, and `presentationTime`. Optimizing INP requires addressing main-thread queue congestion, yielding during long tasks (`scheduler.yield()`), and reducing synchronous layout recalculations within paint cycles.",
+    "underTheHood": "The browser records an `EventTiming` entry for each discrete user interaction. `Input Delay = processingStart - startTime` (time spent waiting behind long tasks on the main thread queue). `Processing Duration = processingEnd - processingStart` (execution duration of all registered event listener callbacks). `Presentation Delay = presentationTime - processingEnd` (time required for the main thread to run style recalculation, layout, paint, and for the Compositor thread + GPU to swap frame buffers)."
+  },
+  "rosettaStone": {
+    "react": "`useTransition()` and `startTransition()` yield priority to urgent user input to prevent INP spikes.",
+    "angular": "Zoneless change detection and signal writes reduce synchronous full-tree dirty checking latency.",
+    "vue": "Vue async component loading and transition scheduling keep event handlers under the 50ms task budget.",
+    "svelte": "Svelte compiled direct DOM updates minimize JavaScript processing duration."
+  },
+  "codeComparison": {
+    "title": "Blocking Event Handler vs Yielded Async Task Pipeline",
+    "summary": "Synchronous heavy operations block the main thread and spike INP; yielding to the scheduler allows the browser to paint the feedback frame immediately.",
+    "legacyOrBad": {
+      "label": "Monolithic Long Task Handler",
+      "snippet": "button.addEventListener('click', () => { computeHeavyReport(); updateUI(); }); // ❌ Spikes INP",
+      "fullFile": {
+        "filename": "heavy-handler.js",
+        "language": "js",
+        "code": "// ❌ OLD: Running 300ms of synchronous processing directly inside the click event\n// listener blocks the browser from presenting visual feedback, resulting in a failing INP score (>200ms).\nbutton.addEventListener('click', () => {\n  button.classList.add('loading'); // Queued but cannot paint!\n  \n  // Synchronous heavy work monopolizes the main thread:\n  const results = runHeavyDataCalculations(); \n  renderResults(results);\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Yielding with scheduler.yield()",
+      "snippet": "await scheduler.yield(); // ✅ NEW: Allows browser to paint feedback before heavy work",
+      "fullFile": {
+        "filename": "optimized-handler.js",
+        "language": "js",
+        "code": "// ✅ NEW: Give immediate visual feedback, yield to let the browser paint the\n// button state, then process heavy computation in a separate task slice.\nbutton.addEventListener('click', async () => {\n  button.classList.add('loading'); // Immediate visual update\n\n  // Yield execution back to the browser event loop to paint the frame:\n  if ('scheduler' in window && 'yield' in scheduler) {\n    await scheduler.yield();\n  } else {\n    await new Promise((resolve) => setTimeout(resolve, 0));\n  }\n\n  const results = runHeavyDataCalculations();\n  renderResults(results);\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why did Google replace FID (First Input Delay) with INP (Interaction to Next Paint)?",
+      "contextIntro": "Interviewers test your historical and architectural knowledge of Core Web Vitals.",
+      "detailedAnswer": "FID only measured the *input delay* (waiting time) of the *very first* user interaction, ignoring the execution time of event listeners and subsequent rendering/painting time entirely. It also ignored all subsequent interactions on the page. INP measures the *total roundtrip duration* (Input Delay + Processing Duration + Presentation Delay) for *all* interactions throughout the session, accurately reflecting real-world UI responsiveness.",
+      "trapWarning": "Do not state that FID measured click-to-render latency. FID only measured the time from click to the moment the JavaScript handler *began* executing."
+    },
+    {
+      "question": "What is 'Presentation Delay' in INP and what causes it to spike?",
+      "contextIntro": "This tests whether you understand rendering pipeline bottlenecks beyond JavaScript execution time.",
+      "detailedAnswer": "Presentation Delay is the duration between when event listeners finish executing (`processingEnd`) and when the updated visual frame is physically presented on screen (`presentationTime`). It spikes due to expensive Style Recalculations, deep DOM Layout Reflows, massive Paint operations, or compositor thread contention (e.g. huge GPU texture uploads).",
+      "trapWarning": "A fast event handler (<10ms JS execution) can still have a failing INP (>300ms) if it triggers massive DOM mutations requiring expensive layout and paint passes."
+    }
+  ]
+}

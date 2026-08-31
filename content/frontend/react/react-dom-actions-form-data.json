@@ -1,0 +1,58 @@
+{
+  "id": "react-dom-actions-form-data",
+  "title": "<form action> & useFormStatus: Form Lifecycle and Pending State",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "forms", "useFormStatus", "form-data", "actions", "react-dom", "react-19"],
+  "prerequisites": ["HTML Form submission", "React 19 Actions"],
+  "progressiveExplaining": {
+    "eli5": "In standard HTML, submitting a form sends data and refreshes the whole page. In React 19, you can hand a JavaScript function straight to `<form action={myAction}>`. When you click submit, React gathers all the inputs into a `FormData` bundle, sends it, and lets any button inside the form know that it is currently 'loading' without passing props down.",
+    "junior": "React 19 extends standard HTML forms by accepting async functions in `<form action={fn}>`, `<button formAction={fn}>`, and `<input formAction={fn}>`. React automatically extracts and passes the native `FormData` object to the action function. The `useFormStatus` hook lets child components read the parent form's submission state (`pending`, `data`, `method`, `action`) without prop drilling.",
+    "senior": "Architecturally, React DOM actions unify client-side JavaScript transitions with progressive enhancement. When JavaScript is enabled, React intercepts form submission, prevents full-page reload, wraps the action execution in a transition lane, and sets `pending = true` in `useFormStatus`. If JavaScript fails to load or is disabled (in frameworks supporting SSR/Server Actions like Next.js), the form falls back to standard HTTP POST submission.",
+    "underTheHood": "React overrides the native HTML form submit event handler. When `<form action={asyncFn}>` fires, React instantiates `new FormData(formElement)`, invokes the action within a transition context (`startHostTransition`), and sets an internal `HostTransitionContext` on the fiber tree. `useFormStatus` reads this context from parent fibers to expose the pending state and submitted `FormData` directly."
+  },
+  "rosettaStone": {
+    "react": "`<form action={asyncAction}>` with `useFormStatus()` in child submit buttons.",
+    "angular": "Reactive Forms `FormGroup` with `form.statusChanges` observables.",
+    "vue": "`@submit.prevent` with custom `isSubmitting` reactive refs.",
+    "svelte": "SvelteKit `<form method=\"POST\" use:enhance>` with `$page.form`."
+  },
+  "codeComparison": {
+    "title": "Manual e.preventDefault() + Local Loading State vs Native React 19 Form Action",
+    "summary": "Manual submit handlers require boilerplate state and prop drilling; React 19 handles FormData extraction and status tracking natively.",
+    "legacyOrBad": {
+      "label": "Manual onSubmit & Prop Drilling",
+      "snippet": "<form onSubmit={handleSubmit}><SubmitButton loading={loading} /></form> // ❌ Manual wiring",
+      "fullFile": {
+        "filename": "FormLegacy.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Manual state management for loading, inputs, and form submission.\nimport { useState } from 'react';\n\nfunction SubmitButton({ loading }) {\n  return <button disabled={loading}>{loading ? 'Saving...' : 'Save'}</button>;\n}\n\nexport default function FormLegacy({ onSave }) {\n  const [name, setName] = useState('');\n  const [loading, setLoading] = useState(false);\n\n  async function handleSubmit(e) {\n    e.preventDefault();\n    setLoading(true);\n    try {\n      await onSave(name);\n    } finally {\n      setLoading(false);\n    }\n  }\n\n  return (\n    <form onSubmit={handleSubmit}>\n      <input value={name} onChange={(e) => setName(e.target.value)} />\n      <SubmitButton loading={loading} />\n    </form>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React 19 Form Action + useFormStatus",
+      "snippet": "<form action={saveAction}><SubmitButton /></form> // ✅ NEW: Zero state boilerplate",
+      "fullFile": {
+        "filename": "FormModern.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: React 19 passes FormData automatically and useFormStatus tracks pending state.\nimport { useFormStatus } from 'react-dom';\n\nfunction SubmitButton() {\n  // Reads status directly from the parent <form> without props:\n  const { pending } = useFormStatus();\n  return <button disabled={pending}>{pending ? 'Saving...' : 'Save'}</button>;\n}\n\nexport default function FormModern({ saveAction }) {\n  return (\n    <form action={saveAction}>\n      <input name=\"userName\" required />\n      <SubmitButton />\n    </form>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Where can `useFormStatus` be called in the component tree?",
+      "contextIntro": "Interviewers test your understanding of Context boundaries in React DOM.",
+      "detailedAnswer": "`useFormStatus` **must be called from a component rendered inside the `<form>`**, not in the component that renders the `<form>` itself. It behaves like a React Context consumer: calling it in the parent component rendering the `<form>` will return `pending: false` because it cannot read its own child form's status context.",
+      "trapWarning": "Placing `const { pending } = useFormStatus()` in the same component that returns `<form>...</form>` will not work; extract the submit button into a separate child component."
+    },
+    {
+      "question": "What happens if an action function returns a value or throws an error?",
+      "contextIntro": "Checks knowledge of error propagation during form action dispatch.",
+      "detailedAnswer": "If a `<form action>` function throws an error, React catches the exception and propagates it to the nearest **Error Boundary**. If you want to capture form return values or validation errors as local component state without throwing, use `useActionState` instead of a plain `<form action>`.",
+      "trapWarning": "Do not expect `<form action={fn}>` to set a return value onto form state automatically; pair it with `useActionState` when response data is needed."
+    }
+  ]
+}

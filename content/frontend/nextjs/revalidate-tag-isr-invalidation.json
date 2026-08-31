@@ -1,0 +1,58 @@
+{
+  "id": "revalidate-tag-isr-invalidation",
+  "title": "On-Demand ISR: revalidateTag & Cache Tags Indexing",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "isr", "caching", "revalidateTag", "data-cache", "app-router"],
+  "prerequisites": ["Next.js Data Cache", "Fetch API caching options"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a warehouse full of labeled boxes. Multiple documents are marked with a blue sticker called 'products'. When a product price changes, the manager announces 'throw out all blue-stickered boxes'. The warehouse instantly purges only those items without having to discard or re-check the rest of the warehouse.",
+    "junior": "`revalidateTag` allows you to purge specific entries from the Next.js Data Cache on demand. When fetching data, attach a tag: `fetch(url, { next: { tags: ['products'] } })`. When a mutation occurs (like in a Server Action), call `revalidateTag('products')`. The next time someone requests that data, Next.js refreshes it from the upstream source instead of serving stale cached data.",
+    "senior": "Architecturally, Cache Tagging creates an inverted index mapping custom tag strings to cache entries in the Next.js Data Cache. Calling `revalidateTag(tag)` invalidates all corresponding cache entries across various routes and pages atomically. In Next.js 15, `revalidateTag` purges the Data Cache and marks the associated server-side Route Cache segments as stale, triggering re-computation on subsequent requests.",
+    "underTheHood": "Next.js maintains a tag manifest in its persistent cache handler (file system or distributed store like Redis/S3). When a `fetch` with `next.tags` executes, the response payload hash is associated with the provided tag keys in the manifest. When `revalidateTag(tag)` runs, Next.js increments the revalidation timestamp for that tag. Subsequent cache lookups compare the entry's creation timestamp against the tag's invalidation timestamp; if older, it treats the entry as a cache miss."
+  },
+  "rosettaStone": {
+    "react": "Custom cache invalidation using TanStack Query `queryClient.invalidateQueries({ queryKey })`.",
+    "angular": "Service-worker cache tagging or manual HTTP interceptor cache clearing.",
+    "vue": "Nuxt `$fetch` cache invalidation via `clearNuxtData('key')`.",
+    "svelte": "SvelteKit `invalidate('app:products')` dependency tracking."
+  },
+  "codeComparison": {
+    "title": "Time-based polling vs On-Demand Tag Revalidation",
+    "summary": "Time-based polling serves stale data or wastes compute; on-demand tag revalidation invalidates data immediately upon mutation.",
+    "legacyOrBad": {
+      "label": "Time-based Revalidation",
+      "snippet": "fetch(url, { next: { revalidate: 3600 } }); // ❌ OLD: Stale for up to 1 hour",
+      "fullFile": {
+        "filename": "app/products/page.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: Time-based ISR can display stale data for up to 60 seconds\n// after an administrative price update.\nexport default async function ProductsPage() {\n  const res = await fetch('https://api.example.com/products', {\n    next: { revalidate: 60 }\n  });\n  const products = await res.json();\n\n  return <div>{products.map((p: any) => <p key={p.id}>{p.name}</p>)}</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Tag-based Invalidation",
+      "snippet": "revalidateTag('products'); // ✅ NEW: Instant on-demand cache purge",
+      "fullFile": {
+        "filename": "app/actions.ts",
+        "language": "ts",
+        "code": "'use server';\n\nimport { revalidateTag } from 'next/cache';\n\nexport async function updateProduct(id: string, name: string) {\n  await db.product.update({ where: { id }, data: { name } });\n\n  // ✅ NEW: Instantly purges all data caches tagged with 'products'\n  revalidateTag('products');\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `revalidatePath` and `revalidateTag`?",
+      "contextIntro": "Interviewers want to see if you understand the scope of cache invalidation.",
+      "detailedAnswer": "`revalidatePath` purges both the Full Route Cache and Data Cache for a specific URL path structure (including or excluding sub-routes). `revalidateTag` purges the underlying Data Cache entries across any page or component in the application that fetched data using that tag, without being bound to a single URL path.",
+      "trapWarning": "`revalidatePath` can cause over-invalidation of unrelated data on a page, whereas `revalidateTag` surgically invalidates only the shared entity."
+    },
+    {
+      "question": "Does `revalidateTag` purge data synchronously in the current request or on the next request?",
+      "contextIntro": "This tests knowledge of server action lifecycle and read-your-own-writes semantics.",
+      "detailedAnswer": "In Next.js, calling `revalidateTag` inside a Server Action marks the tag invalid. During the same server action response pass, Next.js re-renders the current route tree with the freshly fetched data so the client sees the updated state in one round-trip.",
+      "trapWarning": "Calling `revalidateTag` in an external webhook handler invalidates the cache for *future* incoming requests, not for clients currently viewing the page without navigation."
+    }
+  ]
+}

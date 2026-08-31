@@ -1,0 +1,58 @@
+{
+  "id": "dynamic-io-cache-flag",
+  "title": "use cache Directive & Dynamic IO Runtime Boundaries",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 15+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "use-cache", "dynamic-io", "caching", "react", "app-router"],
+  "prerequisites": ["React Server Components", "Next.js App Router Caching"],
+  "progressiveExplaining": {
+    "eli5": "Imagine cooking in a kitchen where you must put an explicit label on anything you plan to save in the fridge. By default, every dish is served fresh and hot. If you write 'use cache' on a recipe, the kitchen saves the result and reuses it next time instead of cooking from scratch.",
+    "junior": "In Next.js 15, Dynamic IO (`experimental.dynamicIO: true`) changes the default caching model: all data fetching and rendering is dynamic by default. To cache a function or component, you explicitly annotate it with the `'use cache'` directive. You can customize the cache lifetime using `cacheLife()` and tag it using `cacheTag()`.",
+    "senior": "Dynamic IO replaces the legacy implicit `fetch` caching model with explicit cache boundaries. It enforces that any dynamic operation (reading cookies, headers, or uncached DB calls) tracks an I/O boundary. When `'use cache'` is applied to an async function or component, Next.js serializes its inputs and return value into the Data Cache, re-evaluating only when the `cacheLife` profile expires or `revalidateTag` invalidates its associated tags.",
+    "underTheHood": "The Next.js compiler analyzes `'use cache'` directives at the AST level. It converts the annotated scope into a memoized cache wrapper keyed by the function's closure arguments and lexical dependencies. During execution under Dynamic IO, un-cached I/O access outside a cache boundary marks the enclosing route segment as dynamic, while cached scopes return serialized React Server Component flight data from the cache store."
+  },
+  "rosettaStone": {
+    "react": "React `cache()` function for per-request deduplication.",
+    "angular": "RxJS `shareReplay(1)` or custom HTTP caching interceptors.",
+    "vue": "Nuxt `useAsyncData` with explicit cache keys.",
+    "svelte": "SvelteKit server-side memory caching via Redis/LRU in `+page.server.ts`."
+  },
+  "codeComparison": {
+    "title": "Implicit Fetch Caching vs Explicit 'use cache'",
+    "summary": "Next.js 14 implicitly cached `fetch`; Next.js 15 Dynamic IO requires explicit opt-in via `'use cache'`.",
+    "legacyOrBad": {
+      "label": "Implicit Next.js 14 Cache",
+      "snippet": "const res = await fetch(url); // ❌ OLD: Implicitly cached by default",
+      "fullFile": {
+        "filename": "app/data.ts",
+        "language": "ts",
+        "code": "// ❌ OLD: In Next.js 14, fetch was cached by default unless specified.\n// This led to accidental stale data for dynamic queries.\nexport async function getStats() {\n  const res = await fetch('https://api.example.com/stats');\n  return res.json();\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Explicit 'use cache' Directive",
+      "snippet": "'use cache';\nimport { cacheLife, cacheTag } from 'next/cache'; // ✅ NEW",
+      "fullFile": {
+        "filename": "app/data.ts",
+        "language": "ts",
+        "code": "import { cacheLife, cacheTag } from 'next/cache';\n\n// ✅ NEW: Explicit caching boundary with lifecycle control\nexport async function getStats() {\n  'use cache';\n  cacheLife('hours');\n  cacheTag('analytics');\n\n  const res = await fetch('https://api.example.com/stats');\n  return res.json();\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the primary motivation for the 'use cache' directive in Next.js 15?",
+      "contextIntro": "Interviewers test your awareness of the architectural shift from implicit to explicit caching.",
+      "detailedAnswer": "In Next.js 13 and 14, `fetch` requests were cached by default (`force-cache`), which caused confusion and unexpected stale data in dynamic applications. Next.js 15 introduced Dynamic IO and `'use cache'` to make caching opt-in, explicit, and applicable to *any* asynchronous operation (like direct database queries via Prisma or Drizzle), not just the `fetch` API.",
+      "trapWarning": "Do not state that `'use cache'` only works on `fetch()` calls. It can cache any async JavaScript function or React Server Component."
+    },
+    {
+      "question": "Can `'use cache'` be used on an entire React Component?",
+      "contextIntro": "This tests component-level caching vs function-level caching.",
+      "detailedAnswer": "Yes. When `'use cache'` is placed at the top of an async Server Component, Next.js caches the rendered React Server Component output (Flight payload) for the given set of props, avoiding re-rendering the component until revalidated.",
+      "trapWarning": "Props passed to a cached component must be serializable so Next.js can generate a deterministic cache key."
+    }
+  ]
+}

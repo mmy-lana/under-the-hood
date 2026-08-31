@@ -1,0 +1,58 @@
+{
+  "id": "suspense-data-fetching-throw",
+  "title": "Suspense Mechanism: Promise Throwing, Boundary Catches & Resolution",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "suspense", "promises", "concurrency", "error-boundary", "fiber"],
+  "prerequisites": ["React Fiber Reconciler", "JavaScript Promises & Exception handling"],
+  "progressiveExplaining": {
+    "eli5": "When a worker in a factory runs out of raw materials, they hit a pause button (throw a Promise). The supervisor in that room (the `<Suspense>` boundary) immediately puts up a 'Work in Progress' sign (the fallback). When the supply truck arrives with the materials, the supervisor tears down the sign and tells the worker to pick up where they paused.",
+    "junior": "React `<Suspense fallback={<Loading />}>` lets components pause rendering while waiting for asynchronous operations. When an async resource (like a Promise via React 19 `use()`, `React.lazy()`, or a data library like Relay) is not ready, the component literally throws the pending Promise. The nearest `<Suspense>` boundary catches the thrown promise, displays the fallback, attaches a listener to the promise, and re-renders the component once the promise resolves.",
+    "senior": "Architecturally, Suspense repurposes JavaScript's `throw` mechanism as an algebraic effect for control flow. In the Render Phase, when a fiber throws a `Thenable`, the work loop intercepts it in `handleThrow()`. React marks the nearest parent Suspense fiber with the `DidCapture` flag, unwinds the work-in-progress stack, mounts the fallback UI in the current commit, and registers a resolution callback (`ping`) on the thrown promise. When the promise fulfills, React schedules a retry render on the suspended lane.",
+    "underTheHood": "In `renderRootConcurrent`, if a fiber throws a Promise, React executes `throwAndUnwindWorkLoop`. It searches up the `return` pointer chain for a `SuspenseComponent` fiber. Once found, it creates an alternate branch rendering the `fallback` prop. React attaches `.then(pingListener, pingListener)` to the thrown Promise. When the promise resolves, `pingListener` executes `retryTimedOutBoundary` or `pingSuspendedRoot`, dispatching a scheduler task to re-render the suspended subtree with the now-fulfilled data."
+  },
+  "rosettaStone": {
+    "react": "`<Suspense fallback={<Spinner />}><AsyncChild /></Suspense>` catching thrown promises.",
+    "angular": "`@defer (on immediate) { <AsyncChild /> } @loading { <Spinner /> }`.",
+    "vue": "`<Suspense><template #default><AsyncChild /></template><template #fallback><Spinner /></template></Suspense>`.",
+    "svelte": "`{#await dataPromise}<Spinner />{:then data}<Child {data} />{/await}`."
+  },
+  "codeComparison": {
+    "title": "Throwing Promise Implementation vs React 19 use() Suspense",
+    "summary": "Raw Suspense libraries throw cached promises; React 19 standardizes this behavior via the `use()` API.",
+    "legacyOrBad": {
+      "label": "Low-level Thrown Promise Resource",
+      "snippet": "if (status === 'pending') throw promise; // ❌ Manual low-level Suspense cache",
+      "fullFile": {
+        "filename": "SuspenseResource.js",
+        "language": "js",
+        "code": "// ❌ OLD: Manual implementation of a Suspense resource cache throwing promises.\nfunction createResource(promise) {\n  let status = 'pending';\n  let result;\n  let suspender = promise.then(\n    (r) => {\n      status = 'success';\n      result = r;\n    },\n    (e) => {\n      status = 'error';\n      result = e;\n    }\n  );\n\n  return {\n    read() {\n      if (status === 'pending') throw suspender; // ❌ Throws Promise to Suspense\n      if (status === 'error') throw result;      // Throws Error to ErrorBoundary\n      if (status === 'success') return result;\n    }\n  };\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React 19 Native use() Hook",
+      "snippet": "const data不易 = use(promise); // ✅ NEW: Standardized native unwrapping and suspending",
+      "fullFile": {
+        "filename": "SuspenseModern.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: React 19's `use()` natively suspends without custom cache wrappers.\nimport { use, Suspense } from 'react';\n\nfunction Profile({ userPromise }) {\n  // use() throws the promise internally if pending, caught by Suspense:\n  const user = use(userPromise);\n  return <h2>{user.name}</h2>;\n}\n\nexport default function App({ userPromise }) {\n  return (\n    <Suspense fallback={<div>Loading profile skeleton...</div>}>\n      <Profile userPromise={userPromise} />\n    </Suspense>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if a component suspended inside `<Suspense>` throws a rejected Promise?",
+      "contextIntro": "Tests your understanding of the relationship between Suspense and Error Boundaries.",
+      "detailedAnswer": "When a Promise rejects, the nearest `<Suspense>` boundary cannot resolve it. React treats the rejected promise as a runtime execution error and bubbles the rejection up the tree until it is caught by the nearest **`<ErrorBoundary>`**. If no Error Boundary exists, the application crashes.",
+      "trapWarning": "Suspense boundaries only catch *pending* promises to show fallback loading UI; they do *not* catch rejected promises or errors. Always pair `<Suspense>` with an `<ErrorBoundary>`."
+    },
+    {
+      "question": "Why does React discard and restart rendering from scratch when a suspended component resolves?",
+      "contextIntro": "Checks knowledge of React's pure render phase contract during Suspense retries.",
+      "detailedAnswer": "Because state or context could have changed while the promise was pending in the background, React cannot simply resume from the middle of the suspended component. When the promise resolves (`ping`), React restarts the render pass for that subtree from the Suspense boundary downwards to guarantee complete state consistency across the new render cycle.",
+      "trapWarning": "Components suspended under Suspense must remain pure and free from render-phase side effects, as they may be evaluated multiple times before committing."
+    }
+  ]
+}

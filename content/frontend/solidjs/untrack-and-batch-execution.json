@@ -1,0 +1,58 @@
+{
+  "id": "untrack-and-batch-execution",
+  "title": "untrack() & batch(): Breaking Dependencies and Grouping Mutations",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "untrack", "batch", "reactivity", "dependencies", "performance"],
+  "prerequisites": ["SolidJS createSignal", "createEffect tracking scopes"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a reporter who writes down every sound they hear. If you whisper a secret while asking them to close their ears for one second (`untrack`), they hear the secret to write it down, but they won't wake up in the middle of the night if that secret changes later. And `batch` is like holding five letters in your hand and dropping them into the mailbox all at once, so the mail carrier only makes one single trip.",
+    "junior": "`untrack(() => signal())` lets you read a signal's value inside an effect or memo without subscribing to it. If the untracked signal changes later, the effect will *not* re-run. `batch(() => { setA(1); setB(2); })` bundles multiple signal updates together so that downstream effects and memos execute only once after the batch completes, rather than firing sequentially.",
+    "senior": "Architecturally, `untrack` temporarily detaches the active `Listener` from the global execution stack (`Listener = null`), executes the callback synchronously, and restores the previous tracking context. `batch` wraps mutations in a transaction context: it increments an internal execution depth counter, defers downstream computation invalidation and observer notifications, and flushes all pending dirty nodes in a single topological pass when the depth returns to zero.",
+    "underTheHood": "In the reactive runtime, `Listener` is a thread-local / global variable holding the current `Computation`. `untrack(fn)` saves `const prev = Listener; Listener = null;`, runs `fn()`, and in a `finally` block sets `Listener = prev`. In `batch(fn)`, updates push dirty computations to a global queue (`Updates`). When the outermost `batch` finishes, `completeUpdates()` iterates the queue, sorting computations by hierarchical depth to guarantee glitch-free execution before running pending effects."
+  },
+  "rosettaStone": {
+    "react": "`ReactDOM.unstable_batchedUpdates` or modern automatic batching; reading from a `useRef` to avoid dependency tracking.",
+    "angular": "Angular `untracked(() => signal())` in `@angular/core`.",
+    "vue": "Vue `@vue/reactivity` `toRaw()` or custom non-tracking getters.",
+    "svelte": "Svelte 5 `untrack(() => state)` inside `$effect` blocks."
+  },
+  "codeComparison": {
+    "title": "Accidental Infinite Effect Loop vs untrack() Isolation",
+    "summary": "Reading and writing signals inside an effect causes infinite loops; `untrack()` breaks the tracking edge to allow safe reads.",
+    "legacyOrBad": {
+      "label": "Accidental Subscription Loop",
+      "snippet": "createEffect(() => { if (count() > 0) setLogs([...logs(), 'changed']); }); // ❌ Infinite loop!",
+      "fullFile": {
+        "filename": "TrackingLoop.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, createEffect } from 'solid-js';\n\n// ❌ OLD: Reading 'logs()' inside the effect subscribes the effect to 'logs'.\n// When 'setLogs' updates 'logs', the effect triggers itself in an infinite loop!\nexport default function TrackingLoop() {\n  const [count, setCount] = createSignal(0);\n  const [logs, setLogs] = createSignal([]);\n\n  createEffect(() => {\n    if (count() > 0) {\n      // ❌ Reading logs() here creates a circular dependency:\n      setLogs([...logs(), `Count is ${count()}`]);\n    }\n  });\n\n  return <button onClick={() => setCount(c => c + 1)}>Increment</button>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Isolated with untrack()",
+      "snippet": "setLogs([...untrack(logs), `Count is ${count()}`]); // ✅ NEW: Safe one-way dependency",
+      "fullFile": {
+        "filename": "UntrackedEffect.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, createEffect, untrack } from 'solid-js';\n\n// ✅ NEW: untrack() reads logs() without registering a subscription.\n// The effect only re-runs when 'count()' changes.\nexport default function UntrackedEffect() {\n  const [count, setCount] = createSignal(0);\n  const [logs, setLogs] = createSignal([]);\n\n  createEffect(() => {\n    const currentCount = count(); // Tracked dependency\n    if (currentCount > 0) {\n      // ✅ untrack reads logs without subscribing:\n      const currentLogs = untrack(logs);\n      setLogs([...currentLogs, `Count is ${currentCount}`]);\n    }\n  });\n\n  return <button onClick={() => setCount(c => c + 1)}>Increment</button>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Is `batch()` strictly necessary inside native DOM event handlers in SolidJS?",
+      "contextIntro": "Interviewers test your knowledge of Solid's automatic event batching heuristics.",
+      "detailedAnswer": "No, `batch()` is usually unnecessary in native DOM event handlers (`onClick`, `onInput`) because SolidJS wraps all synthetic/delegated event dispatches in an automatic top-level `batch()` call. However, `batch()` **is** necessary when updating multiple signals inside asynchronous callbacks, `setTimeout`, `fetch.then()`, or custom WebSocket listeners.",
+      "trapWarning": "Failing to use `batch()` across multiple signal updates inside `fetch().then()` can cause intermediate computations to run multiple times with inconsistent state."
+    },
+    {
+      "question": "Does `untrack` stop reactivity for child signals read inside functions called by `untrack`?",
+      "contextIntro": "Checks understanding of dynamic synchronous tracking context.",
+      "detailedAnswer": "Yes. `untrack(fn)` suppresses dependency tracking for *all* synchronous signal reads that occur during the execution of `fn`, including nested function calls and deep getter access inside `fn`.",
+      "trapWarning": "If `fn` is an `async` function, any signal read after an `await` was already not tracked (because async resumptions lose the tracking context), so `untrack` only affects synchronous execution."
+    }
+  ]
+}

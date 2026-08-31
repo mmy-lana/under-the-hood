@@ -1,0 +1,58 @@
+{
+  "id": "use-sync-external-store-tearing",
+  "title": "useSyncExternalStore: Concurrent Tearing Prevention in External Stores",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "useSyncExternalStore", "concurrent", "tearing", "state-management", "redux"],
+  "prerequisites": ["React Concurrent Mode & Time Slicing", "Custom event listeners / Redux stores"],
+  "progressiveExplaining": {
+    "eli5": "Imagine two painters drawing the same person. Painter 1 draws the top half. While Painter 2 starts the bottom half, the person suddenly changes their shirt. If the painters don't coordinate, the final picture has a blue shirt on top and a red shirt on the bottom (visual tearing). `useSyncExternalStore` forces React to pause and synchronize so every part of the screen sees the exact same shirt.",
+    "junior": "`useSyncExternalStore` is the official hook for subscribing to non-React state stores (like Redux, Zustand, browser APIs like `window.navigator.onLine`, or custom event emitters). `const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)`. It replaces `useEffect` + `useState` store subscriptions and guarantees that components never display inconsistent or torn state during concurrent rendering.",
+    "senior": "Architecturally, **Visual Tearing** occurs in React Concurrent Mode when a non-React mutable store mutates in the middle of an asynchronous, time-sliced render pass. If Component A reads version 1, the main thread yields to a store mutation (version 2), and Component B reads version 2 within the same render cycle, the committed UI becomes inconsistent. `useSyncExternalStore` detects store mutations during render and forces React to synchronously re-evaluate the tree, guaranteeing strict linear consistency.",
+    "underTheHood": "During the render phase, React invokes `getSnapshot()` and stores the snapshot on the fiber. Before committing the workInProgress tree, React calls `getSnapshot()` again. If the return value has changed (via `Object.is`), React detects a concurrent store mutation, bails out of the concurrent pass, and immediately restarts the render synchronously (`renderRootSync`) to prevent tearing."
+  },
+  "rosettaStone": {
+    "react": "`useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)`",
+    "angular": "RxJS `shareReplay(1)` combined with synchronous signal reads.",
+    "vue": "Vue `shallowReadonly` reactive state tracking external stores.",
+    "svelte": "Svelte readable store contract (`subscribe()` with synchronous emission)."
+  },
+  "codeComparison": {
+    "title": "useEffect Store Subscription (Tearing Risk) vs useSyncExternalStore",
+    "summary": "Subscribing via `useEffect` suffers from race conditions and concurrent tearing; `useSyncExternalStore` ensures atomic consistency.",
+    "legacyOrBad": {
+      "label": "useState + useEffect Subscription",
+      "snippet": "useEffect(() => store.subscribe(setValue), []); // ❌ Vulnerable to tearing in Concurrent Mode",
+      "fullFile": {
+        "filename": "useOnlineStatus.js",
+        "language": "js",
+        "code": "// ❌ OLD: Subscribing in useEffect can cause tearing during time slicing,\n// causes an extra re-render on mount, and breaks during SSR hydration.\nimport { useState, useEffect } from 'react';\n\nexport function useOnlineStatus() {\n  const [isOnline, setIsOnline] = useState(navigator.onLine);\n\n  useEffect(() => {\n    const handleOnline = () => setIsOnline(true);\n    const handleOffline = () => setIsOnline(false);\n    window.addEventListener('online', handleOnline);\n    window.addEventListener('offline', handleOffline);\n    return () => {\n      window.removeEventListener('online', handleOnline);\n      window.removeEventListener('offline', handleOffline);\n    };\n  }, []);\n\n  return isOnline;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "useSyncExternalStore Subscription",
+      "snippet": "useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot); // ✅ NEW: Tearing-proof",
+      "fullFile": {
+        "filename": "useOnlineStatus.js",
+        "language": "js",
+        "code": "// ✅ NEW: Guarantees synchronous consistency across concurrent renders\n// and supports SSR hydration without mismatch warnings.\nimport { useSyncExternalStore } from 'react';\n\nfunction subscribe(callback) {\n  window.addEventListener('online', callback);\n  window.addEventListener('offline', callback);\n  return () => {\n    window.removeEventListener('online', callback);\n    window.removeEventListener('offline', callback);\n  };\n}\n\nfunction getSnapshot() {\n  return navigator.onLine;\n}\n\nfunction getServerSnapshot() {\n  return true; // Default assumption for SSR server render\n}\n\nexport function useOnlineStatus() {\n  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why must `getSnapshot` return an immutable cached value or primitive?",
+      "contextIntro": "Interviewers test your knowledge of reference equality checks and infinite render loops.",
+      "detailedAnswer": "React compares the return value of `getSnapshot()` using `Object.is`. If `getSnapshot` creates and returns a *new object or array reference on every call* (e.g. `() => ({ isOnline: navigator.onLine })`), React will believe the external store mutated on every single check, causing an **infinite re-render loop** and throwing a maximum update depth exceeded error.",
+      "trapWarning": "Never return inline object literals `() => ({ ... })` from `getSnapshot`. Always return primitives or cached, immutable object references."
+    },
+    {
+      "question": "What is the purpose of the third parameter `getServerSnapshot`?",
+      "contextIntro": "Checks understanding of Server-Side Rendering (SSR) hydration contracts.",
+      "detailedAnswer": "`getServerSnapshot` is required when using Server-Side Rendering (SSR). During server generation and initial client hydration, React executes `getServerSnapshot` to ensure the rendered markup matches between server and client, preventing hydration mismatch errors for browser-specific globals like `window` or `navigator`.",
+      "trapWarning": "If `getServerSnapshot` is omitted in an SSR app, calling `useSyncExternalStore` on the server will throw an error."
+    }
+  ]
+}

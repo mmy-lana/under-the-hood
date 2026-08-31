@@ -1,0 +1,58 @@
+{
+  "id": "create-resource-suspense",
+  "title": "createResource: Async Data Coordination & <Suspense> Trapping",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "createResource", "suspense", "async", "fetching", "signals"],
+  "prerequisites": ["SolidJS createSignal", "Promises and Suspense"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a mailbox with a signal light on top. When you order a package, the signal light flips to 'Loading' and turns on the front porch waiting light (`<Suspense>`). When the package arrives, the signal holds the parcel and the waiting light turns off. If you ask for a different package, the mailbox fetches the new one and ignores any slow late packages from before.",
+    "junior": "`createResource` is Solid's built-in primitive for handling asynchronous data fetching. `const [data, { mutate, refetch }] = createResource(sourceSignal, fetcherFn);`. `data()` returns the fetched value, `data.loading` indicates active requests, and `data.error` captures failures. When used inside a `<Suspense fallback={<Loading />}>` boundary, Solid automatically suspends the boundary until the resource resolves.",
+    "senior": "Architecturally, `createResource` integrates Promises with the synchronous reactive graph. When a source signal (e.g. `userId`) updates, `createResource` automatically cancels or discards stale in-flight requests using request ID tokens to prevent race conditions. If read inside a `<Suspense>` tracking scope while pending, it registers its pending promise with the nearest `SuspenseContext`, preventing downstream DOM nodes from mounting until resolution.",
+    "underTheHood": "Under the hood, `createResource` creates a state signal holding the resolved data and an internal promise tracking slot. When the fetcher promise is pending, reading `data()` inside a reactive computation calls `SuspenseContext.increment()`. The Suspense boundary intercepts this, suppressing the main DOM branch and displaying the `fallback` branch. Upon promise resolution, the internal signal updates via `setResourceState` and triggers `SuspenseContext.decrement()`, switching to the resolved DOM tree."
+  },
+  "rosettaStone": {
+    "react": "React 19 `use(fetchPromise)` inside `<Suspense>`.",
+    "angular": "Angular 19 `resource()` / `rxResource()` signal API.",
+    "vue": "`<Suspense>` with top-level `await` in `<script setup>`.",
+    "svelte": "Svelte `{#await promise}<Loading />{:then data}...{/await}`."
+  },
+  "codeComparison": {
+    "title": "Manual async/await Signal State vs createResource + Suspense",
+    "summary": "Manual fetch orchestration causes race conditions and loading state boilerplate; `createResource` binds directly to Suspense.",
+    "legacyOrBad": {
+      "label": "Manual Fetch in createEffect",
+      "snippet": "createEffect(async () => { setLoading(true); setData(await fetch()); }); // ❌ Race conditions",
+      "fullFile": {
+        "filename": "UserManual.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Manual async effects in Solid suffer from out-of-order race conditions\n// if userId changes quickly, and require manual loading/error signal boilerplate.\nimport { createSignal, createEffect } from 'solid-js';\n\nexport default function UserManual({ userId }) {\n  const [user, setUser] = useState(null);\n  const [loading, setLoading] = useState(true);\n\n  createEffect(async () => {\n    setLoading(true);\n    const res = await fetch(`/api/users/${userId()}`);\n    const data = await res.json();\n    // ❌ Stale race condition: slow request for user 1 can overwrite fast user 2!\n    setUser(data);\n    setLoading(false);\n  });\n\n  return <div>{loading() ? 'Loading...' : user()?.name}</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "createResource with Suspense",
+      "snippet": "const [user] = createResource(userId, fetchUser); // ✅ NEW: Auto-cancels stale requests & binds to Suspense",
+      "fullFile": {
+        "filename": "UserModern.jsx",
+        "language": "jsx",
+        "code": "import { createResource, Suspense } from 'solid-js';\n\nconst fetchUser = async (id) => {\n  const res = await fetch(`/api/users/${id}`);\n  return res.json();\n};\n\nfunction UserProfile({ userId }) {\n  // ✅ Automatically re-fetches when userId() changes; discards stale responses:\n  const [user] = createResource(userId, fetchUser);\n  return <h1>{user().name}</h1>;\n}\n\nexport default function App({ userId }) {\n  return (\n    <Suspense fallback={<div>Loading user profile...</div>}>\n      <UserProfile userId={userId} />\n    </Suspense>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does `createResource` prevent out-of-order response race conditions when the source signal changes rapidly?",
+      "contextIntro": "Interviewers test your knowledge of asynchronous concurrency control in reactive systems.",
+      "detailedAnswer": "`createResource` maintains an internal monotonic sequence counter (request ID) for each fetch invocation. When the source signal updates (e.g. `userId` changes from 1 to 2), the sequence number increments. When an asynchronous fetch promise resolves, `createResource` checks if the resolved request ID matches the latest sequence counter. If an older request (user 1) resolves after a newer request (user 2), the older result is silently discarded.",
+      "trapWarning": "Do not implement manual cancellation booleans inside custom fetchers; `createResource` handles stale response discarding automatically."
+    },
+    {
+      "question": "Can you read a resource outside of `<Suspense>` without crashing?",
+      "contextIntro": "Checks knowledge of resource access semantics in non-suspense contexts.",
+      "detailedAnswer": "Yes. If `data()` is read outside of a `<Suspense>` boundary, it will return `undefined` while pending (or its initial value if provided), and `data.loading` will return `true`. It will not throw or crash; it simply renders standard conditional checks (e.g. `{data() ? data().name : 'Loading...'}`).",
+      "trapWarning": "Using `data().name` without optional chaining or Suspense when `data()` is `undefined` will trigger a JavaScript `TypeError: Cannot read property of undefined`."
+    }
+  ]
+}

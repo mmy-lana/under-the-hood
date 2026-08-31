@@ -1,0 +1,58 @@
+{
+  "id": "synthetic-events-delegation",
+  "title": "SyntheticEvent Root Delegation vs Native DOM Dispatch",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 17 / 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "synthetic-event", "event-delegation", "dom", "bubbling", "performance"],
+  "prerequisites": ["DOM Event bubbling and capturing", "EventTarget.addEventListener"],
+  "progressiveExplaining": {
+    "eli5": "Instead of gluing a separate listener microphone onto every single button in a stadium, React places one master microphone at the stadium entrance (the root container). When any button is clicked, the sound naturally travels up to the entrance, where React inspects it and calls the right button's handler.",
+    "junior": "React wraps browser native events in a cross-browser `SyntheticEvent` wrapper. In React 17+, React no longer attaches event listeners to the global `document` node; instead, it delegates and attaches all event listeners to the root DOM container (e.g. `<div id=\"root\">`) where `createRoot()` was mounted. Calling `e.stopPropagation()` stops bubbling within the React virtual tree.",
+    "senior": "Architecturally, root-level event delegation solves micro-frontend isolation and portal event nesting. In React 16 and older, `document`-level delegation caused `e.stopPropagation()` in nested React apps or vanilla JS libraries to fail unpredictably. In React 17+, events bubble natively through the DOM to the React container root (`#root`), where React captures the event, wraps it in a pooled-free `SyntheticEvent`, and dispatches it through the Fiber hierarchy based on the virtual component tree.",
+    "underTheHood": "During initialization, `ReactDOM.createRoot(container)` registers all standard DOM event listeners on `container` for both capture and bubble phases. When a native event fires, `dispatchDiscreteEvent` or `dispatchUserBlockingUpdate` resolves the target's Fiber node via internal properties (`__reactFiber$...`). React constructs the synthetic event and executes the fiber's listener chain in order. Event pooling was completely removed in React 17, so accessing `event.target` in async callbacks without `e.persist()` is safe."
+  },
+  "rosettaStone": {
+    "react": "Root container event delegation (`container.addEventListener`).",
+    "angular": "Zone.js patched element-level `addEventListener` binding directly on DOM nodes.",
+    "vue": "Direct native element event listeners attached during VNode patching.",
+    "svelte": "Svelte 5 uses centralized document/root event delegation for efficiency."
+  },
+  "codeComparison": {
+    "title": "Direct DOM Listener vs React SyntheticEvent Delegation",
+    "summary": "Direct DOM listeners attach per-node causing memory bloat; React delegates listeners to the root container.",
+    "legacyOrBad": {
+      "label": "Per-Element Native Listener",
+      "snippet": "elements.forEach(el => el.addEventListener('click', handler)); // ❌ Thousands of listener allocations",
+      "fullFile": {
+        "filename": "NativeList.js",
+        "language": "js",
+        "code": "// ❌ OLD: Attaching thousands of individual event listeners directly to DOM nodes\n// consumes significant memory and slows down element creation/destruction.\nfunction createList(items) {\n  const ul = document.createElement('ul');\n  items.forEach(item => {\n    const li恒 = document.createElement('li');\n    li.textContent = item.name;\n    // Allocates separate listener per item:\n    li.addEventListener('click', (e) => handleClick(item.id, e)); \n    ul.appendChild(li);\n  });\n  return ul;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React Delegated SyntheticEvent",
+      "snippet": "<li onClick={() => handleClick(item.id)}>{item.name}</li> // ✅ NEW: Delegated to #root",
+      "fullFile": {
+        "filename": "ReactList.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: React attaches a single click listener on the root DOM container.\n// Zero per-element listener overhead; handlers resolve via Fiber tree traversal.\nexport default function ReactList({ items }) {\n  return (\n    <ul>\n      {items.map((item) => (\n        <li key={item.id} onClick={(e) => console.log('Clicked', item.id, e.target)}>\n          {item.name}\n        </li>\n      ))}\n    </ul>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What changed regarding event delegation between React 16 and React 17/18/19?",
+      "contextIntro": "Interviewers test your knowledge of React's multi-version coexistence and architecture evolution.",
+      "detailedAnswer": "In React 16, all synthetic events were attached to `document`. This broke multi-version micro-frontends and nested non-React libraries because calling `e.stopPropagation()` in an inner tree didn't prevent outer `document` listeners from firing. In React 17+, event listeners are attached to the **root DOM container** (the element passed to `createRoot`), allowing multiple independent React roots to safely coexist on the same page.",
+      "trapWarning": "Do not say that React attaches event listeners directly to individual DOM elements like `<button>`. Everything is delegated to the root container."
+    },
+    {
+      "question": "Is `event.persist()` still necessary in modern React when accessing event properties asynchronously?",
+      "contextIntro": "Checks knowledge of the removal of Event Pooling.",
+      "detailedAnswer": "No. Event Pooling was completely removed in React 17. In React 18 and 19, `SyntheticEvent` objects are not recycled into a shared pool, so you can freely read `e.target` inside an asynchronous `setTimeout` or `await` without calling `e.persist()`.",
+      "trapWarning": "In older React versions (<17), reading `e.target` in an async callback without `e.persist()` resulted in `null` values due to object pooling."
+    }
+  ]
+}

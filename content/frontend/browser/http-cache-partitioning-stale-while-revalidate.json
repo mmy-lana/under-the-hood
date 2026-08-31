@@ -1,0 +1,58 @@
+{
+  "id": "http-cache-partitioning-stale-while-revalidate",
+  "title": "Double-Keyed HTTP Cache Partitioning & RFC 5861 stale-while-revalidate",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "HTTP/1.1 & HTTP/2 Cache Specs / Chromium Network Stack",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "http-cache", "caching", "stale-while-revalidate", "partitioning", "etag"],
+  "prerequisites": ["HTTP headers (Cache-Control, ETag, If-None-Match)", "Cross-site tracking concepts"],
+  "progressiveExplaining": {
+    "eli5": "In the past, if you downloaded a common font on website A, website B could reuse the same downloaded file from your computer's shared locker. Now, to prevent websites from spying on what other sites you visit, every website gets its own completely separate locker (double-keying). And with 'stale-while-revalidate', the browser gives you the old locker file immediately while quietly checking in the background if a newer version exists.",
+    "junior": "HTTP Cache Partitioning (double-keying) isolates the browser's HTTP cache using two keys: the top-level site (e.g. `https://a.com`) and the resource URL. This stops third-party sites from tracking users across domains via shared cached files. `stale-while-revalidate` (`Cache-Control: max-age=60, stale-while-revalidate=3600`) tells the browser: 'serve the cached version instantly for up to 1 hour after it expires, while firing a background request to fetch and save the fresh version'.",
+    "senior": "Architecturally, cache partitioning completely invalidated the historical best practice of using shared public CDNs (e.g. `cdnjs`, `fonts.googleapis.com`) to get cross-site cache hits; every top-level origin downloads its own copy. RFC 5861 `stale-while-revalidate` (SWR) decouples network revalidation latency from user perceived rendering: cache hits return immediately (0ms network delay), and the browser's network service asynchronously executes a conditional HTTP request with `If-None-Match`/`If-Modified-Since` to refresh the entry.",
+    "underTheHood": "Chromium's disk cache key was historically `(resource_url)`. It is now a composite tuple: `(top_frame_site, frame_site, resource_url)`. During request interception, the network service checks this compound key. For SWR, if `current_time < max_age`, it returns `200 (from disk cache)`. If `max_age < current_time < (max_age + stale_while_revalidate)`, it immediately yields the cached response stream to the renderer, then spawns a detached background network job. When the background job completes with 304 or 200, the disk cache entry is updated in place."
+  },
+  "rosettaStone": {
+    "react": "Vercel / Next.js Edge CDN headers emitting `s-maxage=60, stale-while-revalidate=3600`.",
+    "angular": "Service Worker `ngsw-config.json` performance caching strategy mimicking SWR.",
+    "vue": "Nuxt Nitro route rules setting SWR cache-control headers.",
+    "svelte": "SvelteKit `setHeaders({'cache-control': 'max-age=60, stale-while-revalidate=3600'})`."
+  },
+  "codeComparison": {
+    "title": "Blocking Revalidation vs Stale-While-Revalidate Caching",
+    "summary": "Standard max-age=0 forces users to wait on 304 network roundtrips; stale-while-revalidate yields immediate rendering with background refresh.",
+    "legacyOrBad": {
+      "label": "Blocking Must-Revalidate",
+      "snippet": "Cache-Control: no-cache, must-revalidate // ❌ Blocks render on network roundtrip",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "js",
+        "code": "// ❌ OLD: no-cache or must-revalidate forces the browser to halt rendering\n// and wait for a 304 Not Modified roundtrip (100-300ms latency) on every request.\napp.get('/api/config', (req, res) => {\n  res.set({\n    'Cache-Control': 'no-cache, must-revalidate',\n    'ETag': '\"v1.2.3\"'\n  });\n  res.json({ theme: 'dark' });\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Stale-While-Revalidate Header",
+      "snippet": "Cache-Control: public, max-age=60, stale-while-revalidate=86400 // ✅ NEW: Instant 0ms response",
+      "fullFile": {
+        "filename": "server.js",
+        "language": "js",
+        "code": "// ✅ NEW: Fresh for 60 seconds; if accessed between 60s and 24h, serves\n// instantly from disk cache (0ms) and revalidates in the background.\napp.get('/api/config', (req, res) => {\n  res.set({\n    'Cache-Control': 'public, max-age=60, stale-while-revalidate=86400',\n    'ETag': '\"v1.2.3\"'\n  });\n  res.json({ theme: 'dark' });\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is loading libraries from shared public CDNs (like cdnjs or Google Fonts) no longer a performance optimization?",
+      "contextIntro": "Tests knowledge of browser privacy changes and cache partitioning.",
+      "detailedAnswer": "All major browsers (Chrome, Safari, Firefox) now enforce HTTP Cache Partitioning (double-keying). The cache is keyed by both the top-level domain and the resource URL. If a user visits Site A that uses `cdnjs.com/react.js`, and then visits Site B that uses the *exact same* URL, Site B cannot read Site A's cached file and must download it again. Self-hosting assets on your own origin is now strictly faster because it avoids extra DNS resolutions and TLS handshakes.",
+      "trapWarning": "Do not claim that shared CDNs improve cache hit rates across different websites in modern browsers. That was deprecated in 2020."
+    },
+    {
+      "question": "What happens if a background `stale-while-revalidate` request fails with a 500 error or network timeout?",
+      "contextIntro": "Checks resilience and error handling behavior in the browser network stack.",
+      "detailedAnswer": "The user who triggered the background revalidation already received the stale 200 response instantly and is unaffected. For the background failure itself, the browser leaves the existing cached entry intact (or flags it for immediate revalidation on the next attempt), preventing downstream outages from breaking the client experience.",
+      "trapWarning": "A background SWR failure does *not* throw an error into the active webpage context."
+    }
+  ]
+}

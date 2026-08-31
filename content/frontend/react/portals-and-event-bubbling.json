@@ -1,0 +1,58 @@
+{
+  "id": "portals-and-event-bubbling",
+  "title": "React Portals: DOM Detachment vs Virtual Tree Event Bubbling",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "createPortal", "dom", "event-bubbling", "modals", "synthetic-events"],
+  "prerequisites": ["SyntheticEvent system", "DOM Tree hierarchy vs React Component Tree"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a theater actor who physically walks into the audience seats to talk (rendering outside in a portal), but their microphone is still plugged into the stage soundboard. Even though their body is sitting in the back row, every word they say echoes back to the stage actors as if they never left.",
+    "junior": "`createPortal(children, container)` renders a component's physical DOM nodes into a different part of the document (such as `document.body` or a modal container) while keeping its position in the React component tree. Even though the portal's DOM element lives in a completely different place in the HTML, **React synthetic events still bubble up through the React component tree**, not the physical DOM tree.",
+    "senior": "Architecturally, Portals decouple the DOM layout tree from the React Fiber reconciliation hierarchy. An element rendered inside a portal escapes CSS ancestor constraints like `overflow: hidden`, `z-index`, and `transform` containing blocks. Crucially, React's SyntheticEvent delegation engine walks the Fiber's `.return` (parent) pointer chain rather than the DOM's `parentNode` chain, ensuring that event handlers, Context providers, and error boundaries in the virtual parent hierarchy capture portal events naturally.",
+    "underTheHood": "A portal is represented in the reconciler as a `PortalComponent` Fiber (`tag: 4`). In `completeWork`, React assigns the portal's `stateNode` to the target DOM container. When a DOM event fires inside the portal DOM, it bubbles up natively to the React root container (`#root`). React resolves the event's target Fiber and traverses upward following the Fiber `.return` pointers, seamlessly crossing the portal boundary back into the virtual parent component."
+  },
+  "rosettaStone": {
+    "react": "`createPortal(<Modal />, document.body)` with React Fiber event bubbling.",
+    "angular": "Angular CDK `Overlay` / `PortalHost` rendering into overlay containers.",
+    "vue": "`<Teleport to=\"body\"><Modal /></Teleport>` (events follow native DOM bubbling).",
+    "svelte": "Svelte custom action moving node to body or third-party portal library."
+  },
+  "codeComparison": {
+    "title": "DOM-Trapped Modal vs createPortal with Virtual Bubbling",
+    "summary": "Standard nested modals get clipped by parent `overflow: hidden`; Portals mount to `document.body` while maintaining parent event capture.",
+    "legacyOrBad": {
+      "label": "DOM-Clipped Modal",
+      "snippet": "<div className=\"modal\">...</div> // ❌ Clipped by parent CSS overflow: hidden",
+      "fullFile": {
+        "filename": "ClippedModal.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Rendering a modal inside a parent with overflow: hidden or transform\n// clips the modal or breaks its fixed positioning.\nexport default function Card() {\n  return (\n    <div style={{ overflow: 'hidden', height: '150px', border: '1px solid black' }}>\n      <h3>Card Title</h3>\n      {/* ❌ Modal is visually trapped and cut off inside the 150px box: */}\n      <div style={{ position: 'fixed', top: '20%', left: '20%', width: '400px', background: 'white' }}>\n        Trapped Modal Content\n      </div>\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React createPortal",
+      "snippet": "createPortal(<ModalContent />, document.body) // ✅ NEW: Escapes CSS constraints, preserves React events",
+      "fullFile": {
+        "filename": "PortalModal.jsx",
+        "language": "jsx",
+        "code": "import { createPortal } from 'react-dom';\n\nfunction ModalContent({ onClose }) {\n  return (\n    <div className=\"modal-overlay\" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)' }}>\n      <div className=\"modal-body\" style={{ background: 'white', padding: '20px' }}>\n        <h2>Modal Title</h2>\n        <button onClick={onClose}>Close</button>\n      </div>\n    </div>\n  );\n}\n\nexport default function Card() {\n  return (\n    // ✅ Parent onClick catches bubbling events from the portal even though DOM is in document.body!\n    <div\n      onClick={() => console.log('Click bubbled to Card virtual parent!')}\n      style={{ overflow: 'hidden', height: '150px' }}\n    >\n      <h3>Card Content</h3>\n      {createPortal(<ModalContent onClose={() => {}} />, document.body)}\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "If a button inside a Portal is clicked, does an `onClick` listener on its React parent component fire, even if the parent's DOM node does not contain the Portal's DOM node?",
+      "contextIntro": "This tests whether you understand the fundamental difference between React SyntheticEvent bubbling and native DOM bubbling.",
+      "detailedAnswer": "Yes, the React parent's `onClick` will fire. React synthetic event bubbling follows the **React Component (Fiber) Tree**, not the physical HTML DOM tree. When a click occurs inside a portal mounted to `document.body`, the native event bubbles to the root container, and React dispatches the event upward through the component hierarchy that declared the portal.",
+      "trapWarning": "A native `element.addEventListener('click')` on the parent DOM node will *not* catch the click, but a React `onClick` prop *will* catch it."
+    },
+    {
+      "question": "How do React Context and Error Boundaries interact with Portals?",
+      "contextIntro": "Checks knowledge of component hierarchy boundaries and data propagation.",
+      "detailedAnswer": "Portals retain complete access to all React Context providers and Error Boundaries defined by their virtual parents. If a component inside `createPortal` calls `useContext(MyContext)` or throws an error, React resolves the Context and catches the error from the parent hierarchy where the portal was rendered in JSX, completely ignoring the portal's physical DOM destination.",
+      "trapWarning": "Do not re-wrap portal children in duplicate Context Providers; they already inherit context from their virtual call site."
+    }
+  ]
+}

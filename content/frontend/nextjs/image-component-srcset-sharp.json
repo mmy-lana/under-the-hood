@@ -1,0 +1,58 @@
+{
+  "id": "image-component-srcset-sharp",
+  "title": "next/image: On-Demand Sharp Resizing & WebP/AVIF Conversion",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "next-image", "sharp", "webp", "avif", "lcp", "performance"],
+  "prerequisites": ["HTML <img> and <picture> elements", "Core Web Vitals (LCP/CLS)"],
+  "progressiveExplaining": {
+    "eli5": "If you take a photo with a giant camera, you don't send the huge 10MB poster to a tiny smartphone. An assistant standing in the middle takes your original photo, shrinks it to the exact phone screen size, converts it to a super-compressed modern format (like WebP or AVIF), and hands it over in a flash. `next/image` is that smart assistant.",
+    "junior": "`next/image` extends HTML `<img>` with automatic image optimization. It serves images in modern formats (AVIF/WebP), automatically generates responsive `srcset` attributes based on device sizes, resizes images on-demand on the server using the high-performance `sharp` library, and prevents Cumulative Layout Shift (CLS) by requiring explicit `width`/`height` or `fill`.",
+    "senior": "Architecturally, `next/image` is an image transformation proxy. When the client browser requests a page, Next.js generates an `<img>` tag pointing to `/_next/image?url=...&w=...&q=...`. The optimizer parses the `Accept` header to negotiate AVIF/WebP format delivery, resizes the asset using libvips/sharp in a worker pool, caches the optimized binary on the edge/file system, and returns proper immutable caching headers.",
+    "underTheHood": "The image optimization pipeline runs through the internal Next.js image endpoint. It hashes the target URL, width, and quality parameters into a cache key. If a cache miss occurs, the image optimizer fetches upstream bytes (local or allowed remote patterns), validates SVG/malicious headers, passes buffers into `sharp` via C++ bindings for resizing/transcoding, writes the output to `.next/cache/images`, and responds with `Content-Type: image/avif` or `image/webp`."
+  },
+  "rosettaStone": {
+    "react": "Standard `<img>` with manual build-time responsive image generators (like Vite imagetools).",
+    "angular": "`NgOptimizedImage` directive with third-party CDN image loader integration.",
+    "vue": "Nuxt Image (`<NuxtImg>` / `<NuxtPicture>`) with IPX on-demand transformation.",
+    "svelte": "SvelteKit `@sveltejs/enhanced-img` build-time image pipeline."
+  },
+  "codeComparison": {
+    "title": "Unoptimized standard <img> vs next/image pipeline",
+    "summary": "Standard `<img>` sends heavy uncompressed images and causes layout shifts; `next/image` generates responsive formats and enforces aspect ratios.",
+    "legacyOrBad": {
+      "label": "Standard HTML <img>",
+      "snippet": "<img src=\"/large-hero.jpg\" alt=\"Hero\" /> <!-- ❌ OLD: Huge payload, no AVIF/WebP, layout shift -->",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: Serving raw unoptimized images causes massive network payloads\n// on mobile devices, misses modern compression formats, and triggers CLS.\nexport default function PageInstant() {\n  return (\n    <main>\n      <img src=\"/large-hero.jpg\" alt=\"Hero\" />\n    </main>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "next/image Component",
+      "snippet": "<Image src=\"/large-hero.jpg\" alt=\"Hero\" width={1200} height={600} priority /> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "import Image from 'next/image';\n\n// ✅ NEW: Automatic AVIF/WebP conversion, responsive srcset generation,\n// built-in blur placeholders, and LCP preload via priority.\nexport default function Page() {\n  return (\n    <main>\n      <Image\n        src=\"/large-hero.jpg\"\n        alt=\"Hero\"\n        width={1200}\n        height={600}\n        priority\n        sizes=\"(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw\"\n      />\n    </main>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does `next/image` require external domains to be configured in `next.config.js`?",
+      "contextIntro": "Interviewers test your awareness of server-side security and Denial of Service (DoS) protection.",
+      "detailedAnswer": "Because `next/image` proxies and transforms images on the server on demand, an open optimizer without domain whitelisting would act as an open proxy. Attackers could flood `/_next/image?url=https://attacker.com/huge.png` to consume CPU, memory, and bandwidth. Next.js enforces `images.remotePatterns` to strictly whitelist authorized upstream asset origins.",
+      "trapWarning": "Never use wide-open wildcard patterns (`hostname: '**'`) in production configs as it exposes the optimization server to SSRF and DoS vectors."
+    },
+    {
+      "question": "When should you use the `fill` prop instead of `width` and `height`?",
+      "contextIntro": "This checks practical responsive CSS layout integration.",
+      "detailedAnswer": "Use `fill` when the exact pixel dimensions are unknown in advance (e.g. dynamic responsive cards or background hero sections). With `fill`, the image styles automatically set `position: absolute; inset: 0; width: 100%; height: 100%;`. The parent element must explicitly specify `position: relative`, `position: fixed`, or `position: absolute` with a designated aspect ratio or height.",
+      "trapWarning": "Using `fill` on an element whose parent is statically positioned will cause the image to expand across the nearest positioned ancestor or the entire viewport."
+    }
+  ]
+}

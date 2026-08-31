@@ -1,0 +1,58 @@
+{
+  "id": "context-api-lookup-tree",
+  "title": "Solid Context: Hierarchical Owner Graph Lookup Without Re-Render Propagation",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "context", "useContext", "owner-tree", "performance", "di"],
+  "prerequisites": ["SolidJS Owner Hierarchy", "React Context vs Solid Context"],
+  "progressiveExplaining": {
+    "eli5": "In React, updating a Context is like yelling through a megaphone: every single component in the building has to wake up and check if the message was for them. In SolidJS, Context is just a book placed on a shelf: children only look at the shelf when they first arrive. If they subscribe to a signal inside the book, only their private reading glasses light up when the text changes.",
+    "junior": "Solid's Context API is created using `createContext(defaultValue)` and consumed using `useContext(MyContext)`. You provide a value with `<MyContext.Provider value={...}>{children}</MyContext.Provider>`. Unlike React, **changing a Context Provider's value does NOT re-render intervening child components**, because Solid components run only once.",
+    "senior": "Architecturally, Solid Context operates on the static **Owner Tree** (`Owner` hierarchy) established at component initialization. `useContext` performs an `O(depth)` upward walk along `Owner._parent` pointers until it encounters an Owner containing a matching `context` key. When the provider value is a signal or store, child consumers bind directly to the signal itself, eliminating context-induced re-render waterfalls entirely.",
+    "underTheHood": "When `<Context.Provider value={val}>` renders, Solid creates an internal `Owner` node whose `.context` dictionary stores `{ [Context.id]: val }`. When a descendant calls `useContext(Context)`, Solid reads `getOwner()`, loops `while (node) { if (node.context?.[id]) return node.context[id]; node = node._parent; }`, and returns the stored value (or default). Because no subscription to the provider node itself is established, context lookups have zero runtime invalidation cost."
+  },
+  "rosettaStone": {
+    "react": "`createContext` + `useContext` (triggers re-render on all consumers when value reference changes).",
+    "angular": "Angular hierarchical `Injector` tree lookup with `inject(Token)`.",
+    "vue": "`provide()` / `inject()` traversing the component instance parent chain.",
+    "svelte": "Svelte `setContext()` / `getContext()` walking component instance hierarchy."
+  },
+  "codeComparison": {
+    "title": "React Context Re-render Cascade vs SolidJS Granular Context",
+    "summary": "React Context forces all consumers and intermediate components to re-render; Solid Context links direct signal subscribers with zero intermediate work.",
+    "legacyOrBad": {
+      "label": "React Context Cascade",
+      "snippet": "<ThemeContext.Provider value={theme}> // ❌ Re-renders all consumers on change",
+      "fullFile": {
+        "filename": "ReactContext.jsx",
+        "language": "jsx",
+        "code": "// ❌ REACT: Every time 'setTheme' is called, React re-renders the Provider,\n// every component in between (unless heavily memoized), and all consumers.\nimport { createContext, useContext, useState } from 'react';\n\nconst ThemeContext = createContext('light');\n\nexport function App() {\n  const [theme, setTheme] = useState('light');\n  return (\n    <ThemeContext.Provider value={theme}>\n      <MiddleComponent />\n      <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}>Toggle</button>\n    </ThemeContext.Provider>\n  );\n}\n\nfunction MiddleComponent() {\n  console.log('MiddleComponent re-rendered!'); // ❌ Runs on every theme change!\n  return <Consumer />;\n}\n\nfunction Consumer() {\n  const theme = useContext(ThemeContext);\n  return <div className={theme}>Theme: {theme}</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "SolidJS Reactive Context",
+      "snippet": "<ThemeContext.Provider value={theme}> // ✅ NEW: MiddleComponent NEVER re-runs",
+      "fullFile": {
+        "filename": "SolidContext.jsx",
+        "language": "jsx",
+        "code": "// ✅ SOLIDJS: MiddleComponent runs EXACTLY ONCE on mount.\n// Changing theme updates ONLY the <div> className text node directly!\nimport { createContext, useContext, createSignal } from 'solid-js';\n\nconst ThemeContext = createContext();\n\nexport function App() {\n  const [theme, setTheme] = createSignal('light');\n  return (\n    <ThemeContext.Provider value={theme}>\n      <MiddleComponent />\n      <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}>Toggle</button>\n    </ThemeContext.Provider>\n  );\n}\n\nfunction MiddleComponent() {\n  console.log('MiddleComponent initialized!'); // ✅ Logs ONCE on startup, never again!\n  return <Consumer />;\n}\n\nfunction Consumer() {\n  const theme = useContext(ThemeContext); // theme is the signal accessor [get]\n  return <div class={theme()}>Theme: {theme()}</div>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if you pass a raw signal value `value={theme()}` instead of the signal accessor `value={theme}` to a Context Provider?",
+      "contextIntro": "Interviewers test your understanding of Solid's run-once execution during Context provisioning.",
+      "detailedAnswer": "Because the component body executing `<Context.Provider>` runs **only once**, passing `value={theme()}` resolves the signal immediately to its static initial string (e.g. `'light'`). Descendant components calling `useContext` will receive a static string that never updates. To pass reactive state through Context in Solid, you must pass the **signal accessor itself** (`value={theme}`) or a getter object (`value={{ get theme() { return theme(); } }}`).",
+      "trapWarning": "Never call the signal getter `value={mySignal()}` inside the provider props; pass the accessor function `value={mySignal}`."
+    },
+    {
+      "question": "Can `useContext` be called inside an asynchronous callback (like `setTimeout` or after an `await`) in SolidJS?",
+      "contextIntro": "Checks knowledge of Owner tracking context loss across asynchronous boundaries.",
+      "detailedAnswer": "No. `useContext` relies on `getOwner()` to find the current active node in the Owner hierarchy. When execution crosses an asynchronous boundary (like `setTimeout` or after an `await`), the asynchronous task runs with `Owner === null`. `useContext` will fail to find the hierarchy and will return the default context value.",
+      "trapWarning": "Always call `useContext()` synchronously at the top of your component or helper function, storing the reference before starting async operations."
+    }
+  ]
+}

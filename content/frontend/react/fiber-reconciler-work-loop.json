@@ -1,0 +1,58 @@
+{
+  "id": "fiber-reconciler-work-loop",
+  "title": "Fiber Reconciler: Fiber Node Linked List, Work Loop, and Time Slicing",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19 Concurrent Architecture",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "fiber", "reconciler", "work-loop", "time-slicing", "concurrent"],
+  "prerequisites": ["Virtual DOM concepts", "Browser Event Loop and call stack"],
+  "progressiveExplaining": {
+    "eli5": "In the old days, React was like a chef who had to finish baking 100 cookies in one continuous marathon without taking a single breath—if the doorbell rang, nobody could answer it. React Fiber turned the recipe into a step-by-step checklist. The chef bakes one cookie, quickly checks if the doorbell rang (user click), and if not, bakes the next cookie. If someone rings, the chef pauses immediately to answer.",
+    "junior": "The Fiber Reconciler is React's core engine for updating the UI. Instead of recursive function calls (the old Stack reconciler), Fiber represents every component instance and DOM element as a mutable node in a singly-linked list tree (`child`, `sibling`, `return`). This enables **Time Slicing**: React splits rendering work into 5ms chunks, yielding control back to the browser between chunks to keep the page responsive to clicks and typing.",
+    "senior": "Architecturally, Fiber splits rendering into two distinct phases: (1) the **Render Phase** (asynchronous, interruptible, can be paused, aborted, or restarted), and (2) the **Commit Phase** (synchronous, uninterruptible DOM mutation). During the Render Phase, the work loop executes `performUnitOfWork(fiber)` walking the `workInProgress` tree. Fiber uses **Double Buffering**: React maintains two trees—the `current` tree (currently on screen) and the `workInProgress` tree (built in memory)—swapping the root pointer atomically in the commit phase.",
+    "underTheHood": "A `FiberNode` contains structural pointers (`child`, `sibling`, `return`), state hooks (`memoizedState`), props (`memoizedProps`, `pendingProps`), and work tags (`flags`, `subtreeFlags`, `lanes`). The work loop runs `while (workInProgress !== null && !shouldYield()) { workInProgress = performUnitOfWork(workInProgress); }`. `shouldYield()` uses a 5ms frame deadline via `MessageChannel` / `performance.now()`. In `beginWork()`, React computes diffs and updates state; in `completeWork()`, it bubbles up `subtreeFlags` and builds the host DOM instances."
+  },
+  "rosettaStone": {
+    "react": "Fiber linked list traversal with `child`, `sibling`, `return` pointers.",
+    "angular": "LView and TView arrays traversed during change detection passes.",
+    "vue": "Virtual DOM patch algorithm using recursive VNode tree diffing.",
+    "svelte": "Zero-tree direct DOM update instructions generated at compile time."
+  },
+  "codeComparison": {
+    "title": "Recursive Stack Reconciler vs Fiber Linked List Work Loop",
+    "summary": "Stack reconciler blocked the call stack recursively until complete; Fiber walks a linked list in chunks and can pause execution.",
+    "legacyOrBad": {
+      "label": "Legacy Stack Reconciler (React 15)",
+      "snippet": "function mountComponent() { children.forEach(c => c.mountComponent()); } // ❌ Uninterruptible recursion",
+      "fullFile": {
+        "filename": "stack-reconciler.js",
+        "language": "js",
+        "code": "// ❌ OLD: The Stack Reconciler used deep recursion over the component tree.\n// Once rendering started, the JS engine call stack was locked until every\n// single leaf node finished rendering, freezing input and animations on large trees.\nfunction reconcileChildren(parent, children) {\n  for (let i = 0; i < children.length; i++) {\n    // Recursive call stack locks the browser main thread:\n    mountComponent(children[i]);\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Fiber Work Loop with Time Slicing",
+      "snippet": "while (workInProgress !== null && !shouldYield()) { workInProgress = performUnitOfWork(workInProgress); } // ✅ NEW",
+      "fullFile": {
+        "filename": "fiber-work-loop.js",
+        "language": "js",
+        "code": "// ✅ NEW: Conceptual representation of the Fiber work loop.\n// Iterative linked-list traversal yields to the browser when the 5ms time slice expires.\nfunction workLoopConcurrent() {\n  while (workInProgress !== null && !shouldYieldToHost()) {\n    workInProgress = performUnitOfWork(workInProgress);\n  }\n}\n\nfunction performUnitOfWork(unitOfWork) {\n  const current = unitOfWork.alternate;\n  let next = beginWork(current, unitOfWork, renderLanes);\n  unitOfWork.memoizedProps = unitOfWork.pendingProps;\n  \n  if (next === null) {\n    // Reached bottom of branch, step to sibling or return to parent:\n    completeUnitOfWork(unitOfWork);\n  }\n  return next;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is the Render Phase interruptible, but the Commit Phase must be synchronous and uninterruptible?",
+      "contextIntro": "Interviewers test your understanding of UI consistency and visual tearing.",
+      "detailedAnswer": "The Render Phase only creates and mutates in-memory JavaScript objects (the `workInProgress` Fiber tree); pausing or discarding it has zero visible effect on the user. The Commit Phase, however, applies physical DOM mutations (`appendChild`, `removeChild`, attribute updates). If the Commit Phase were paused halfway through, the user would see a partially updated, broken UI (visual tearing). Therefore, the Commit Phase must execute synchronously from start to finish.",
+      "trapWarning": "Never say that React modifies the real DOM during `beginWork` or `completeWork`. Real DOM mutations happen strictly in the Commit Phase."
+    },
+    {
+      "question": "What is 'Double Buffering' in React Fiber?",
+      "contextIntro": "Tests knowledge of graphics rendering concepts applied to the Fiber architecture.",
+      "detailedAnswer": "Similar to graphics engines swapping video frame buffers, React maintains two complete Fiber trees: the `current` tree (representing the DOM currently visible on screen) and the `workInProgress` tree (a draft tree being constructed during the render phase). Each fiber node has an `.alternate` pointer to its twin in the other tree. When rendering completes, React swaps a single pointer (`root.current = workInProgress`), making the draft tree the new current tree in an `O(1)` step.",
+      "trapWarning": "React does not destroy and re-allocate the `current` tree from scratch; it recycles existing fiber nodes via the `alternate` pointer to reduce garbage collection pressure."
+    }
+  ]
+}

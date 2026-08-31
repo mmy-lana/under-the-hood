@@ -1,0 +1,58 @@
+{
+  "id": "service-worker-lifecycle-fetch-interception",
+  "title": "Service Workers: Lifecycle (Install, Activate), Cache Storage, and Fetch Interception",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "W3C Service Worker API / PWA Standards",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "service-worker", "pwa", "offline", "cache-storage", "fetch"],
+  "prerequisites": ["Web Workers architecture", "HTTP Caching and Fetch API"],
+  "progressiveExplaining": {
+    "eli5": "A Service Worker is a programmable security guard standing between your browser and the internet. When your website requests a file or API, the guard intercepts the request. The guard can check a local offline vault (Cache Storage) first, fetch from the real network, or even combine both—working even when the user has completely lost internet connection.",
+    "junior": "A Service Worker is an event-driven background worker running on its own origin-scoped thread. Its lifecycle has three main phases: Registration, Installation (`install` event where you pre-cache static assets), and Activation (`activate` event where you purge outdated caches). Once active, it intercepts all network calls from controlled pages via the `fetch` event using `event.respondWith(caches.match(event.request))`.",
+    "senior": "Architecturally, a Service Worker acts as a client-side reverse proxy with programmatic routing capabilities. It runs in an isolated `ServiceWorkerGlobalScope` without DOM access. The `clients.claim()` and `skipWaiting()` primitives enable immediate control across open browsing contexts, preventing multi-tab version mismatch. The Cache Storage API provides granular key-value request/response pairs distinct from the HTTP browser disk cache.",
+    "underTheHood": "The browser installs the worker in a separate background execution context. During `install`, `event.waitUntil(promise)` holds the state machine in the 'installing' phase until all critical assets are written to `CacheStorage`. During `fetch`, the browser's network service routes IPC requests to the Service Worker thread before making network socket calls. If `event.respondWith()` is invoked, the worker's returned `Response` stream resolves directly back to the renderer process."
+  },
+  "rosettaStone": {
+    "react": "Workbox / PWA plugin registering precache manifests inside `serviceWorker.register()`.",
+    "angular": "`@angular/pwa` using `ngsw-config.json` for declarative asset caching.",
+    "vue": "Vite PWA plugin (`vite-plugin-pwa`) managing service worker generation.",
+    "svelte": "SvelteKit `src/service-worker.js` with built-in `$service-worker` asset imports."
+  },
+  "codeComparison": {
+    "title": "Network-Only Fetch vs Offline Cache-First Interception",
+    "summary": "Standard web pages fail with a dinosaur error offline; a Service Worker intercepts requests and serves cached assets instantly.",
+    "legacyOrBad": {
+      "label": "Direct Uncached Network Request",
+      "snippet": "fetch('/api/data'); // ❌ Crashes immediately when user is offline",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "js",
+        "code": "// ❌ OLD: Web applications without a Service Worker cannot intercept\n// failed requests, rendering the application completely broken when offline.\nasync function loadDashboard() {\n  const res = await fetch('/api/dashboard');\n  const data = await res.json();\n  render(data);\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Service Worker Cache-First Interception",
+      "snippet": "event.respondWith(caches.match(event.request)); // ✅ NEW: Instant offline capability",
+      "fullFile": {
+        "filename": "sw.js",
+        "language": "js",
+        "code": "const CACHE_NAME = 'app-v1';\nconst ASSETS = ['/', '/index.html', '/styles.css', '/bundle.js'];\n\n// ✅ NEW: Pre-cache static shell during installation\nself.addEventListener('install', (event) => {\n  event.waitUntil(\n    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))\n  );\n  self.skipWaiting();\n});\n\n// ✅ NEW: Clean up old cache versions during activation\nself.addEventListener('activate', (event) => {\n  event.waitUntil(\n    caches.keys().then((keys) =>\n      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))\n    )\n  );\n  self.clients.claim();\n});\n\n// ✅ NEW: Intercept all outgoing fetch requests\nself.addEventListener('fetch', (event) => {\n  event.respondWith(\n    caches.match(event.request).then((cachedResponse) => {\n      return cachedResponse || fetch(event.request);\n    })\n  );\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why doesn't an updated `sw.js` script immediately control existing open tabs when deployed?",
+      "contextIntro": "Interviewers test your knowledge of the Service Worker update cycle and multi-tab versioning safety.",
+      "detailedAnswer": "To prevent breaking running applications when different tabs share state, the browser installs the new Service Worker in the background and places it into the **waiting** state. The new worker will not take control until *all* tabs controlled by the old worker are completely closed. To force immediate takeover, call `self.skipWaiting()` in the `install` handler and `self.clients.claim()` in the `activate` handler.",
+      "trapWarning": "Refreshing a single tab does not necessarily activate the waiting worker if other tabs with the same origin remain open."
+    },
+    {
+      "question": "What is the difference between the HTTP Browser Cache and Cache Storage (`caches`)?",
+      "contextIntro": "This tests separation of concerns in browser caching architectures.",
+      "detailedAnswer": "The HTTP Browser Cache is an automatic, declarative, disk-based cache governed by server response headers (`Cache-Control`, `ETag`, `Expires`). `CacheStorage` is a fully programmatic, JavaScript-accessible key-value database that stores raw `Request` / `Response` pairs, granting developers complete control over cache insertion, matching, eviction, and offline mocking.",
+      "trapWarning": "Calling `caches.match()` does not read from the HTTP disk cache; it queries the explicit `CacheStorage` API."
+    }
+  ]
+}

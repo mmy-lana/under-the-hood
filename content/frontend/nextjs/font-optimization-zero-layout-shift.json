@@ -1,0 +1,58 @@
+{
+  "id": "font-optimization-zero-layout-shift",
+  "title": "next/font CSS Variable Self-Hosting & Metric Overrides",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "next-font", "cls", "web-vitals", "fonts", "performance"],
+  "prerequisites": ["CSS `@font-face` rules", "Cumulative Layout Shift (CLS) basics"],
+  "progressiveExplaining": {
+    "eli5": "When a custom web font loads late, the text suddenly changes shape and pushes everything on the page down (layout shift). `next/font` measures the custom font at build time and adjusts the temporary fallback font to match its exact dimensions, so the page never jumps when the real font finishes loading.",
+    "junior": "`next/font` automatically self-hosts Google Fonts or local font files at build time. It downloads the font files during build and serves them from your domain, eliminating external Google network requests. It injects CSS with fallback font metric overrides (`size-adjust`, `ascent-override`) matching the fallback system font to the web font, eliminating Cumulative Layout Shift (CLS).",
+    "senior": "Architecturally, `next/font` removes external third-party origins from the critical rendering path. At compile time, it parses the font binary to extract metrics (ascent, descent, line gap, units per em) and generates a synthetic `@font-face` fallback definition utilizing CSS `size-adjust` and `ascent-override`. This guarantees that the local fallback font occupies the exact spatial bounding box of the incoming custom font, reducing CLS to 0.",
+    "underTheHood": "The Next.js build plugin downloads the `.woff2` files and writes them to the static build output. It generates a scoped CSS class or CSS variable containing `@font-face` definitions with `font-display: swap`. Crucially, it emits a companion fallback `@font-face` (e.g. `font-family: '__Inter_Fallback'`) where metrics are mathematically scaled to match the primary font's advance widths."
+  },
+  "rosettaStone": {
+    "react": "Standard `@font-face` with manual font-pie / Capsize CSS metric overrides.",
+    "angular": "Angular CLI automatic font inlining (`optimization.fonts`).",
+    "vue": "Nuxt `@nuxtjs/google-fonts` or `@nuxt/fonts` with metric fallback generation.",
+    "svelte": "SvelteKit static asset serving with manual `font-display: swap` CSS."
+  },
+  "codeComparison": {
+    "title": "External Google Font CDN vs next/font Self-Hosting",
+    "summary": "External `<link>` tags introduce layout shift and extra DNS lookups; `next/font` self-hosts and generates metric overrides.",
+    "legacyOrBad": {
+      "label": "External CDN Link",
+      "snippet": "<link href=\"https://fonts.googleapis.com/...\" rel=\"stylesheet\"> // ❌ OLD: Third-party DNS + CLS",
+      "fullFile": {
+        "filename": "app/layout.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: External Google Fonts require 2 DNS lookups (fonts.googleapis.com\n// and fonts.gstatic.com), leak user IPs, and cause CLS when font-display: swap kicks in.\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html>\n      <head>\n        <link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossOrigin=\"anonymous\" />\n        <link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap\" rel=\"stylesheet\" />\n      </head>\n      <body>{children}</body>\n    </html>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "next/font with Variable",
+      "snippet": "import { Inter } from 'next/font/google'; // ✅ NEW: Self-hosted + 0 CLS",
+      "fullFile": {
+        "filename": "app/layout.tsx",
+        "language": "tsx",
+        "code": "import { Inter } from 'next/font/google';\n\n// ✅ NEW: Self-hosted, zero external requests, zero layout shift\nconst inter = Inter({\n  subsets: ['latin'],\n  variable: '--font-inter',\n  display: 'swap',\n});\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html lang=\"en\" className={inter.variable}>\n      <body className=\"font-sans\">{children}</body>\n    </html>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does `next/font` eliminate Cumulative Layout Shift (CLS) when using `font-display: swap`?",
+      "contextIntro": "This tests knowledge of CSS font metric overrides and Capsize/font-pie mathematics.",
+      "detailedAnswer": "`font-display: swap` normally causes layout shift when the custom font swaps in because fallback fonts (Arial, Times) have different glyph widths and line heights. `next/font` analyzes the custom font's metrics and injects an adjusted fallback `@font-face` using CSS properties like `size-adjust`, `ascent-override`, and `descent-override`, perfectly matching the fallback's box dimensions to the custom font.",
+      "trapWarning": "Do not say that `next/font` avoids CLS by blocking rendering until the font downloads. It uses `font-display: swap` with metric-matched fallbacks."
+    },
+    {
+      "question": "Are Google Fonts requested from Google servers in production when using `next/font/google`?",
+      "contextIntro": "This checks compliance and privacy architecture knowledge (GDPR).",
+      "detailedAnswer": "No. At build time, Next.js downloads the font files from Google and stores them in the static deployment artifact. In production, fonts are served directly from the same origin as your application; zero requests are sent to Google by the client browser.",
+      "trapWarning": "Avoid stating that Next.js proxies font requests at runtime. The download happens strictly at build time."
+    }
+  ]
+}

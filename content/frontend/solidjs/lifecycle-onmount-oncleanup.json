@@ -1,0 +1,58 @@
+{
+  "id": "lifecycle-onmount-oncleanup",
+  "title": "onMount & onCleanup: Owner Scope Root Disposers & Teardowns",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "lifecycle", "onMount", "onCleanup", "owner", "disposer", "memory"],
+  "prerequisites": ["SolidJS Components Run Once", "createEffect lifecycle"],
+  "progressiveExplaining": {
+    "eli5": "When a room in a hotel is opened, `onMount` turns on the air conditioner and connects the TV. When the guest checks out and the room is locked forever, `onCleanup` turns off the AC and unplugs the TV so nothing wastes electricity. Solid tracks every wire automatically so no cleanup is ever forgotten.",
+    "junior": "SolidJS has only two primary lifecycle methods: `onMount` and `onCleanup`. `onMount(fn)` runs once after the component's initial DOM nodes have been created and mounted into the document (ideal for DOM measurements or external library initialization). `onCleanup(fn)` registers a teardown function that runs when the current reactive scope (component, effect, or memo) is destroyed or re-evaluated.",
+    "senior": "Architecturally, Solid replaces complex component lifecycle methods with **Hierarchical Reactive Ownership Scopes** (`Owner`). Every component, `createRoot`, `createEffect`, or `<For>` row creates an `Owner` node with a `.cleanups` array. `onCleanup` simply pushes a disposal callback onto the current active owner's `.cleanups`. When a parent scope is disposed (e.g. an element unmounts), Solid recursively walks the Owner tree and executes all registered cleanups in reverse depth-first order, eliminating memory leaks.",
+    "underTheHood": "In the runtime, `getOwner()` returns the active `Owner`. `onCleanup(fn)` executes `Owner.cleanups.push(fn)`. When a component unmounts or an effect re-executes, `cleanNode(owner)` is called: it traverses `owner.cleanups`, executing each teardown function synchronously, clears observer dependency sets (`Sources`), and disposes all child `Owners` recursively."
+  },
+  "rosettaStone": {
+    "react": "`useEffect(() => { init(); return () => cleanup(); }, [])`.",
+    "angular": "`ngOnInit` / `afterNextRender` paired with `ngOnDestroy` / `DestroyRef`.",
+    "vue": "`onMounted(() => ...)` and `onUnmounted(() => ...)`.",
+    "svelte": "`$effect(() => { init(); return () => cleanup(); })`."
+  },
+  "codeComparison": {
+    "title": "React useEffect Multi-Phase Lifecycle vs Solid onMount / onCleanup",
+    "summary": "React's `useEffect` combines mount, update, and teardown into one hook; Solid separates initial DOM mount from granular disposal scopes.",
+    "legacyOrBad": {
+      "label": "React useEffect with Empty Deps",
+      "snippet": "useEffect(() => { const timer = setInterval(...); return () => clearInterval(timer); }, []); // ❌ Re-runs in StrictMode",
+      "fullFile": {
+        "filename": "TimerReact.jsx",
+        "language": "jsx",
+        "code": "// ❌ REACT: useEffect with empty dependency array runs after render and paint,\n// but executes twice in development under StrictMode, confusing developers.\nimport { useState, useEffect } from 'react';\n\nexport default function TimerReact() {\n  const [seconds, setSeconds] = useState(0);\n\n  useEffect(() => {\n    const id = setInterval(() => setSeconds(s => s + 1), 1000);\n    return () => clearInterval(id);\n  }, []);\n\n  return <div>Seconds: {seconds}</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "SolidJS onMount & onCleanup",
+      "snippet": "onMount(() => { ... }); onCleanup(() => clearInterval(id)); // ✅ NEW: Clear, deterministic lifecycle",
+      "fullFile": {
+        "filename": "TimerSolid.jsx",
+        "language": "jsx",
+        "code": "// ✅ SOLIDJS: onMount runs once when DOM is ready.\n// onCleanup can be declared anywhere inside the component scope.\nimport { createSignal, onMount, onCleanup } from 'solid-js';\n\nexport default function TimerSolid() {\n  const [seconds, setSeconds] = createSignal(0);\n\n  onMount(() => {\n    console.log('DOM is mounted and ready for measurement!');\n  });\n\n  const timerId = setInterval(() => setSeconds(s => s + 1), 1000);\n  \n  // ✅ Automatically executes when TimerSolid unmounts:\n  onCleanup(() => {\n    clearInterval(timerId);\n  });\n\n  return <div>Seconds: {seconds()}</div>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can `onCleanup` be used inside a `createEffect` or `createMemo`, or only at the root of a component?",
+      "contextIntro": "Tests deep understanding of Solid's reactive scope tree.",
+      "detailedAnswer": "`onCleanup` **can be called inside any reactive scope**, including inside a `createEffect`, `createMemo`, custom directive, or `<For>` row. When called inside a `createEffect`, the cleanup function executes **every time the effect is about to re-run** (before new execution) as well as when the parent component unmounts.",
+      "trapWarning": "Do not assume `onCleanup` only runs on component unmount; when nested inside an effect, it runs on every reactive dependency change before the next run."
+    },
+    {
+      "question": "Does `onMount` run on the server during Server-Side Rendering (SSR)?",
+      "contextIntro": "Checks knowledge of isomorphic SSR execution boundaries.",
+      "detailedAnswer": "No. `onMount` **never runs on the server during SSR**. It is strictly a client-side lifecycle hook that executes after the real browser DOM nodes have been created and inserted into the document. Server-side code executes only the synchronous component setup pass.",
+      "trapWarning": "Placing browser-only code (like `window.localStorage` or `document.querySelector`) outside of `onMount` in the root component body will crash during SSR."
+    }
+  ]
+}

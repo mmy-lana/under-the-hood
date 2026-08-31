@@ -1,0 +1,58 @@
+{
+  "id": "use-hook-promise-unwrapping",
+  "title": "The use() Hook: Conditional Promise and Context Unwrapping",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "use-hook", "promises", "context", "suspense", "react-19"],
+  "prerequisites": ["React Suspense", "React Context API", "Promises"],
+  "progressiveExplaining": {
+    "eli5": "In standard React, hooks are like strict train tracks: you can never put a hook inside an `if` statement or a loop. The new `use()` tool is a magic key that breaks that rule: you can use it inside `if` statements to read a Context or unwrap a Promise directly inside your component without calling `useEffect`.",
+    "junior": "The `use()` API in React 19 lets you read the value of a resource like a Promise or a React Context. Unlike all other React hooks (`useState`, `useEffect`, `useContext`), `use()` **can be called conditionally** inside `if` statements, loops, and after early returns. When passed a Promise, `use(promise)` suspends the component until the promise resolves, integrating seamlessly with `<Suspense>`.",
+    "senior": "Architecturally, `use()` is an untyped resource unwrapper rather than a traditional state hook. For Context (`use(ThemeContext)`), it traverses the fiber ancestor tree to find the nearest matching `ContextProvider` without violating hook-ordering rules. For Promises (`use(dataPromise)`), it checks the promise's internal status (`status === 'fulfilled' ? value : throw promise`). This enables streaming data directly from Server Components into Client Components as promises without client-side `useEffect` waterwalls.",
+    "underTheHood": "React monkey-patches or reads the cached promise state (`promise.status`, `promise.value`, `promise.reason`). If `pending`, `use()` throws the promise itself to trigger Suspense boundary capture. If `fulfilled`, it synchronously returns the resolved value without re-rendering. If `rejected`, it throws the rejection error to be caught by the nearest Error Boundary. Because `use()` does not append to the fiber's `memoizedState` linked list like `useState`, it is immune to hook call-order mismatch bugs."
+  },
+  "rosettaStone": {
+    "react": "`const data = use(promise);` or `const theme = use(ThemeContext);`",
+    "angular": "Angular `resource()` or `inject(Token)` inside functional contexts.",
+    "vue": "`await` inside `<script setup>` with root `<Suspense>`.",
+    "svelte": "Svelte `{#await promise then data}` block unwrapping."
+  },
+  "codeComparison": {
+    "title": "useEffect Data Fetching vs use() Promise Unwrapping",
+    "summary": "`useEffect` requires boilerplate loading states and causes waterfalls; `use()` unwraps promises directly under Suspense.",
+    "legacyOrBad": {
+      "label": "useEffect Fetch Pattern",
+      "snippet": "useEffect(() => { fetch().then(setData); }, []); // ❌ Boilerplate + client waterfall",
+      "fullFile": {
+        "filename": "UserProfile.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: 15 lines of boilerplate to handle fetching, loading states,\n// error states, and unmount cancellation.\nimport { useState, useEffect } from 'react';\n\nexport default function UserProfile({ userId }) {\n  const [user, setUser] = useState(null);\n  const [loading, setLoading] = useState(true);\n\n  useEffect(() => {\n    fetchUser(userId).then((data) => {\n      setUser(data);\n      setLoading(false);\n    });\n  }, [userId]);\n\n  if (loading) return <div>Loading...</div>;\n  return <h1>{user.name}</h1>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React 19 use() API",
+      "snippet": "const user = use(userPromise); // ✅ NEW: Direct synchronous unwrap under Suspense",
+      "fullFile": {
+        "filename": "UserProfile.jsx",
+        "language": "jsx",
+        "code": "import { use, Suspense } from 'react';\n\n// ✅ NEW: Promise passed directly from server or cache.\n// use() unwraps it and suspends automatically.\nfunction UserDetail({ userPromise, showDetails }) {\n  if (!showDetails) return <div>Details hidden</div>;\n\n  // ✅ Legal to call inside conditional block!\n  const user = use(userPromise);\n  return <h1>{user.name}</h1>;\n}\n\nexport default function UserProfile({ userPromise }) {\n  return (\n    <Suspense fallback={<div>Loading...</div>}>\n      <UserDetail userPromise={userPromise} showDetails={true} />\n    </Suspense>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can `use()` be called inside a `try/catch` block?",
+      "contextIntro": "Interviewers test your deep understanding of how React Suspense uses thrown promises under the hood.",
+      "detailedAnswer": "No, you should **not** wrap `use(promise)` inside a standard JavaScript `try/catch` block. When a promise is pending, `use()` intentionally *throws the promise* to signal the nearest `<Suspense>` boundary. If your `try/catch` intercepts the thrown promise, Suspense will fail to catch it, causing the component to break.",
+      "trapWarning": "To catch promise rejections from `use()`, use an **Error Boundary** or pass an already-caught promise with fallback data."
+    },
+    {
+      "question": "What happens if you create a new Promise inside the component body and pass it to `use(new Promise(...))`?",
+      "contextIntro": "Checks awareness of promise caching and infinite re-render loops.",
+      "detailedAnswer": "Passing an inline promise created in the render body (`use(fetch(...))`) causes an **infinite render loop**. Every render creates a new un-cached Promise instance, which suspends, resolves, triggers a re-render, creates another new Promise, and repeats forever. Promises passed to `use()` must be created outside render, cached via React `cache()`, or passed as props from a Server Component.",
+      "trapWarning": "Always pass cached or stable promises to `use()`."
+    }
+  ]
+}

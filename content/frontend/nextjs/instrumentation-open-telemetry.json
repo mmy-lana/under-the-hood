@@ -1,0 +1,58 @@
+{
+  "id": "instrumentation-open-telemetry",
+  "title": "instrumentation.ts: Startup Hooks & OpenTelemetry Tracing Spans",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "opentelemetry", "instrumentation", "tracing", "monitoring", "apm"],
+  "prerequisites": ["Distributed tracing basics", "OpenTelemetry (OTel) core concepts"],
+  "progressiveExplaining": {
+    "eli5": "When a large rocket launches, engineers run a startup checklist before takeoff, and attach sensors to track every single gear during the flight. `instrumentation.ts` is the startup checklist and sensor installer for your Next.js server: it runs once when the server turns on and measures every page load and database query.",
+    "junior": "`instrumentation.ts` (placed in the root of your project) exports a `register()` function that Next.js runs once whenever a new server instance boots up. It is the official place to initialize monitoring SDKs (like Sentry, Datadog, or OpenTelemetry), connect to database pools, or set up tracing spans without polluting your UI code.",
+    "senior": "Architecturally, `instrumentation.ts` provides native lifecycle hooks isolated from individual request contexts. It executes during cold boot across both Edge and Node.js runtimes. By configuring the OpenTelemetry NodeSDK inside `register()`, Next.js automatically instruments Server Components, Server Actions, Route Handlers, and fetch requests, propagating trace IDs and creating nested span graphs automatically.",
+    "underTheHood": "Next.js hooks into Node.js startup via its internal server bootstrap routine. Before routing any requests, it invokes `register()` from the compiled `instrumentation` module. Next.js natively wraps internal route evaluation, RSC flight serialization, and data cache fetches with OpenTelemetry `@opentelemetry/api` tracer spans (e.g. `NextNode.run`, `AppRender.getBodyResult`), emitting spans to registered OTel exporters."
+  },
+  "rosettaStone": {
+    "react": "Custom APM init scripts executed before `ReactDOM.hydrateRoot()`.",
+    "angular": "Angular `APP_INITIALIZER` token for bootstrap telemetry setup.",
+    "vue": "Nuxt Nitro server plugins in `server/plugins/` running on engine startup.",
+    "svelte": "SvelteKit `hooks.server.ts` `init()` function."
+  },
+  "codeComparison": {
+    "title": "Ad-hoc Global Logging vs Centralized OpenTelemetry Registration",
+    "summary": "Importing telemetry in root layouts causes multiple initializations; `instrumentation.ts` guarantees clean single-pass server boot execution.",
+    "legacyOrBad": {
+      "label": "Layout-level Initialization",
+      "snippet": "if (!global.tracer) initTracer(); // ❌ OLD: Pollutes render path and runs per-request",
+      "fullFile": {
+        "filename": "app/layout.tsx",
+        "language": "tsx",
+        "code": "// ❌ OLD: Initializing APM tools inside render paths or layouts\n// creates race conditions, multiple redundant instances, and server/client confusion.\nimport { initMonitoring } from '@/lib/monitoring';\n\ninitMonitoring();\n\nexport default function Layout({ children }: { children: React.ReactNode }) {\n  return <html><body>{children}</body></html>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "instrumentation.ts Lifecycle Hook",
+      "snippet": "export async function register() { await initOpenTelemetry(); } // ✅ NEW",
+      "fullFile": {
+        "filename": "instrumentation.ts",
+        "language": "ts",
+        "code": "export async function register() {\n  // ✅ NEW: Guaranteed to run only once at server boot time\n  if (process.env.NEXT_RUNTIME === 'nodejs') {\n    const { NodeSDK } = await import('@opentelemetry/sdk-node');\n    const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http');\n\n    const sdk = new NodeSDK({\n      traceExporter: new OTLPTraceExporter(),\n      serviceName: 'nextjs-web-app'\n    });\n    sdk.start();\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is dynamic `import()` required when initializing Node-specific SDKs inside `instrumentation.ts`?",
+      "contextIntro": "Interviewers test your knowledge of multi-runtime execution (Edge vs Node.js).",
+      "detailedAnswer": "`instrumentation.ts` is compiled for *all* runtimes used by Next.js, including the Edge Runtime. Because heavy monitoring packages (like `@opentelemetry/sdk-node`) rely on Node.js core modules (`fs`, `net`, `async_hooks`), static imports would fail in the Edge environment. Using dynamic `import()` inside a `process.env.NEXT_RUNTIME === 'nodejs'` conditional ensures Node packages are only loaded when running on the Node.js server.",
+      "trapWarning": "Top-level static imports of Node.js modules in `instrumentation.ts` will crash your Edge Runtime routes during build."
+    },
+    {
+      "question": "Where must `instrumentation.ts` be placed in the repository?",
+      "contextIntro": "This tests framework convention awareness.",
+      "detailedAnswer": "`instrumentation.ts` (or `.js`) must be located in the root of your project directory (or inside the `src/` directory if you are using `src/app`). It should sit directly adjacent to your `app/` or `pages/` directory.",
+      "trapWarning": "Placing it inside `app/instrumentation.ts` is invalid and Next.js will ignore it."
+    }
+  ]
+}

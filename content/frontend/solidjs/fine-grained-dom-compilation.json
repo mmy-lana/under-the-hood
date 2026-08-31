@@ -1,0 +1,58 @@
+{
+  "id": "fine-grained-dom-compilation",
+  "title": "Solid JSX Compilation: HTML Template Cloning & Surgical Node Setters",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / babel-preset-solid",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "compiler", "jsx", "template-cloning", "dom", "performance"],
+  "prerequisites": ["Browser DOM `<template>` tag", "SolidJS reactivity primitives"],
+  "progressiveExplaining": {
+    "eli5": "Instead of building a toy model out of virtual blocks and comparing it to a blueprint, Solid creates a plastic mold (an HTML `<template>`) of the real elements. When a component appears, it stamps out a clone of the mold in one instant step, grabs pointers to only the dynamic text slots, and updates those exact text slots when data changes.",
+    "junior": "Solid's JSX compiler converts declarative JSX into native browser DOM operations without any runtime Virtual DOM. Static HTML elements are converted into `<template>` elements that are cloned using `cloneNode(true)` for maximum speed. Dynamic bindings (like `{count()}` or `class={active()}`) are compiled into surgical micro-effects that directly update element properties (`el.textContent = ...`, `el.className = ...`).",
+    "senior": "Architecturally, Solid JSX compilation achieves near-vanilla JavaScript performance by splitting templates into static and dynamic paths at compile time. Static subtrees are serialized into HTML strings passed to `template()`, which the browser parses natively into template DOM nodes. Dynamic holes are indexed by child/sibling traversal paths (`firstChild`, `nextSibling`), completely eliminating `document.createElement()` and `querySelector()` overhead during instantiation.",
+    "underTheHood": "The Babel plugin transforms `<div><h1>{title()}</h1><p>Static</p></div>` into `const _tmpl$ = /*#__PURE__*/_$template('<div><h1></h1><p>Static</p></div>')`. At runtime: `const _el$ = _tmpl$.cloneNode(true)`, `const _el$2 = _el$.firstChild`. It attaches a reactive computation: `_$insert(_el$2, title)`. When `title` signals update, only the insert computation executes `_el$2.data = title()`, with zero diffing or tree walking."
+  },
+  "rosettaStone": {
+    "react": "`React.createElement('div', null, ...)` creating virtual DOM trees on every render.",
+    "angular": "Ivy compiler emitting `ɵɵelementStart` and `ɵɵtextInterpolate` instructions.",
+    "vue": "Vue 3 compiler emitting `createVNode` with bitwise `PatchFlags`.",
+    "svelte": "Svelte 5 compiler using HTML template cloning and signal effect bindings."
+  },
+  "codeComparison": {
+    "title": "React Virtual DOM Object Output vs SolidJS Template Clone Output",
+    "summary": "React compiles JSX to VNode object factories; Solid compiles JSX to native DOM `<template>` clones with direct node pointers.",
+    "legacyOrBad": {
+      "label": "React Virtual DOM Output",
+      "snippet": "return React.createElement('div', { className: 'card' }, React.createElement('h1', null, title)); // ❌ Object allocation",
+      "fullFile": {
+        "filename": "react-output.js",
+        "language": "js",
+        "code": "// ❌ REACT COMPILED OUTPUT: Allocates new JS objects on every render pass,\n// which must be recursively compared by the reconciler.\nfunction Component(props) {\n  return React.createElement('div', { className: 'card' },\n    React.createElement('h1', null, props.title),\n    React.createElement('p', null, 'Static description')\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "SolidJS Compiled Output",
+      "snippet": "const _el$ = _tmpl$.cloneNode(true); _$insert(_el$.firstChild, title); // ✅ Native template cloning",
+      "fullFile": {
+        "filename": "solid-output.js",
+        "language": "js",
+        "code": "import { template as _$template, insert as _$insert } from 'solid-js/web';\n\n// ✅ SOLID COMPILED OUTPUT: Statically created once in memory\nconst _tmpl$ = /*#__PURE__*/ _$template('<div class=\"card\"><h1></h1><p>Static description</p></div>');\n\nfunction Component(props) {\n  // 1. Instant native DOM clone:\n  const _el$ = _tmpl$.cloneNode(true);\n  const _h1 = _el$.firstChild;\n\n  // 2. Direct reactive binding to the h1 node:\n  _$insert(_h1, () => props.title);\n\n  return _el$; // Returns real DOM node!\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is `template.cloneNode(true)` faster than calling `document.createElement()` repeatedly?",
+      "contextIntro": "Interviewers test your knowledge of browser C++ DOM instantiation internals.",
+      "detailedAnswer": "`cloneNode(true)` executes directly in the browser's optimized C++ engine layer in a single native operation. Calling `document.createElement()`, `setAttribute()`, and `appendChild()` repeatedly requires hundreds of cross-boundary JavaScript-to-C++ bindings calls, which incurs high overhead. Cloning a template HTML fragment is 2-5x faster.",
+      "trapWarning": "Do not say that Solid uses `innerHTML` at runtime. Solid parses the HTML string into a `<template>` *once* at module load time, and only uses `cloneNode(true)` during component instantiation."
+    },
+    {
+      "question": "What does a Solid component return when called in JavaScript?",
+      "contextIntro": "Checks basic runtime return-type understanding.",
+      "detailedAnswer": "A Solid component returns **real, physical HTML DOM nodes** (e.g. an `HTMLDivElement` or `DocumentFragment`), *not* a Virtual DOM object, VNode, or Fiber descriptor.",
+      "trapWarning": "If you `console.log(<div />)` in SolidJS, you will see a live `HTMLDivElement` in the browser console, not a React element object `{ type: 'div', props: {} }`."
+    }
+  ]
+}

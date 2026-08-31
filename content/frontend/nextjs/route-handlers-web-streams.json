@@ -1,0 +1,58 @@
+{
+  "id": "route-handlers-web-streams",
+  "title": "App Route Handlers: Web Standard Response Stream Piping",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "route-handlers", "web-streams", "streaming", "sse", "api"],
+  "prerequisites": ["Web Streams API (ReadableStream, TransformStream)", "Fetch API Request/Response"],
+  "progressiveExplaining": {
+    "eli5": "Instead of waiting for an entire movie to download before you can start watching, the server sends you tiny pieces of video every second through a water hose (a stream). Route Handlers in the App Router use this stream hose so you can send live data—like chat responses or live stock prices—chunk by chunk without loading the whole thing in memory first.",
+    "junior": "Next.js App Router uses `app/api/.../route.ts` files to create API endpoints. Instead of Node.js `(req, res)` callbacks, route handlers use standard Web `Request` and `Response` objects. You can return a `new Response(readableStream)` to stream text, AI tokens, or binary data chunk-by-chunk to the client with `Transfer-Encoding: chunked`.",
+    "senior": "Route Handlers provide native integration with the WHATWG Streams standard. By leveraging `ReadableStream` and `TransformStream`, you can pipe asynchronous iterators or external AI inference streams (e.g. OpenAI SDK) directly to the response body with backpressure management. This bypasses server memory buffering and enables high-throughput Server-Sent Events (SSE) and NDJSON streaming.",
+    "underTheHood": "Next.js wraps the Node.js or Edge runtime HTTP layer into a WHATWG `Request`. When returning a `Response` containing a `ReadableStream`, Next.js uses an internal stream bridge (`web-streams-polyfill` / native Node `Readable.fromWeb`) to pipe chunks directly into the HTTP response socket, automatically setting `Transfer-Encoding: chunked` and flushing chunks as they are enqueued."
+  },
+  "rosettaStone": {
+    "react": "Standard Web Fetch API / Node `ReadableStream` response handling.",
+    "angular": "NestJS `@Sse()` decorator or Express `res.write()` streaming.",
+    "vue": "Nuxt 3 Nitro event handlers returning `sendStream()`.",
+    "svelte": "SvelteKit `+server.ts` returning a `new Response(stream)`."
+  },
+  "codeComparison": {
+    "title": "Legacy Buffered JSON Response vs Web Stream Piping",
+    "summary": "Buffered responses force clients to wait for full completion; Web Streams send progressive text/tokens in real time.",
+    "legacyOrBad": {
+      "label": "Pages API Buffered Route",
+      "snippet": "res.status(200).json({ fullText }); // ❌ OLD: Waits for entire computation",
+      "fullFile": {
+        "filename": "pages/api/generate.ts",
+        "language": "ts",
+        "code": "import type { NextApiRequest, NextApiResponse } from 'next';\n\n// ❌ OLD: The server buffers the entire payload in memory before returning,\n// causing poor perceived latency for LLM or batch processing.\nexport default async function handler(req: NextApiRequest, res: NextApiResponse) {\n  const fullText = await generateCompleteText();\n  res.status(200).json({ result: fullText });\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "App Route Handler Web Stream",
+      "snippet": "return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }); // ✅ NEW",
+      "fullFile": {
+        "filename": "app/api/stream/route.ts",
+        "language": "ts",
+        "code": "export const dynamic = 'force-dynamic';\n\nexport async function GET() {\n  // ✅ NEW: ReadableStream pushes chunks as they become available\n  const stream direct = new ReadableStream({\n    async start(controller) {\n      const encoder = new TextEncoder();\n      for (let i = 0; i < 5; i++) {\n        controller.enqueue(encoder.encode(`data: Chunk ${i}\\n\\n`));\n        await new Promise((resolve) => setTimeout(resolve, 500));\n      }\n      controller.close();\n    }\n  });\n\n  return new Response(stream, {\n    headers: {\n      'Content-Type': 'text/event-stream',\n      'Cache-Control': 'no-cache',\n      'Connection': 'keep-alive'\n    }\n  });\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you avoid default static caching in a GET Route Handler?",
+      "contextIntro": "Interviewers test your knowledge of route handler evaluation rules.",
+      "detailedAnswer": "In Next.js, a `GET` Route Handler is evaluated statically at build time by default if it does not access the `Request` object. To make it dynamic, you can export `export const dynamic恒 = 'force-dynamic'`, access request headers/cookies, or use other HTTP methods like `POST`, `PUT`, `DELETE`.",
+      "trapWarning": "Do not assume all Route Handlers are dynamic. A parameter-less `GET` handler returning static data will be prerendered at build time."
+    },
+    {
+      "question": "Can you use Node.js `res.status().send()` in App Router route handlers?",
+      "contextIntro": "This tests knowledge of the transition to Web Standards in Next.js.",
+      "detailedAnswer": "No. The App Router completely discarded the Express-like `(req, res)` signature in favor of Web Standards (`Request` in, `Response` or `NextResponse` out).",
+      "trapWarning": "Avoid importing `NextApiResponse` in `app/api/.../route.ts` files; it only belongs in legacy `pages/api`."
+    }
+  ]
+}

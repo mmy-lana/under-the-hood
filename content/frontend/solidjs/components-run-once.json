@@ -1,0 +1,58 @@
+{
+  "id": "components-run-once",
+  "title": "Zero Virtual DOM: Components Run Once as Setup Functions",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "reactivity", "lifecycle", "signals", "compiler", "architecture"],
+  "prerequisites": ["React rendering model vs SolidJS reactivity", "SolidJS createSignal"],
+  "progressiveExplaining": {
+    "eli5": "In React, a component is like a movie projector that replays the entire scene from frame 1 every time an actor blinks. In SolidJS, a component is a construction worker who builds a house once on day 1, attaches live electronic wires to the light switches (signals), and goes home forever. The house never gets rebuilt; only the light bulb turns on and off.",
+    "junior": "In SolidJS, **component functions execute exactly once** when they are created (mounted). They never re-render. When a signal updates via `setCount()`, the component function does *not* re-run. Instead, only the specific micro-expression or DOM node that called `count()` updates directly. Destructuring props in the function signature (`function App({ count })`) breaks reactivity because the function never re-runs to receive new prop values.",
+    "senior": "Architecturally, SolidJS completely eliminates the Virtual DOM and component-level reconciliation. Component functions are purely setup constructors that instantiate reactive graph scopes (owners) and return compiled real DOM nodes. Because there is no render loop, hook dependency arrays (like `useMemo` / `useCallback`) do not exist. Closures, timers, and event listeners declared inside a Solid component run once at creation time, eliminating stale closure bugs.",
+    "underTheHood": "The Solid JSX compiler transforms JSX into template cloning instructions: `const _el$ = _tmpl$.cloneNode(true)`. Dynamic expressions inside the template are wrapped in fine-grained computations: `_$insert(_el$, count)`. During the single component execution pass, Solid creates an `Owner` node on the reactive tree. When signals update, only the specific leaf `Computation` attached to `_insert` evaluates, performing a surgical DOM node update (`node.data = val`)."
+  },
+  "rosettaStone": {
+    "react": "Component function re-runs on every state change; requires `useMemo`/`useCallback`.",
+    "angular": "Component class instantiated once; change detection runs template check passes.",
+    "vue": "`<script setup>` runs once, but the internal render function re-runs with VNode diffing.",
+    "svelte": "Component script runs once; compiler emits surgical update blocks."
+  },
+  "codeComparison": {
+    "title": "React Component Re-Render vs SolidJS Run-Once Execution",
+    "summary": "Console logs in React run on every click; in SolidJS, the component body runs once and only the DOM binding updates.",
+    "legacyOrBad": {
+      "label": "React Re-Rendering Component",
+      "snippet": "const [count, setCount] = useState(0); console.log('Rendered'); // ❌ Logs on every click",
+      "fullFile": {
+        "filename": "Counter.jsx",
+        "language": "jsx",
+        "code": "// ❌ REACT: Every click re-executes this entire function,\n// recalculating variables and re-allocating inline event handler functions.\nimport { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n  \n  console.log('Component function executed!'); // Logs on every single count increment\n\n  return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "SolidJS Run-Once Component",
+      "snippet": "const [count, setCount] = createSignal(0); console.log('Mounted'); // ✅ Runs ONLY ONCE",
+      "fullFile": {
+        "filename": "Counter.jsx",
+        "language": "jsx",
+        "code": "// ✅ SOLIDJS: Component function executes ONLY ONCE at mount.\n// The button click triggers only the exact {count()} text node update.\nimport { createSignal } from 'solid-js';\n\nexport default function Counter() {\n  const [count, setCount] = createSignal(0);\n  \n  console.log('Component initialized!'); // Logs EXACTLY ONCE, never logs again!\n\n  return <button onClick={() => setCount(c => c + 1)}>Count: {count()}</button>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is destructuring `props` in a SolidJS component considered an anti-pattern that breaks reactivity?",
+      "contextIntro": "This is the #1 gotcha interviewers use to check if a developer understands Solid's execution model.",
+      "detailedAnswer": "Because Solid components run **only once**, destructuring `props` in the function parameter (e.g. `function Card({ title })`) extracts the property's raw primitive value at the exact moment of initial setup. When the parent component passes a new `title`, the child component function does not re-run, so `title` remains frozen as its initial value. To preserve reactivity, you must access props via property access `props.title` or use `splitProps(props, [...])`.",
+      "trapWarning": "Never write `const { name, age } = props;` in SolidJS. Always use `props.name` or helper utilities like `mergeProps` / `splitProps`."
+    },
+    {
+      "question": "Do you need `useCallback` or `useMemo` for event handlers or child components in SolidJS?",
+      "contextIntro": "Tests understanding of closure creation in non-re-rendering frameworks.",
+      "detailedAnswer": "No. `useCallback` does not exist in SolidJS because inline functions defined in the component body are instantiated only once during initial mount. They are never re-created on signal updates. `createMemo` exists only to cache expensive derived calculations, not to preserve reference equality across re-renders.",
+      "trapWarning": "Wrapping simple event handlers or calculations in `createMemo` just for reference stability is completely unnecessary and adds overhead in Solid."
+    }
+  ]
+}

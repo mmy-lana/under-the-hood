@@ -1,0 +1,58 @@
+{
+  "id": "core-web-vitals-lcp-and-cls",
+  "title": "Largest Contentful Paint (LCP) & Cumulative Layout Shift (CLS) Sub-Metrics",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "W3C Performance Timeline / Core Web Vitals 2026",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "web-vitals", "lcp", "cls", "performance", "layout-shift"],
+  "prerequisites": ["Critical rendering path", "Browser layout engine fundamentals"],
+  "progressiveExplaining": {
+    "eli5": "LCP is a stopwatch timing when the biggest poster on the wall (hero image or main heading) finishes hanging up. CLS measures how much the furniture jumps around while you are trying to read the poster because someone forgot to mark the floor with chalk first.",
+    "junior": "Largest Contentful Paint (LCP) tracks perceived load speed by measuring when the largest visible text block or image finishes rendering in the viewport (target <= 2.5s). Cumulative Layout Shift (CLS) measures visual stability by tracking unexpected element movements during the page lifecycle (target <= 0.1). LCP breaks down into Time to First Byte (TTFB), Resource Load Delay, Resource Load Duration, and Element Render Delay.",
+    "senior": "Architecturally, LCP is computed by the browser's paint engine using the PerformanceObserver `largest-contentful-paint` entry, stopping candidates on first user input. Optimizing LCP requires minimizing its four discrete sub-parts, notably avoiding client-side discovery chains for hero images. CLS computes session windows of layout shift scores (`impact fraction * distance fraction`) via `LayoutShift` entries; shifts within 500ms of user input (`hadRecentInput === true`) are excluded.",
+    "underTheHood": "For LCP, Blink dispatches a candidate when an `<img>`, `<image>` inside `<svg>`, video poster, or block element containing text nodes paints, tracking size by layout-reported visual bounding box clipped to the viewport. For CLS, the layout engine compares the layout box coordinates of unstable elements before and after the layout pass. The shift score formula is `Impact Fraction` (area union of old and new box / viewport area) multiplied by `Distance Fraction` (max displacement distance / max viewport dimension)."
+  },
+  "rosettaStone": {
+    "react": "`next/image` with `priority` for LCP; fixed aspect-ratio wrappers to eliminate CLS.",
+    "angular": "`NgOptimizedImage` with `priority` attribute and mandatory `width`/`height`.",
+    "vue": "`<NuxtImg preload>` with aspect-ratio CSS placeholders.",
+    "svelte": "SvelteKit `@sveltejs/enhanced-img` generating intrinsic aspect-ratio styles."
+  },
+  "codeComparison": {
+    "title": "Lazy LCP Image & Unbounded Ad vs Preloaded LCP & Reserved Space",
+    "summary": "Late-discovered lazy images hurt LCP and unreserved dynamic banners cause CLS; preloading and aspect-ratio reservation solve both.",
+    "legacyOrBad": {
+      "label": "Lazy Hero + Dynamic Insert",
+      "snippet": "<img src=\"hero.jpg\" loading=\"lazy\" /> <!-- ❌ LCP delayed + CLS on inject -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!-- ❌ OLD: loading='lazy' on hero image forces browser to wait\n     until layout to start fetching, destroying LCP. Unreserved banner causes CLS. -->\n<div id=\"ad-container\"></div> <!-- Height is 0px initially -->\n<img src=\"/hero.jpg\" loading=\"lazy\" />\n\n<script>\n  // Injected ad shifts hero image down 250px after 1 second:\n  setTimeout(() => {\n    document.getElementById('ad-container').innerHTML = '<div style=\"height:250px\">Ad</div>';\n  }, 1000);\n</script>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Optimized LCP + Reserved Layout Box",
+      "snippet": "<link rel=\"preload\" fetchpriority=\"high\" ... /> <div style=\"min-height: 250px\">...</div> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!-- ✅ NEW: Preload with high fetchpriority for instant LCP discovery.\n     min-height reserves ad space up front to achieve CLS = 0. -->\n<head>\n  <link rel=\"preload\" fetchpriority=\"high\" as=\"image\" href=\"/hero.jpg\" type=\"image/jpeg\" />\n</head>\n<body>\n  <div id=\"ad-container\" style=\"min-height: 250px; contain-intrinsic-size: 250px;\">\n    <!-- Ad mounts into pre-reserved space -->\n  </div>\n  <img src=\"/hero.jpg\" width=\"1200\" height=\"600\" fetchpriority=\"high\" style=\"aspect-ratio: 2/1; width: 100%; height: auto;\" />\n</body>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What are the four sub-parts of LCP, and which is usually the most impactful to fix?",
+      "contextIntro": "Tests deep diagnostic knowledge of the Core Web Vitals breakdown.",
+      "detailedAnswer": "The four sub-parts are: (1) TTFB (time until HTML arrives), (2) Resource Load Delay (time between HTML arriving and the browser initiating the image fetch), (3) Resource Load Duration (time to download image bytes), and (4) Element Render Delay (time from image download until it is painted). Resource Load Delay is often the easiest win: fixing it means eliminating client-side CSS/JS discovery chains via HTML `<link rel='preload'>` or `fetchpriority='high'` directly in initial HTML.",
+      "trapWarning": "Never put `loading='lazy'` on an above-the-fold hero image; it introduces massive Resource Load Delay because the browser defers the fetch until after layout completes."
+    },
+    {
+      "question": "Why does a CSS transform animation NOT contribute to CLS, while animating `top` or `margin` does?",
+      "contextIntro": "Probes understanding of layout engine shift tracking vs compositor transformations.",
+      "detailedAnswer": "The CLS algorithm specifically monitors shifts in *layout boxes* within the Layout Tree during layout reflow passes. Animating `transform` (`translateX/Y`) operates entirely on the Compositor thread by modifying layer matrices without changing the element's layout geometry box, resulting in a CLS score of 0. Animating `top`, `margin`, or `height` invalidates layout geometry on every frame, generating `LayoutShift` entries.",
+      "trapWarning": "Do not claim that any smooth visual movement counts toward CLS. Only layout geometry displacement on the main thread generates shift scores."
+    }
+  ]
+}

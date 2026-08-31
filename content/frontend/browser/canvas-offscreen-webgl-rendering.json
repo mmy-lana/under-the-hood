@@ -1,0 +1,58 @@
+{
+  "id": "canvas-offscreen-webgl-rendering",
+  "title": "OffscreenCanvas: Multi-Threaded Canvas & WebGL Rendering in Web Workers",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "HTML Living Standard / OffscreenCanvas API",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "canvas", "offscreen-canvas", "webgl", "web-workers", "gpu"],
+  "prerequisites": ["HTML5 Canvas 2D / WebGL basics", "Web Workers & Transferable objects"],
+  "progressiveExplaining": {
+    "eli5": "Normally, a painter sits right in the store window and paints on the glass. If a customer talks to the painter, the painting stops; if the painter works fast, the customer cannot talk. `OffscreenCanvas` hands the canvas board to an assistant in the basement. The assistant paints at 120 frames a second on a dedicated GPU connection, while the store clerk at the front desk handles customers with zero freezing.",
+    "junior": "`OffscreenCanvas` allows 2D and WebGL rendering to happen inside a Web Worker off the main thread. Call `canvas.transferControlToOffscreen()` on a regular DOM `<canvas>` and transfer it to a Worker via `worker.postMessage({ canvas: offscreen }, [offscreen])`. The Worker acquires a `2d` or `webgl` context and renders continuously without ever blocking UI clicks, animations, or DOM reflows.",
+    "senior": "Architecturally, `OffscreenCanvas` decouples rendering from the main-thread DOM lifecycle. In standard canvas usage, `getContext('2d')` and WebGL commands execute on the main thread and synchronize with the compositor via DOM commits. With `OffscreenCanvas`, the Worker directly submits GPU draw commands to the browser's GPU process. Even if the main thread is completely saturated by massive JavaScript execution (100% CPU lock), the Worker-driven canvas continues rendering smoothly at display refresh rate.",
+    "underTheHood": "When `transferControlToOffscreen()` executes, the DOM `<canvas>` is converted into a placeholder layer. Ownership of the underlying graphics buffer and surface sink is transferred to the `OffscreenCanvas` instance. Inside the Worker, WebGL/2D draw calls write to an offscreen frame buffer. On `requestAnimationFrame` (available in worker scopes) or `commit()`, the surface frame is transmitted directly over IPC to the browser's Viz / GPU compositing service."
+  },
+  "rosettaStone": {
+    "react": "React Three Fiber (R3F) offloaded into a Web Worker via `@react-three/offscreen`.",
+    "angular": "Three.js / Babylon.js canvas rendering managed in dedicated Angular Web Workers.",
+    "vue": "Data visualization dashboards offloading Chart.js rendering to worker threads.",
+    "svelte": "Svelte canvas components delegating WebGL rendering to an OffscreenCanvas worker."
+  },
+  "codeComparison": {
+    "title": "Main-Thread Blocking WebGL vs Worker-Based OffscreenCanvas",
+    "summary": "Main-thread canvas rendering stutters when JS tasks run; OffscreenCanvas guarantees 60/120 FPS rendering independent of main-thread load.",
+    "legacyOrBad": {
+      "label": "Main-Thread Canvas Render",
+      "snippet": "const ctx = canvas.getContext('2d'); renderLoop(); // ❌ Janks whenever main thread is busy",
+      "fullFile": {
+        "filename": "main.js",
+        "language": "js",
+        "code": "// ❌ OLD: Complex 2D/3D physics or particle rendering on the main thread\n// causes frame drops whenever the user interacts or DOM updates occur.\nconst canvas = document.getElementById('my-canvas');\nconst ctx = canvas.getContext('2d');\n\nfunction render() {\n  draw10000Particles(ctx);\n  requestAnimationFrame(render); // Stutters on heavy JS work\n}\nrender();"
+      }
+    },
+    "modernOrGood": {
+      "label": "OffscreenCanvas Worker Transfer",
+      "snippet": "const offscreen = canvas.transferControlToOffscreen(); worker.postMessage({ canvas: offscreen }, [offscreen]); // ✅ NEW",
+      "fullFile": {
+        "filename": "main.js",
+        "language": "js",
+        "code": "// ✅ NEW: Transfer canvas control to a background Worker.\n// The main thread is 100% free from graphics rendering overhead.\nconst canvas = document.getElementById('my-canvas');\nconst offscreen = canvas.transferControlToOffscreen();\n\nconst worker = new Worker(new URL('./canvas.worker.js', import.meta.url), { type: 'module' });\n\n// Zero-copy transfer of canvas control:\nworker.postMessage({ canvas: offscreen }, [offscreen]);\n\n// canvas.worker.js:\n// self.onmessage = ({ data }) => {\n//   const ctx = data.canvas.getContext('2d');\n//   function render() {\n//     drawParticles(ctx);\n//     requestAnimationFrame(render); // Runs smoothly at 60/120 FPS in Worker\n//   }\n//   render();\n// };"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can you call `canvas.getContext()` on the main thread after calling `canvas.transferControlToOffscreen()`?",
+      "contextIntro": "Tests understanding of canvas context ownership and transfer constraints.",
+      "detailedAnswer": "No. Once `transferControlToOffscreen()` has been called, control of the canvas context is permanently transferred. Calling `getContext()` on the original DOM `<canvas>` throws an `InvalidStateError` exception. All context acquisition must happen on the `OffscreenCanvas` instance inside the Worker.",
+      "trapWarning": "Do not attempt to acquire a 2D context on the main thread and transfer the context object; you must transfer the *OffscreenCanvas* before getting any context."
+    },
+    {
+      "question": "How do you handle user input events (like `click`, `mousemove`, or `wheel`) with an `OffscreenCanvas` in a Worker?",
+      "contextIntro": "Checks knowledge of input event routing to Web Workers.",
+      "detailedAnswer": "Because Web Workers do not have access to DOM event listeners, the main thread must attach DOM listeners (`pointerdown`, `mousemove`, `wheel`) to the `<canvas>` element and forward relevant serialized coordinates and input deltas (`event.clientX`, `event.clientY`, `event.deltaY`) to the Worker via `worker.postMessage()`.",
+      "trapWarning": "Do not try to attach `addEventListener` to `OffscreenCanvas` inside the Worker; it is not an `EventTarget` for DOM input."
+    }
+  ]
+}

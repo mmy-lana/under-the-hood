@@ -1,0 +1,58 @@
+{
+  "id": "use-transition-concurrent-lanes",
+  "title": "useTransition & Concurrent Lanes: Priority Scheduling & Non-Blocking Updates",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "useTransition", "startTransition", "concurrent", "lanes", "scheduler"],
+  "prerequisites": ["React Fiber Reconciler", "State updates with useState"],
+  "progressiveExplaining": {
+    "eli5": "Think of a highway with an express lane and a freight lane. When a user types in a search box, typing is an ambulance that must stay in the express lane (instant response). Filtering 10,000 search results is a slow freight truck. `startTransition` moves the heavy filtering work into the freight lane: if the user types another letter, the ambulance speeds ahead and interrupts the truck instead of freezing the steering wheel.",
+    "junior": "`useTransition` is a hook that marks a state update as a non-urgent 'transition'. `const [isPending, startTransition] = useTransition();`. Inside `startTransition(() => { setHeavyState(data); })`, React deprioritizes the update. Urgent updates (like typing in an input or clicking a toggle) can interrupt the transition render, keeping the input responsive. `isPending` tells you if the background transition is currently rendering.",
+    "senior": "Architecturally, React Concurrent Mode replaces a single update queue with **Lanes** (a 31-bit bitmask priority system). High-priority lanes (e.g. `SyncLane`, `InputContinuousLane`) preempt lower-priority transition lanes (`TransitionLanes`). When a transition update is scheduled, React assigns it a transition lane bitmask. If an urgent event arrives during the fiber work loop, React halts the work-in-progress transition tree, processes the urgent lane to completion, commits it to the DOM, and then restarts or resumes the transition render.",
+    "underTheHood": "Lanes use bitwise operators (e.g. `lanes & -lanes` for highest priority). In `scheduleUpdateOnFiber`, React marks the fiber's `lanes`. During `workLoopConcurrent`, the Scheduler checks whether the current rendering lane is lower priority than newly pending lanes. If preempted, React resets `workInProgressRoot` and runs `renderRootSync` or `renderRootConcurrent` on the higher-priority lane. Once committed, it falls back to pick up the interrupted transition lane."
+  },
+  "rosettaStone": {
+    "react": "`useTransition` / `startTransition` assigning `TransitionLane` priority.",
+    "angular": "Zoneless signal updates with manual priority deferral via `scheduler.postTask`.",
+    "vue": "Vue 3 does not have concurrent lanes; it uses macro/microtask batching.",
+    "svelte": "Svelte 5 compiles direct updates with transition timing via microtask scheduling."
+  },
+  "codeComparison": {
+    "title": "Blocking Input State vs Non-Blocking useTransition",
+    "summary": "Synchronous state updates for large lists freeze input typing; `useTransition` keeps keystrokes instant while deferring the list update.",
+    "legacyOrBad": {
+      "label": "Synchronous Blocking Update",
+      "snippet": "setQuery(val); setList(filter(val)); // ❌ Freezes typing on large lists",
+      "fullFile": {
+        "filename": "Search.jsx",
+        "language": "jsx",
+        "code": "import { useState } from 'react';\n\n// ❌ OLD: Typing in the input triggers a heavy filter synchronously.\n// Every keystroke lags because the input value update competes\n// directly with rendering 5,000 complex list items.\nexport default function Search({ allItems }) {\n  const [query, setQuery] = useState('');\n  const [filtered, setFiltered] = useState(allItems);\n\n  function handleChange(e) {\n    const val = e.target.value;\n    setQuery(val); // Urgent update\n    setFiltered(allItems.filter(item => item.name.includes(val))); // ❌ Heavy blocking update\n  }\n\n  return (\n    <div>\n      <input value={query} onChange={handleChange} />\n      <ul>{filtered.map(i => <li key={i.id}>{i.name}</li>)}</ul>\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Concurrent useTransition",
+      "snippet": "startTransition(() => { setFiltered(filter(val)); }); // ✅ NEW: Non-blocking",
+      "fullFile": {
+        "filename": "Search.jsx",
+        "language": "jsx",
+        "code": "import { useState, useTransition } from 'react';\n\n// ✅ NEW: Keep input typing in the urgent lane (0ms lag)\n// while deferring the heavy list re-render in a transition lane.\nexport default function Search({ allItems }) {\n  const [query, setQuery] = useState('');\n  const [filtered, setFiltered] = useState(allItems);\n  const [isPending, startTransition] = useTransition();\n\n  function handleChange(e) {\n    const val fresh = e.target.value;\n    setQuery(val fresh); // Urgent: updates input immediately\n\n    startTransition(() => {\n      // Non-urgent: can be interrupted by subsequent keystrokes\n      setFiltered(allItems.filter(item => item.name.includes(val fresh)));\n    });\n  }\n\n  return (\n    <div>\n      <input value={query} onChange={handleChange} />\n      {isPending && <span className=\"spinner\">Updating list...</span>}\n      <ul style={{ opacity: isPending ? 0.7 : 1 }}>\n        {filtered.map(i => <li key={i.id}>{i.name}</li>)}\n      </ul>\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `useTransition` and `useDeferredValue`?",
+      "contextIntro": "Tests knowledge of React 18 concurrent primitive specialization.",
+      "detailedAnswer": "`useTransition` is used when you have direct control over the state-setting function (`startTransition(() => setState(...))`). `useDeferredValue` is used when you receive a value from props or an external hook without direct access to the state setter (`const deferredValue = useDeferredValue(props.value)`). Both use the same underlying Transition Lanes priority mechanism.",
+      "trapWarning": "Do not wrap `useDeferredValue` inside `startTransition`. They are complementary approaches for different code locations."
+    },
+    {
+      "question": "Can `startTransition` be used for asynchronous functions (like `async/await` fetches) in React 18 vs React 19?",
+      "contextIntro": "Checks knowledge of React 19 Action transitions.",
+      "detailedAnswer": "In React 18, `startTransition` only accepted synchronous callbacks (state updates after an `await` were not tracked by `isPending`). In React 19, `startTransition` supports async functions (Async Actions): `startTransition(async () => { await api(); setState(); })`. `isPending` remains `true` across the entire `await` lifecycle.",
+      "trapWarning": "In React 18, wrapping an `async` function inside `startTransition` caused `isPending` to flip back to `false` on the first microtask boundary before the promise resolved."
+    }
+  ]
+}

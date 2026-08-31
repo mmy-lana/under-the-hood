@@ -1,0 +1,58 @@
+{
+  "id": "partial-prerendering-ppr",
+  "title": "Partial Prerendering (PPR): Static Shell & Dynamic Streaming",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "ppr", "streaming", "suspense", "performance", "app-router"],
+  "prerequisites": ["React Suspense", "Next.js App Router static vs dynamic rendering"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a greeting card with a printed frame and a blank center. The store prints thousands of identical frames beforehand (static shell). When someone buys the card, the clerk writes the recipient's custom name in the center on the spot (dynamic hole). PPR serves the static frame instantly from the edge and streams the dynamic center without making the visitor wait for the whole page to render.",
+    "junior": "Partial Prerendering (PPR) lets a single route combine static prerendering and dynamic streaming. Everything outside a `<Suspense>` boundary is built statically at compile time and cached on the CDN edge. Components wrapped in `<Suspense>` containing dynamic calls (like `cookies()`, `headers()`, or uncached `fetch()`) stream in parallel as HTML chunks after the initial shell arrives. Enable it in `next.config.js` via `experimental.ppr = true`.",
+    "senior": "Architecturally, PPR unifies SSG and dynamic SSR into a single unified execution model. At build time, Next.js generates the static shell HTML and embeds flight data placeholders for Suspense boundaries. Upon client request, the edge immediately serves the pre-generated static shell (instant TTFB) while dispatching an asynchronous stream to evaluate and pipe the unresolved dynamic React Server Component subtrees over the open HTTP connection.",
+    "underTheHood": "During static generation, the build engine runs the React Server Component render pass. When it encounters dynamic inputs inside a Suspense boundary, React suspends the subtree and outputs a boundary placeholder marker in the HTML. The completed static chunks are written to disk/CDN. At runtime, the server replays the flight stream: it emits the cached shell bytes immediately and resumes evaluation of the suspended subtrees via `renderToPipeableStream`, piping inline `<script>` tags that replace fallback DOM nodes with the resolved payload."
+  },
+  "rosettaStone": {
+    "react": "Combines `prerender` / `renderToPipeableStream` with fallback markers.",
+    "angular": "SSR route prerendering with `@defer (on immediate)` placeholders.",
+    "vue": "Nuxt hybrid rendering (`routeRules`) with granular Suspense components.",
+    "svelte": "SvelteKit streaming responses with deferred `{#await}` promises."
+  },
+  "codeComparison": {
+    "title": "All-or-nothing SSR vs Partial Prerendering",
+    "summary": "Traditional dynamic SSR forces the entire route to wait on the server; PPR delivers a static layout immediately while streaming dynamic segments.",
+    "legacyOrBad": {
+      "label": "Full Dynamic SSR",
+      "snippet": "export const dynamic = 'force-dynamic'; // ❌ OLD: Entire page blocks on dynamic calls",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "import { cookies } from 'next/headers';\n\n// ❌ OLD: Opting the whole page into dynamic rendering\n// delays TTFB for the header, layout, and static marketing copy.\nexport const dynamic = 'force-dynamic';\n\nexport default async function Page() {\n  const session = (await cookies()).get('session');\n  const user = await fetchUser(session?.value);\n\n  return (\n    <main>\n      <header className=\"hero\">Static Brand Banner</header>\n      <section className=\"user-info\">Welcome {user.name}</section>\n    </main>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "PPR with Suspense",
+      "snippet": "export const experimental_ppr = true; // ✅ NEW: Instant shell + streamed dynamic hole",
+      "fullFile": {
+        "filename": "app/page.tsx",
+        "language": "tsx",
+        "code": "import { Suspense } from 'react';\nimport { cookies } from 'next/headers';\n\nexport const experimental_ppr = true;\n\nasync function UserProfile() {\n  const session = (await cookies()).get('session');\n  const user = await fetchUser(session?.value);\n  return <span>Welcome {user.name}</span>;\n}\n\nexport default function Page() {\n  return (\n    <main>\n      {/* ✅ NEW: Pre-rendered statically at build time */}\n      <header className=\"hero\">Static Brand Banner</header>\n      {/* ✅ NEW: Streams dynamically on request */}\n      <Suspense fallback={<div className=\"skeleton\">Loading user...</div>}>\n        <UserProfile />\n      </Suspense>\n    </main>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if dynamic data (e.g. `cookies()`) is accessed outside a `<Suspense>` boundary under PPR?",
+      "contextIntro": "Interviewers test whether you understand how Next.js determines boundary constraints during build-time compilation.",
+      "detailedAnswer": "If a dynamic function like `cookies()`, `headers()`, or `searchParams` is invoked outside a `<Suspense>` boundary in a PPR-enabled route, the build process cannot isolate the dynamic execution. Consequently, the entire route bails out of static generation and falls back to full dynamic server rendering on every request.",
+      "trapWarning": "Do not claim that Next.js automatically wraps un-suspended components in Suspense. Uncaught dynamic reads in the outer tree invalidate the static shell completely."
+    },
+    {
+      "question": "How does PPR affect CDN caching headers and TTFB?",
+      "contextIntro": "This checks your understanding of edge network behavior and HTTP streaming.",
+      "detailedAnswer": "With PPR, the initial response chunk (the static shell) is cached directly at the CDN/Edge. When a client requests the page, the Edge immediately returns HTTP 200 with the static shell bytes (delivering single-digit millisecond TTFB) and initiates an upstream connection to the serverless origin to stream the remaining dynamic chunks over chunked transfer encoding.",
+      "trapWarning": "Avoid stating that the dynamic payload is fetched via a client-side `fetch()`. It is streamed over the same initial HTTP connection as part of the React Flight payload."
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "turbopack-graph-bundling",
+  "title": "Turbopack: Rust-Based Persistent Caching & Incremental Compilation",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15 (Turbopack stable for dev)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "turbopack", "compiler", "rust", "turborepo", "bundler"],
+  "prerequisites": ["Webpack fundamentals", "Module dependency graphs"],
+  "progressiveExplaining": {
+    "eli5": "Think of a giant puzzle. Webpack looks at all 1,000 pieces every time you move one piece to make sure the picture is right. Turbopack remembers every connection between pieces in a smart notebook (written in fast Rust); when you move one piece, it only updates that exact connection and skips touching the other 999 pieces.",
+    "junior": "Turbopack is an incremental bundler written in Rust designed as the successor to Webpack in Next.js. You enable it with `next dev --turbo`. It starts local dev servers almost instantly and performs Hot Module Replacement (HMR) in milliseconds regardless of project size because it compiles modules lazily on demand rather than bundling the whole project up front.",
+    "senior": "Turbopack is built on the Turbo engine, a low-level computation framework providing incremental, persistent memoization. It models compilation as an acyclic graph of pure functions where inputs (file system bytes, compiler flags) map deterministically to outputs (ASTs, chunks). When an asset changes, the Turbo engine computes the minimal subgraph requiring re-evaluation, guaranteeing that incremental compile times remain `O(changed)` rather than `O(total modules)`.",
+    "underTheHood": "The core engine runs a Turbo task graph where every function is memoized in memory. When a file modification event occurs, the file's hash is updated in the graph. The engine invalidates only downstream dependency nodes. SWC handles native Rust AST parsing and transformation. Turbopack serves compiled chunks on demand via HTTP rather than emitting bundles to disk, sending lightweight HMR patches containing diffed module updates directly over WebSockets."
+  },
+  "rosettaStone": {
+    "react": "Vite with Rollup/Rolldown (ESM-based on-demand transform engine).",
+    "angular": "Angular CLI with esbuild / Vite dev server integration.",
+    "vue": "Vite dev server with native ES modules and HMR.",
+    "svelte": "Vite + Svelte compiler plugin."
+  },
+  "codeComparison": {
+    "title": "Webpack configuration overhead vs Zero-Config Turbopack",
+    "summary": "Webpack requires complex JS loaders and plugins that slow down at scale; Turbopack is built-in and natively optimized in Rust.",
+    "legacyOrBad": {
+      "label": "Webpack Custom Configuration",
+      "snippet": "module.exports = { module: { rules: [/* Babel / TS Loaders */] } }; // ❌ OLD",
+      "fullFile": {
+        "filename": "next.config.js",
+        "language": "js",
+        "code": "// ❌ OLD: Custom Webpack loader chains running in Node.js\n// incur heavy serialization and compilation overhead as the project grows.\nmodule.exports = {\n  webpack: (config) => {\n    config.module.rules.push({\n      test: /\\.svg$/,\n      use: ['@svgr/webpack']\n    });\n    return config;\n  }\n};"
+      }
+    },
+    "modernOrGood": {
+      "label": "Turbopack Native Engine",
+      "snippet": "next dev --turbo // ✅ NEW: Zero-config incremental Rust compilation",
+      "fullFile": {
+        "filename": "package.json",
+        "language": "json",
+        "code": "{\n  \"name\": \"my-app\",\n  \"scripts\": {\n    \"dev\": \"next dev --turbo\",\n    \"build\": \"next build\"\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is Turbopack faster than Webpack for large-scale applications?",
+      "contextIntro": "Interviewers test your understanding of algorithmic complexity vs raw runtime execution speed.",
+      "detailedAnswer": "Turbopack achieves its speed through two factors: first, it is written in Rust using multi-threaded execution and SWC parsing, eliminating Node.js V8 garbage collection overhead. Second, and more importantly, its computation architecture is function-level incremental: it never recomputes unchanged subgraphs, scaling with `O(size of change)` instead of `O(application size)`.",
+      "trapWarning": "Don't just say 'it is faster because it is written in Rust'. The architectural reason is the fine-grained dependency graph memoization."
+    },
+    {
+      "question": "Does Turbopack bundle all pages during `next dev --turbo` startup?",
+      "contextIntro": "This tests your knowledge of lazy compilation mechanics.",
+      "detailedAnswer": "No. Turbopack compiles routes lazily. When `next dev --turbo` boots, it starts the HTTP server without bundling any pages. Only when a browser requests a specific route (e.g. `/dashboard`) does Turbopack parse and compile that entrypoint and its transitive dependencies.",
+      "trapWarning": "Do not confuse dev mode behavior with `next build`. Build mode compiles all required static and dynamic entry points."
+    }
+  ]
+}

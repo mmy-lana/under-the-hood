@@ -1,0 +1,58 @@
+{
+  "id": "ref-as-prop-cleanup",
+  "title": "Ref as Plain Prop & useRef Cleanup Lifecycle Functions",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "ref", "forwardRef", "cleanup", "dom", "react-19"],
+  "prerequisites": ["useRef basics", "DOM element references"],
+  "progressiveExplaining": {
+    "eli5": "In the past, giving a child component a reference pointer was difficult and required wrapping it in a special helper named `forwardRef`. In React 19, `ref` is just a regular prop like `color` or `name`. Even better, when your component connects to a DOM element, you can return a cleanup function directly from the ref callback—like unplugging a cord when the TV is removed.",
+    "junior": "In React 19, `forwardRef` is deprecated. You can pass `ref` as a standard prop directly into functional components: `function MyInput({ ref, ...props })`. Additionally, callback refs now support **cleanup functions**: `ref={(node) => { attach(node); return () => detach(node); }}`. The returned cleanup function executes whenever the node is removed from the DOM, eliminating manual `null` checks.",
+    "senior": "Architecturally, React 19 simplifies ref plumbing by unifying props and ref propagation into a single parameter object. In previous versions, callback refs were invoked with `null` when a node unmounted (`if (node) ... else ...`). The new ref cleanup lifecycle aligns ref callbacks with `useEffect` cleanup semantics, making DOM observer attachments (`ResizeObserver`, third-party widgets) clean and leak-free.",
+    "underTheHood": "The JSX transform in React 19 no longer strips `ref` from `props`. During the Commit Phase (`commitMutationEffects`), React tracks whether a callback ref returned a function. When an element is unmounted or its ref changes, React invokes the stored cleanup function before re-attaching the new callback."
+  },
+  "rosettaStone": {
+    "react": "`ref={(el) => { observer.observe(el); return () => observer.disconnect(); }}`",
+    "angular": "`ElementRef` with `ngOnDestroy` or custom directives.",
+    "vue": "Template refs with `onMounted` / `onUnmounted` teardown.",
+    "svelte": "`use:action` directive with `destroy()` cleanup return."
+  },
+  "codeComparison": {
+    "title": "forwardRef + Null Checking vs Direct Ref Prop + Cleanup Function",
+    "summary": "`forwardRef` is boilerplate-heavy and `null` checking is error-prone; React 19 enables plain ref props and automatic teardown returns.",
+    "legacyOrBad": {
+      "label": "forwardRef & Null Check (React 18)",
+      "snippet": "const Input = forwardRef((props, ref) => <input ref={ref} />); // ❌ Deprecated forwardRef",
+      "fullFile": {
+        "filename": "Input.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Required forwardRef wrapper and manual null-checking in callback ref\nimport { forwardRef } from 'react';\n\nconst CustomInput = forwardRef(function CustomInput(props, ref) {\n  return <input ref={ref} {...props} />;\n});\n\nexport default function App() {\n  return (\n    <CustomInput\n      ref={(node) => {\n        if (node) {\n          console.log('Attached:', node);\n        } else {\n          console.log('Detached (manual null check)');\n        }\n      }}\n    />\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "React 19 Plain Ref + Cleanup Return",
+      "snippet": "function Input({ ref, ...props }) { return <input ref={ref} />; } // ✅ NEW",
+      "fullFile": {
+        "filename": "Input.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: ref is a standard prop. Callback ref returns cleanup function.\nfunction CustomInput({ ref, ...props }) {\n  return <input ref={ref} {...props} />;\n}\n\nexport default function App() {\n  return (\n    <CustomInput\n      ref={(node) => {\n        const observer = new ResizeObserver(() => console.log('Resized'));\n        observer.observe(node);\n\n        // ✅ NEW: Return cleanup directly! Runs automatically on unmount\n        return () => {\n          observer.disconnect();\n        };\n      }}\n    />\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if a callback ref in React 19 returns something other than a function (like a Promise or implicit return)?",
+      "contextIntro": "Interviewers test your attention to subtle arrow function return bugs in React 19.",
+      "detailedAnswer": "If a callback ref returns a non-function value (e.g. an implicit arrow function return like `ref={el => map.set(id, el)}` which returns `Map`), React 19 will throw a runtime error warning that ref callbacks must either return a cleanup function or `undefined`.",
+      "trapWarning": "Avoid writing concise arrow functions with single-expression returns if they return a value. Wrap them in braces: `ref={el => { map.set(id, el); }}`."
+    },
+    {
+      "question": "Is `forwardRef` still required in React 19 for class components or third-party wrappers?",
+      "contextIntro": "Tests knowledge of migration paths and backward compatibility.",
+      "detailedAnswer": "`forwardRef` is deprecated in React 19 and will eventually be removed in future major versions. Plain functional components accept `ref` directly as a prop. Existing `forwardRef` calls still work for backward compatibility but emit deprecation warnings in strict mode.",
+      "trapWarning": "Do not wrap new React 19 components in `forwardRef`."
+    }
+  ]
+}

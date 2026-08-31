@@ -1,0 +1,58 @@
+{
+  "id": "transitions-deferred-updates",
+  "title": "useTransition: Deferred Concurrent Updates & Pending State Flags",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "useTransition", "transitions", "suspense", "async", "concurrency"],
+  "prerequisites": ["SolidJS createResource", "SolidJS Suspense"],
+  "progressiveExplaining": {
+    "eli5": "When you click a tab to open a heavy photo gallery, you don't want the current tab to vanish into a blank loading spinner. `useTransition` keeps the old tab visible and interactive on screen while quietly loading the new gallery in the background. Once the gallery is completely ready, it swaps the screens in a single flash.",
+    "junior": "`useTransition` allows you to defer coordinate state updates that trigger `<Suspense>` boundaries. `const [pending, start] = useTransition();`. When you wrap a state change in `start(() => setTab('photos'))`, Solid keeps the current view on screen instead of falling back to the `<Suspense>` loading spinner, while setting `pending()` to `true` so you can show an inline progress bar.",
+    "senior": "Architecturally, Solid Transitions prevent disruptive Suspense fallback flashes during in-app navigation. Unlike React (which uses Virtual DOM time-slicing across concurrent fiber lanes), Solid's reactivity is fine-grained and synchronous. Solid implements transitions by branching resource evaluations: async computations triggered inside `start` register with an isolated transition coordinator. The active DOM remains frozen and interactive until all downstream pending `createResource` promises settle, at which point the DOM commits atomically.",
+    "underTheHood": "When `start(fn)` executes, Solid sets an internal `Transition` context on the global reactive runtime. Signal writes execute, but newly triggered `SuspenseContext` boundaries are placed in a 'holding' state rather than flipping to fallback. A global transition counter tracks pending promises. When all promises resolve, the transition finishes, `pending()` flips to `false`, and the new DOM elements replace the old view."
+  },
+  "rosettaStone": {
+    "react": "React `useTransition` / `startTransition` with concurrent lane preemption.",
+    "angular": "Router navigation with loading indicators and resolvers.",
+    "vue": "Vue Router navigation guards holding route component rendering.",
+    "svelte": "SvelteKit shallow routing and `navigating` store flags."
+  },
+  "codeComparison": {
+    "title": "Immediate Suspense Fallback Flash vs useTransition Graceful Hold",
+    "summary": "Switching tabs without transition flashes an ugly full-page spinner; `useTransition` keeps the current tab visible until the new tab is ready.",
+    "legacyOrBad": {
+      "label": "Direct State Switch (Flashes Spinner)",
+      "snippet": "setTab('heavyTab'); // ❌ Unmounts current tab and flashes Suspense fallback",
+      "fullFile": {
+        "filename": "TabContainer.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, Suspense } from 'solid-js';\nimport HeavyTab from './HeavyTab';\n\n// ❌ OLD: Clicking the button immediately triggers the Suspense fallback,\n// hiding the current tab and showing a jarring loading spinner.\nexport default function TabContainer() {\n  const [tab, setTab] = createSignal('home');\n\n  return (\n    <div>\n      <button onClick={() => setTab('heavy')}>Open Heavy Tab</button>\n      <Suspense fallback={<div className=\"spinner\">Loading full tab...</div>}>\n        {tab() === 'home' ? <Home /> : <HeavyTab />}\n      </Suspense>\n    </div>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "useTransition Graceful Hold",
+      "snippet": "start(() => setTab('heavyTab')); // ✅ NEW: Holds current tab visible until ready",
+      "fullFile": {
+        "filename": "TabContainer.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, useTransition, Suspense } from 'solid-js';\nimport HeavyTab from './HeavyTab';\n\n// ✅ NEW: useTransition keeps <Home /> visible while <HeavyTab /> loads data in the background.\nexport default function TabContainer() {\n  const [tab, setTab] = createSignal('home');\n  const [pending, start] = useTransition();\n\n  return (\n    <div>\n      <button\n        disabled={pending()}\n        onClick={() => {\n          // Keeps Home visible until HeavyTab finishes fetching!\n          start(() => setTab('heavy'));\n        }}\n      >\n        Open Heavy Tab {pending() && '(Loading...)'}\n      </button>\n\n      <div style={{ opacity: pending() ? 0.6 : 1.0 }}>\n        <Suspense fallback={<div className=\"spinner\">Initial load only...</div>}>\n          {tab() === 'home' ? <Home /> : <HeavyTab />}\n        </Suspense>\n      </div>\n    </div>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the primary difference between how React and SolidJS implement `useTransition`?",
+      "contextIntro": "Interviewers test deep architectural comprehension across competing framework paradigms.",
+      "detailedAnswer": "React implements `useTransition` via **CPU Time-Slicing across Virtual DOM Fibers**: it splits component tree rendering into interruptible 5ms chunks across priority Lanes. SolidJS has no Virtual DOM and renders synchronously; it implements `useTransition` as an **Asynchronous Suspense Coordinator**: it tracks pending `createResource` promises and delays swapping Suspense branches in the real DOM until all background fetches complete.",
+      "trapWarning": "Do not say that SolidJS time-slices JavaScript execution on the main thread. Solid does not time-slice; it coordinates asynchronous resource boundaries."
+    },
+    {
+      "question": "Does `useTransition` hold back non-resource state updates?",
+      "contextIntro": "Checks knowledge of transition scope and resource requirements.",
+      "detailedAnswer": "No. If a state update inside `start(() => ...)` does not trigger a pending `createResource` or async Suspense boundary, the update applies immediately and synchronously. `useTransition` only delays UI presentation when asynchronous resources suspend downstream.",
+      "trapWarning": "Wrapping synchronous state changes (like toggling a boolean that renders a local static component) in `useTransition` will have no deferred effect."
+    }
+  ]
+}

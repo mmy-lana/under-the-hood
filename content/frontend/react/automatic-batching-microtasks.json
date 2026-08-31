@@ -1,0 +1,58 @@
+{
+  "id": "automatic-batching-microtasks",
+  "title": "Automatic Batching: Microtask Grouping Across Asynchronous Boundaries",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "automatic-batching", "event-loop", "microtasks", "react-18", "performance"],
+  "prerequisites": ["React useState / state update queues", "JavaScript Event Loop and Microtask Queue"],
+  "progressiveExplaining": {
+    "eli5": "Imagine ordering items at a counter. In older React, if you ordered two items right away, the clerk brought both in one tray. But if you paused for 1 second between orders (like after a network fetch), the clerk ran to the kitchen twice, making two full trips. In modern React, the clerk always waits until you finish speaking in that moment and batches all orders into one single trip to the kitchen.",
+    "junior": "In React 18+, **Automatic Batching** groups multiple state updates (`setState`) into a single re-render pass, regardless of where the updates originate. In React 17, batching only worked inside native React event handlers. In React 18+, updates inside `fetch()` callbacks, `setTimeout`, `Promise.then`, or native DOM listeners are automatically batched together into one render.",
+    "senior": "Architecturally, React uses a microtask scheduler to batch state updates. When `setState` is called, React appends the update to the fiber's `updateQueue` and schedules an internal evaluation task. The Scheduler groups all lane-compatible updates scheduled within the same discrete turn of the event loop before invoking `performConcurrentWorkOnRoot`. For rare cases requiring immediate synchronous DOM flushing, `ReactDOM.flushSync()` is provided as an escape hatch.",
+    "underTheHood": "When `dispatchSetState` runs, React assigns an update lane and requests an update on the root. The engine checks if a host callback or microtask is already scheduled for that lane. If so, it merges the update into the existing pending batch. At the end of the current microtask turn, React executes the work loop once, computing the cumulative state delta and rendering the updated component tree in a single pass."
+  },
+  "rosettaStone": {
+    "react": "Automatic batching via microtask update queues / `flushSync()` escape hatch.",
+    "angular": "Zoneless change detection coalescing multiple signal writes into one tick.",
+    "vue": "Vue reactivity scheduler batching component watcher jobs in a microtask queue.",
+    "svelte": "Svelte 5 scheduler flushing state changes in a microtask batch."
+  },
+  "codeComparison": {
+    "title": "Un-batched Async Updates (React 17) vs Automatic Batching (React 18+)",
+    "summary": "In React 17, updating state inside a fetch callback triggered 2 separate renders; React 18+ automatically batches them into 1 render.",
+    "legacyOrBad": {
+      "label": "Double Render in Async Callbacks (React 17)",
+      "snippet": "fetch().then(() => { setCount(c => c+1); setFlag(f => !f); }); // ❌ 2 re-renders in React 17",
+      "fullFile": {
+        "filename": "AsyncCounter.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: In React 17 and earlier, state updates inside async callbacks\n// (fetch, setTimeout) were NOT batched, triggering multiple expensive re-renders.\nimport { useState } from 'react';\n\nexport default function AsyncCounter() {\n  const [count, setCount] = useState(0);\n  const [flag, setFlag] = useState(false);\n\n  function handleClick() {\n    fetch('/api/data').then(() => {\n      // In React 17: Renders TWICE (once for count, once for flag)\n      setCount((c) => c + 1);\n      setFlag((f) => !f);\n    });\n  }\n\n  console.log('Rendered!');\n  return <button onClick={handleClick}>{count} - {String(flag)}</button>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Automatic Batching (React 18+)",
+      "snippet": "fetch().then(() => { setCount(c => c+1); setFlag(f => !f); }); // ✅ Exactly 1 re-render",
+      "fullFile": {
+        "filename": "AsyncCounter.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: React 18+ automatically batches all updates in promises, timers, and native events.\nimport { useState } from 'react';\n\nexport default function AsyncCounter() {\n  const [count, setCount] = useState(0);\n  const [flag, setFlag] = useState(false);\n\n  function handleClick() {\n    fetch('/api/data').then(() => {\n      // In React 18+: Batched into EXACTLY ONE re-render\n      setCount((c) => c + 1);\n      setFlag((f) => !f);\n    });\n  }\n\n  console.log('Rendered!'); // Logs once per click\n  return <button onClick={handleClick}>{count} - {String(flag)}</button>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How can you opt out of automatic batching if you strictly need immediate synchronous DOM updates?",
+      "contextIntro": "Interviewers test your knowledge of escape hatches like `flushSync`.",
+      "detailedAnswer": "Wrap the state update in `ReactDOM.flushSync()`: `flushSync(() => { setCount(c => c + 1); });`. `flushSync` forces React to immediately execute the render and commit phases synchronously before returning, which is useful when reading DOM layout measurements (like scroll position) immediately after a state change.",
+      "trapWarning": "`flushSync` degrades rendering performance significantly; only use it when strictly necessary for immediate DOM geometry calculation."
+    },
+    {
+      "question": "Does automatic batching work with `createRoot` vs legacy `ReactDOM.render`?",
+      "contextIntro": "Checks migration requirements for React 18 concurrent features.",
+      "detailedAnswer": "Automatic batching is only enabled when using the `ReactDOM.createRoot()` API. If an application uses the legacy `ReactDOM.render()` entrypoint (supported for migration in React 18), React falls back to React 17 behavior where async callbacks are not batched.",
+      "trapWarning": "Upgrading `package.json` to React 18 does not enable automatic batching unless you update `index.js` to use `createRoot`."
+    }
+  ]
+}

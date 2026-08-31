@@ -1,0 +1,58 @@
+{
+  "id": "store-proxies-nested-reconciliation",
+  "title": "createStore: Fine-Grained Deep Proxy Path Mutation Tracking",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "createStore", "store", "proxy", "reconciliation", "nested-reactivity"],
+  "prerequisites": ["JavaScript Proxy traps", "SolidJS createSignal"],
+  "progressiveExplaining": {
+    "eli5": "If you have a giant notebook with 1,000 pages of data and change a single word on page 500, a regular signal forces you to photocopy all 1,000 pages. Solid's `createStore` places tiny individual sensor wires on every single line of every single page: changing word #3 on page 500 triggers only the person reading that exact line, without touching the rest of the book.",
+    "junior": "`createStore` creates deeply reactive tree structures (objects and arrays). `const [state, setState] = createStore({ user: { profile: { name: 'Ada' } }, todos: [] });`. Unlike `createSignal` (where updating a nested field requires cloning the entire parent object), `createStore` uses path-based setters: `setState('user', 'profile', 'name', 'Grace')`. Only components reading that exact nested property update.",
+    "senior": "Architecturally, `createStore` uses shallow, lazy JavaScript Proxies generated on demand during property traversal. It implements fine-grained nested reactivity: accessing `state.user.profile.name` subscribes only to the leaf `name` signal node. When updating via path selectors or utilities like `produce()` (Immer-like mutation syntax) or `reconcile()` (diffing incoming API arrays by ID), Solid mutates data in place and triggers only the affected leaf subscribers, completely bypassing parent object invalidation.",
+    "underTheHood": "Under the hood, `createStore` wraps objects in a recursive `Proxy` using `get` traps. Each property lookup checks an internal `WeakMap` for a property-specific signal. When `setState('todos', 2, 'done', true)` runs, Solid traverses the internal target tree, modifies the property in place, and calls `write()` on only the target property's signal. `reconcile(newArray)` performs a key-based diff against existing proxy objects, reusing existing proxy instances and updating only changed properties."
+  },
+  "rosettaStone": {
+    "react": "Immer `produce` or Zustand creating immutable object clones on every mutation.",
+    "angular": "Deeply nested Signals or RxJS `patchState` operators in NgRx SignalStore.",
+    "vue": "Vue 3 `reactive()` deep proxy wrapping.",
+    "svelte": "Svelte 5 `$state({ user: { name: 'Ada' } })` deep proxy mutations."
+  },
+  "codeComparison": {
+    "title": "Signal Object Cloning vs Solid Store Surgical Path Update",
+    "summary": "Updating nested objects in signals requires immutable cloning of all parent levels; `createStore` modifies leaf properties directly.",
+    "legacyOrBad": {
+      "label": "createSignal Object Cloning",
+      "snippet": "setUser(u => ({ ...u, profile: { ...u.profile, name: 'Grace' } })); // ❌ Full tree cloning",
+      "fullFile": {
+        "filename": "SignalNested.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: With createSignal, mutating a deep property forces copying\n// every level of the object. Every consumer reading 'user()' re-evaluates,\n// even if they only cared about user.id.\nimport { createSignal } from 'solid-js';\n\nconst [user, setUser] = createSignal({\n  id: 1,\n  profile: { name: 'Ada', age: 30 },\n  settings: { theme: 'dark' }\n});\n\nfunction updateName(newName) {\n  setUser(prev => ({\n    ...prev,\n    profile: {\n      ...prev.profile,\n      name: newName\n    }\n  })); // ❌ Allocates new object references for user and profile\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "createStore Path Mutation",
+      "snippet": "setState('profile', 'name', 'Grace'); // ✅ NEW: Zero cloning, updates only 'name' subscribers",
+      "fullFile": {
+        "filename": "StoreNested.jsx",
+        "language": "jsx",
+        "code": "import { createStore } from 'solid-js/store';\n\n// ✅ NEW: createStore wraps objects in on-demand reactive proxies.\nconst [user, setUser] = createStore({\n  id: 1,\n  profile: { name: 'Ada', age: 30 },\n  settings: { theme: 'dark' }\n});\n\nfunction updateName(newName) {\n  // Surgical path update: only subscribers of user.profile.name re-run!\n  // user.settings and user.id consumers are completely untouched.\n  setUser('profile', 'name', newName);\n}\n\n// Array updates by index or filter predicate:\n// setUser('todos', (todo) => todo.id === 5, 'completed', true);"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does the `reconcile()` store utility do when handling new data from an API response?",
+      "contextIntro": "Interviewers test your knowledge of backend API integration with fine-grained stores.",
+      "detailedAnswer": "When replacing a store array or object with a fresh API response (`setUser(reconcile(freshData))`), `reconcile()` diffs the new data against the existing store objects by key/ID. It applies updates only to fields that changed, preserves unchanged object references, and avoids triggering unneeded subscriber notifications, preventing UI flicker.",
+      "trapWarning": "Using `setState(freshData)` directly without `reconcile()` replaces all object references, forcing all components reading any property of the store to re-evaluate."
+    },
+    {
+      "question": "Why does wrapping store state in `unwrap(store)` exist, and when should you use it?",
+      "contextIntro": "Checks understanding of proxy unwrapping for external library interop.",
+      "detailedAnswer": "`unwrap(state)` strips the reactive Proxy wrappers and returns the underlying raw JavaScript object tree. This is necessary when passing data to third-party non-reactive libraries (like charting libraries, Web Workers via `postMessage`, or `structuredClone`), which can fail or degrade in performance if given Proxy instances.",
+      "trapWarning": "Do not mutate the object returned by `unwrap()`; raw mutations bypass the reactivity graph and will not notify UI subscribers."
+    }
+  ]
+}

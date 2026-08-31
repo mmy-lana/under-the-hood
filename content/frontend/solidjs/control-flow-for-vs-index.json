@@ -1,0 +1,58 @@
+{
+  "id": "control-flow-for-vs-index",
+  "title": "<For> vs <Index>: Keyed by Item Reference vs Keyed by Array Index",
+  "category": "frontend",
+  "subcategory": "solidjs",
+  "versionContext": "SolidJS 1.x / 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": ["solidjs", "control-flow", "For", "Index", "lists", "performance"],
+  "prerequisites": ["SolidJS Components and JSX", "Array manipulation in signals"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a classroom where each student has their own assigned desk. If students swap places, `<For>` moves the actual children to their new desks (good for complex objects). `<Index>` keeps the children sitting in their original chairs and just swaps their name tags and hats (good for simple lists of numbers or strings).",
+    "junior": "Solid provides two built-in list components: `<For>` and `<Index>`. `<For each={items()}>` **keys by object reference**: when items move, reorder, or are inserted, the DOM nodes move with the item, and the item passed to the callback is static while its index is a signal (`item, indexSignal`). `<Index each={items()}>` **keys by array index**: DOM nodes stay fixed at their indices, while the item passed to the callback is a signal (`itemSignal, indexInt`).",
+    "senior": "Architecturally, `<For>` and `<Index>` make different performance and DOM-reuse trade-offs. `<For>` is optimal for collections of mutable objects (e.g. lists of entities with IDs): when items are sorted or shifted, DOM elements are preserved via native `insertBefore`, and internal component state stays attached to the object. `<Index>` is optimal for lists of primitives (numbers, strings) or fixed-length tables: shifting elements avoids moving DOM nodes, instead updating the signal values bound to the static index cells.",
+    "underTheHood": "`<For>` uses a diffing algorithm (non-Virtual DOM, operating directly on DOM child pointers) mapping object references to rendered DOM nodes. The row callback receives `(item, index)` where `index` is `createSignal()`. `<Index>` skips DOM reconciliation entirely: it creates an array of fixed DOM slots of length `N`. The row callback receives `(itemSignal, index)`. When an element at index `i` changes value, Solid simply calls `setItemSignal(newValue)` on that slot."
+  },
+  "rosettaStone": {
+    "react": "`{items.map((item, index) => <Item key={item.id} />)}` (equivalent to `<For>`).",
+    "angular": "`@for (item of items; track item.id)` (like `<For>`) vs `track $index` (like `<Index>`).",
+    "vue": "`<div v-for=\"(item, index) in items\" :key=\"item.id\">`.",
+    "svelte": "`{#each items as item (item.id)}` (like `<For>`)."
+  },
+  "codeComparison": {
+    "title": "When to Use <For> vs <Index>",
+    "summary": "Use `<For>` for lists of objects where element identity matters; use `<Index>` for arrays of primitives to avoid DOM node re-allocations.",
+    "legacyOrBad": {
+      "label": "Wrong Choice: <For> on Primitive Arrays",
+      "snippet": "<For each={numbers()}>{(num) => <input value={num} />}</For> // ❌ Re-creates DOM node on every edit",
+      "fullFile": {
+        "filename": "PrimitiveList.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, For } from 'solid-js';\n\n// ❌ Using <For> on primitive arrays (strings/numbers):\n// When number at index 0 changes from 5 to 6, 5 is destroyed and 6 is created as a brand new DOM node!\nexport default function PrimitiveList() {\n  const [numbers, setNumbers] = createSignal([10, 20, 30]);\n\n  return (\n    <For each={numbers()}>\n      {(num, index) => (\n        // ❌ Focus is lost on every keystroke because the input node is re-created:\n        <input value={num} onInput={(e) => {\n          const next = [...numbers()];\n          next[index()] = Number(e.target.value);\n          setNumbers(next);\n        }} />\n      )}\n    </For>\n  );\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Correct Choice: <Index> for Primitives",
+      "snippet": "<Index each={numbers()}>{(numSignal, index) => <input value={numSignal()} />}</Index> // ✅ NEW: Preserves DOM & focus",
+      "fullFile": {
+        "filename": "PrimitiveList.jsx",
+        "language": "jsx",
+        "code": "import { createSignal, Index } from 'solid-js';\n\n// ✅ NEW: <Index> preserves DOM nodes by index slot.\n// Updating a value updates the signal without touching DOM element structure.\nexport default function PrimitiveList() {\n  const [numbers, setNumbers] = createSignal([10, 20, 30]);\n\n  return (\n    <Index each={numbers()}>\n      {(numSignal, index) => (\n        // ✅ Input retains focus perfectly! DOM node is reused at index:\n        <input value={numSignal()} onInput={(e) => {\n          const next = [...numbers()];\n          next[index] = Number(e.target.value);\n          setNumbers(next);\n        }} />\n      )}\n    </Index>\n  );\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the key signature difference in the callback functions of `<For>` and `<Index>`?",
+      "contextIntro": "Interviewers test your practical attention to detail regarding signal parameters.",
+      "detailedAnswer": "In `<For each={items}>{(item, index) => ...}</For>`, **`item` is a static value** and **`index` is a reactive accessor signal (`index()`)**. In `<Index each={items}>{(item, index) => ...}</Index>`, **`item` is a reactive accessor signal (`item()`)** and **`index` is a static number**.",
+      "trapWarning": "Calling `item()` in a `<For>` loop will cause a `TypeError: item is not a function`. Omitting `()` on `item` in an `<Index>` loop will render the raw function representation instead of the value."
+    },
+    {
+      "question": "Why does using `<For>` on a list of primitive strings cause an `<input>` field to lose focus when the user types?",
+      "contextIntro": "Checks understanding of object reference identity in list reconciliation.",
+      "detailedAnswer": "Primitives in JavaScript (strings, numbers) are compared by value. When the user types a new character, the string value changes (e.g. `'a'` -> `'ab'`). Because `<For>` tracks identity by reference/value, it considers `'a'` destroyed and `'ab'` a completely new item, destroying the old DOM `<input>` element and creating a new one, which immediately drops keyboard focus.",
+      "trapWarning": "Always use `<Index>` when mapping arrays of primitive strings/numbers or when mutating by index."
+    }
+  ]
+}

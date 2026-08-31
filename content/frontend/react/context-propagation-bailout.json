@@ -1,0 +1,58 @@
+{
+  "id": "context-propagation-bailout",
+  "title": "React Context: Sub-Tree Re-Render Cost and Selector Memoization",
+  "category": "frontend",
+  "subcategory": "react",
+  "versionContext": "React 18 / 19",
+  "lastUpdated": "2026-08-31",
+  "tags": ["react", "context", "memoization", "re-render", "performance", "useContext"],
+  "prerequisites": ["React Context API", "React.memo and useMemo"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a classroom speaker system. If the teacher broadcasts a message saying 'the lunch menu changed', every single student listening to the speaker has to look up from their desk, even if they brought their own lunch from home. React Context is that speaker: whenever any value in the context changes, every component reading that context re-renders completely.",
+    "junior": "When a Context Provider's `value` changes (by reference equality `Object.is`), **every component calling `useContext(MyContext)` will re-render**, even if the component only cares about an untouched field inside the context object. Wrapping consumers in `React.memo()` does **not** stop context-triggered re-renders. To optimize, split large contexts into smaller, specialized contexts or memoize sub-components.",
+    "senior": "Architecturally, React Context does not support fine-grained selector subscriptions (unlike Redux or Zustand). When a Provider's value reference updates, React marks all matching context-consumer fibers with `ForceUpdateForContextChange`. During the render phase, React bails out on non-consumer fibers via `checkScheduledUpdateOrContext`, but unconditionally re-renders all consumers. Splitting contexts by update frequency (e.g. `ThemeStateContext` vs `ThemeDispatchContext`) is the primary architectural mitigation.",
+    "underTheHood": "In the Fiber reconciler, when `useContext` runs, it attaches a `ContextDependency` record to the fiber's `dependencies` linked list. When a `ContextProvider` receives a new `value` (detected via `Object.is(oldValue, newValue)` in `updateContextProvider`), it calls `propagateContextChange`, which traverses all descendant fibers and marks consumers with `renderLanes` matching the update lane."
+  },
+  "rosettaStone": {
+    "react": "Splitting State / Dispatch contexts or using `use-context-selector`.",
+    "angular": "Angular hierarchical injectors with fine-grained Signals.",
+    "vue": "Vue `provide` / `inject` where reactivity is granular via individual `ref` pointers.",
+    "svelte": "Svelte `setContext` / `getContext` holding independent reactive `$state` objects."
+  },
+  "codeComparison": {
+    "title": "Monolithic Context (Over-rendering) vs Split Context Architecture",
+    "summary": "Monolithic context objects trigger re-renders on unrelated consumers; splitting state and dispatch prevents wasteful rendering.",
+    "legacyOrBad": {
+      "label": "Monolithic Context Object",
+      "snippet": "<UserContext.Provider value={{ user, setUser, theme, setTheme }}> // ❌ Renders all consumers on any change",
+      "fullFile": {
+        "filename": "MonolithicContext.jsx",
+        "language": "jsx",
+        "code": "// ❌ OLD: Combining fast-changing and slow-changing state into one context object.\n// Toggling the theme re-renders the UserAvatar component even though user hasn't changed!\nimport { createContext, useContext, useState } from 'react';\n\nconst AppContext = createContext(null);\n\nexport function AppProvider({ children }) {\n  const [user, setUser] = useState({ name: 'Ada' });\n  const [theme, setTheme] = useState('dark');\n\n  // New object reference created on every state change:\n  return (\n    <AppContext.Provider value={{ user, setUser, theme, setTheme }}>\n      {children}\n    </AppContext.Provider>\n  );\n}\n\nexport function UserAvatar() {\n  const { user } = useContext(AppContext); // ❌ Re-renders when theme toggles!\n  return <div>{user.name}</div>;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Split Context Architecture",
+      "snippet": "<ThemeContext.Provider value={theme}><UserContext.Provider value={user}> // ✅ NEW",
+      "fullFile": {
+        "filename": "SplitContext.jsx",
+        "language": "jsx",
+        "code": "// ✅ NEW: Split contexts by domain and update frequency.\nimport { createContext, useContext, useState } from 'react';\n\nconst UserContext = createContext(null);\nconst ThemeContext = createContext(null);\n\nexport function AppProvider({ children }) {\n  const [user] = useState({ name: 'Ada' });\n  const [theme, setTheme] = useState('dark');\n\n  return (\n    <ThemeContext.Provider value={{ theme, setTheme }}>\n      <UserContext.Provider value={user}>\n        {children}\n      </UserContext.Provider>\n    </ThemeContext.Provider>\n  );\n}\n\nexport function UserAvatar() {\n  const user = useContext(UserContext); // ✅ Only re-renders if user changes!\n  return <div>{user.name}</div>;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can `React.memo` prevent a component from re-rendering if a Context it consumes changes?",
+      "contextIntro": "This is one of the most common React performance interview traps.",
+      "detailedAnswer": "No. `React.memo` only prevents re-renders when a component's **props** are unchanged. If a component calls `useContext(MyContext)` and the Provider's value changes, React will **always** re-render that component, completely bypassing `React.memo`.",
+      "trapWarning": "To prevent child subtrees from re-rendering, you must extract the context-consuming hook into a parent component and pass the extracted value down to a memoized child component via props."
+    },
+    {
+      "question": "Why should you wrap object literals passed to `<Provider value={{ ... }}>` in `useMemo`?",
+      "contextIntro": "Tests knowledge of reference equality in the Context propagation algorithm.",
+      "detailedAnswer": "If you pass an inline object literal `<Provider value={{ user, settings }}>`, a brand new object memory reference is created on *every single parent render*. Because React uses `Object.is` to check for context changes, all consumers will re-render on every parent render regardless of whether the inner data changed. Wrapping the value in `useMemo` ensures the object reference remains stable.",
+      "trapWarning": "Omitting `useMemo` on Provider object values makes the entire consumer tree re-render on every parent update."
+    }
+  ]
+}

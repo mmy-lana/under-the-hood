@@ -1,0 +1,58 @@
+{
+  "id": "server-only-package-poisoning",
+  "title": "server-only Package: Build-Time Client-Leak Prevention",
+  "category": "frontend",
+  "subcategory": "nextjs",
+  "versionContext": "Next.js 14+ / 15",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nextjs", "server-only", "security", "rsc", "bundling", "secrets"],
+  "prerequisites": ["React Server Components boundary", "Client vs Server modules"],
+  "progressiveExplaining": {
+    "eli5": "Imagine a sticker that says 'DANGER: Kitchen Staff Only'. If a waiter accidentally tries to carry a box with this sticker out to the restaurant tables, an alarm goes off at the door and stops them before any guest sees what is inside. `server-only` is that alarm: it stops secret server code from accidentally slipping into the browser bundle.",
+    "junior": "The `server-only` package prevents server-side code (database clients, API keys, private business logic) from accidentally being imported into Client Components (`'use client'`). You import it once at the top of a server file: `import 'server-only';`. If any Client Component directly or indirectly imports that file, Next.js immediately halts the build with a compilation error.",
+    "senior": "Architecturally, `server-only` uses package exports conditions to create a compile-time poisoned entrypoint. The `package.json` of `server-only` maps the `react-server` conditional export to an empty module, while standard browser/client bundler targets resolve to a module that throws an immediate build-time error. This provides cryptographic-level build safety against secret leaks caused by accidental transitive imports.",
+    "underTheHood": "In the React Server Components bundling specification, server and client module graphs are compiled separately. When Turbopack or Webpack processes a client layer (`'use client'`), it resolves packages without the `react-server` condition. The default entry of `server-only` exports a file containing a runtime/build error: `throw new Error('This module cannot be imported from a Client Component')`. This guarantees that private code never makes it into client JavaScript bundles."
+  },
+  "rosettaStone": {
+    "react": "Vite environment conditions or custom Rollup plugin bans on server modules.",
+    "angular": "Angular SSR build isolation preventing server services from leaking to browser bundles.",
+    "vue": "Nuxt `.server.ts` filename convention preventing client bundling.",
+    "svelte": "SvelteKit `$env/static/private` and `$env/dynamic/private` compile-time import guards."
+  },
+  "codeComparison": {
+    "title": "Accidental secret leak vs Poisoned server-only guard",
+    "summary": "Transitive imports of server utilities can bundle API secrets to the browser; `server-only` breaks the build before deployment.",
+    "legacyOrBad": {
+      "label": "Unguarded Database Client",
+      "snippet": "export const db = new DatabaseClient(process.env.DB_SECRET); // ❌ Dangerous if imported in client",
+      "fullFile": {
+        "filename": "lib/db.ts",
+        "language": "ts",
+        "code": "// ❌ OLD: If a developer imports a helper from this file into a\n// 'use client' component, the bundler will attempt to bundle it, leaking\n// DB_SECRET or causing undefined environment variable runtime crashes.\nexport const db = new DatabaseClient(process.env.DB_SECRET!);\n\nexport async function getUser(id: string) {\n  return db.query(`SELECT * FROM users WHERE id = ${id}`);\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Guarded with server-only",
+      "snippet": "import 'server-only'; // ✅ NEW: Fails build if imported by client component",
+      "fullFile": {
+        "filename": "lib/db.ts",
+        "language": "ts",
+        "code": "import 'server-only';\n\n// ✅ NEW: Guarantees this file can NEVER be imported in a Client Component.\n// The bundler throws a compile error immediately if a client boundary touches it.\nexport const db = new DatabaseClient(process.env.DB_SECRET!);\n\nexport async function getUser(id: string) {\n  return db.query(`SELECT * FROM users WHERE id = ${id}`);\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does `server-only` work under the hood without executing code at runtime?",
+      "contextIntro": "Interviewers want to see if you understand Node/bundler package conditional exports.",
+      "detailedAnswer": "`server-only` relies on the Node.js `package.json` `exports` field. For the `react-server` export condition (used when bundling Server Components), it resolves to an empty file `empty.js`. For all other conditions (including `browser` and standard client bundling), it resolves to an `index.js` that throws a fatal error during bundling.",
+      "trapWarning": "Do not answer that `server-only` runs an `if (typeof window !== 'undefined')` check at runtime. It enforces safety at *build time*."
+    },
+    {
+      "question": "What is the complementary package for client-only code?",
+      "contextIntro": "This tests knowledge of the symmetric RSC isolation tooling.",
+      "detailedAnswer": "`client-only` is the counterpart package. Adding `import 'client-only';` at the top of a file ensures it can only be imported in Client Components. If a Server Component imports it, the build fails (preventing server execution of window/DOM-dependent code).",
+      "trapWarning": "Remember that neither `server-only` nor `client-only` replace the `'use client'` or `'use server'` directives; they are runtime-guard assertions, not boundary declarations."
+    }
+  ]
+}

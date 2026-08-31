@@ -1,0 +1,58 @@
+{
+  "id": "bfcache-back-forward-cache",
+  "title": "Back/Forward Cache (bfcache): In-Memory Freezing & BFCache Ineligibility",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "HTML Living Standard / Chrome 96+ & Safari bfcache",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "bfcache", "performance", "pageshow", "pagehide", "navigation"],
+  "prerequisites": ["Browser navigation lifecycle", "Event loop task execution"],
+  "progressiveExplaining": {
+    "eli5": "When you pause a video game, the entire world freezes instantly with all characters in place. When you hit unpause, everything is right where you left it with zero loading screen. The bfcache does this for web pages: when you click a link to leave, the browser freezes the entire live page in RAM. When you click the 'Back' button, it unpauses instantly (0ms load).",
+    "junior": "The Back/Forward Cache (bfcache) is an in-memory snapshot of a completely rendered page (including the live JavaScript execution state and DOM). When a user navigates away and clicks 'Back', the page is restored instantly without running scripts from scratch or making network requests. You listen to `pageshow` and `pagehide` events and check `event.persisted` to detect if the page was restored from or saved to the bfcache.",
+    "senior": "Architecturally, bfcache is not an HTTP disk cache—it is an OS process / V8 isolate suspension mechanism. The browser pauses all active timers, Web Workers, and microtask queues, keeping the complete DOM and heap intact in memory. Certain APIs and patterns make a page ineligible for bfcache: listening to the `unload` event, holding open WebSockets or WebRTC connections, unclosed IndexedDB transactions, or setting `Cache-Control: no-store` on the main document.",
+    "underTheHood": "When navigating away, the browser checks eligibility heuristics. If eligible, Blink halts the event loop, suspends all `requestAnimationFrame` and timer tasks, serializes open BroadcastChannels, and freezes the frame in memory. When navigating back, the browser skips HTML parsing, style recalculation, and script execution; it resumes the event loop, fires the `pageshow` event with `persisted: true`, and repaints the frozen layer textures instantly."
+  },
+  "rosettaStone": {
+    "react": "Re-subscribing to live data or resetting stale timers in `window.addEventListener('pageshow', ...)`.",
+    "angular": "Re-authenticating user tokens when `event.persisted` is true in root component lifecycle.",
+    "vue": "`onMounted` does not re-run on bfcache restore; use `pageshow` event listeners.",
+    "svelte": "SvelteKit snapshots coordinate with bfcache to preserve form input and scroll positions."
+  },
+  "codeComparison": {
+    "title": "Unload Listener (bfcache blocker) vs Pagehide Lifecycle",
+    "summary": "`window.addEventListener('unload')` completely disables bfcache; replacing it with `pagehide` enables instant 0ms back-navigation.",
+    "legacyOrBad": {
+      "label": "Legacy unload listener",
+      "snippet": "window.addEventListener('unload', cleanup); // ❌ Disables bfcache entirely",
+      "fullFile": {
+        "filename": "analytics.js",
+        "language": "js",
+        "code": "// ❌ OLD: Attaching an 'unload' event listener disqualifies the entire\n// page from being stored in the bfcache in many browsers (especially Chrome/Firefox),\n// forcing full-page reloads and slow back/forward navigations.\nwindow.addEventListener('unload', () => {\n  navigator.sendBeacon('/analytics', JSON.stringify({ event: 'leave' }));\n});"
+      }
+    },
+    "modernOrGood": {
+      "label": "Bfcache-friendly pagehide and pageshow",
+      "snippet": "window.addEventListener('pagehide', ...); // ✅ NEW: Fully bfcache compatible",
+      "fullFile": {
+        "filename": "analytics.js",
+        "language": "js",
+        "code": "// ✅ NEW: Use 'pagehide' for teardown/beacons and 'pageshow' to handle\n// state restoration when the page is unpaused from the bfcache.\nwindow.addEventListener('pagehide', (event) => {\n  navigator.sendBeacon('/analytics', JSON.stringify({\n    event: 'leave',\n    persisted: event.persisted // true if going into bfcache\n  }));\n});\n\nwindow.addEventListener('pageshow', (event) => {\n  if (event.persisted) {\n    console.log('Restored from bfcache! Re-validating stale session...');\n    checkUserSession();\n  }\n});"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the single most common JavaScript mistake that prevents pages from using the bfcache?",
+      "contextIntro": "Tests awareness of legacy DOM APIs and performance anti-patterns.",
+      "detailedAnswer": "Adding an `unload` event listener (`window.addEventListener('unload', ...)`). The `unload` event is incompatible with bfcache because it implies the page is being permanently destroyed. Browsers cannot guarantee that code in `unload` won't leave state in an un-resumable condition, so they disqualify the page from bfcache. The modern replacement is the `pagehide` event.",
+      "trapWarning": "Even third-party libraries (like legacy analytics or ad scripts) adding an `unload` listener will silently destroy bfcache eligibility for your entire application."
+    },
+    {
+      "question": "Does `window.addEventListener('DOMContentLoaded')` or `onload` fire when a page is restored from the bfcache?",
+      "contextIntro": "This tests understanding of browser execution lifecycle during back-navigation.",
+      "detailedAnswer": "No. When a page is restored from bfcache, the DOM was never destroyed and scripts do not re-execute from top to bottom. Neither `DOMContentLoaded`, `load`, nor component mount hooks (`useEffect`, `onMounted`) run. The only event guaranteed to fire is `pageshow` with `event.persisted === true`.",
+      "trapWarning": "If you rely on `onMount` / `useEffect` to fetch fresh user data or check authentication, back-navigation from bfcache may display stale private data unless re-validated in a `pageshow` listener."
+    }
+  ]
+}

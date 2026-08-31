@@ -1,0 +1,58 @@
+{
+  "id": "font-rendering-fout-vs-foit",
+  "title": "Font Rendering: FOUT vs FOIT, font-display, and Metric Overrides",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "CSS Fonts Module Level 4",
+  "lastUpdated": "2026-08-31",
+  "tags": ["browser", "fonts", "fout", "foit", "font-display", "performance", "cls"],
+  "prerequisites": ["CSS @font-face rules", "Browser Critical Rendering Path"],
+  "progressiveExplaining": {
+    "eli5": "When a web page needs a special font, it has two choices while downloading it: hide the text completely until the fancy font arrives (leaving invisible ghost text, called FOIT), or show a standard system font right away and swap it later (FOUT). `font-display` lets you choose between invisible text and instant reading.",
+    "junior": "Flash of Invisible Text (FOIT) happens when the browser hides text while downloading a web font (default `font-display: block` with a 3-second invisible timeout). Flash of Unstyled Text (FOUT) happens when the browser immediately renders a fallback system font and swaps to the custom font once loaded (`font-display: swap`). Use `font-display: optional` for the fastest performance without layout shifts.",
+    "senior": "The CSS font-display timeline comprises three phases: **Block Period** (invisible fallback), **Swap Period** (fallback displayed, swapped upon custom font arrival), and **Failure Period** (custom font treated as failed). While `swap` fixes FOIT and improves LCP, it introduces Cumulative Layout Shift (CLS) during the swap. Modern font optimization uses CSS font metric overrides (`size-adjust`, `ascent-override`, `descent-override`, `line-gap-override`) to morph the fallback font's bounding boxes to match the target web font.",
+    "underTheHood": "The text shaping engine (e.g. HarfBuzz in Blink) measures glyph advance widths and line-height bounding metrics. With `font-display: swap`, when the `.woff2` font completes decoding, the layout engine triggers a targeted style and layout invalidation, re-shaping and re-flowing text nodes. When `size-adjust` is applied, the engine scales the glyph coordinate system of the fallback `@font-face` at layout time, preventing reflow displacement."
+  },
+  "rosettaStone": {
+    "react": "`next/font` generating zero-CLS fallback `@font-face` metric overrides.",
+    "angular": "Angular inline critical fonts with `font-display: swap`.",
+    "vue": "Nuxt `@nuxt/fonts` generating matching fallback metric rules.",
+    "svelte": "SvelteKit with preload link tags and fallback `size-adjust` styles."
+  },
+  "codeComparison": {
+    "title": "Default FOIT Blocking vs Metric-Overridden FOUT Swap",
+    "summary": "Default fonts leave text invisible for seconds; metric overrides allow instant reading with zero layout shift on swap.",
+    "legacyOrBad": {
+      "label": "Default Blocking Font (FOIT)",
+      "snippet": "@font-face { font-family: 'Brand'; src: url('font.woff2'); } /* ❌ Invisible text for 3s */",
+      "fullFile": {
+        "filename": "styles.css",
+        "language": "css",
+        "code": "/* ❌ OLD: Default font-display is 'auto'/'block'. If network is slow,\n   text remains completely invisible for up to 3 seconds (FOIT),\n   ruining First Contentful Paint (FCP). */\n@font-face {\n  font-family: 'BrandFont';\n  src: url('/fonts/brand.woff2') format('woff2');\n  font-display: block; /* 3-second invisible block period */\n}\n\nh1 {\n  font-family: 'BrandFont', Arial, sans-serif;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Metric-Overridden FOUT (Zero-CLS)",
+      "snippet": "font-display: swap; size-adjust: 102%; ascent-override: 95%; // ✅ NEW",
+      "fullFile": {
+        "filename": "styles.css",
+        "language": "css",
+        "code": "/* ✅ NEW: Instant text rendering via 'swap' combined with\n   a metric-matched fallback font that eliminates layout shift. */\n@font-face {\n  font-family: 'BrandFontFallback';\n  src: local('Arial');\n  size-adjust: 102.5%;\n  ascent-override: 94%;\n  descent-override: 26%;\n  line-gap-override: 0%;\n}\n\n@font-face {\n  font-family: 'BrandFont';\n  src: url('/fonts/brand.woff2') format('woff2');\n  font-display: swap;\n}\n\nh1 {\n  font-family: 'BrandFont', 'BrandFontFallback', sans-serif;\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `font-display: swap` and `font-display: optional`?",
+      "contextIntro": "Interviewers test your precision regarding Core Web Vitals optimization and low-network conditions.",
+      "detailedAnswer": "`font-display: swap` gives a 0ms block period and an infinite swap period: the fallback font renders immediately and will *always* swap when the web font downloads (even if it takes 10 seconds). `font-display: optional` gives a tiny 100ms block period and a **0ms swap period**: if the web font is already in cache, it uses it; if not, it uses the fallback font for the entire life of the page and caches the web font for subsequent page loads, guaranteeing **zero layout shift**.",
+      "trapWarning": "`font-display: optional` can result in the web font not displaying on the first visit if the network roundtrip exceeds ~100ms."
+    },
+    {
+      "question": "How do `size-adjust` and `ascent-override` prevent Cumulative Layout Shift?",
+      "contextIntro": "This tests knowledge of CSS font metric calculations.",
+      "detailedAnswer": "Fallback fonts (e.g. Arial) and custom web fonts (e.g. Inter) possess different bounding boxes and character advance widths. When `font-display: swap` swaps the font, the line height and paragraph wrapping change, shifting elements below it (causing CLS). `size-adjust` scales the fallback font's glyph glyphs proportionally, and `ascent-override` / `descent-override` match the exact vertical line heights, making the fallback occupy the exact same pixel dimensions as the custom font.",
+      "trapWarning": "Metric overrides must be applied to the *fallback* `@font-face` definition (using `src: local(...)`), not to the custom font definition itself."
+    }
+  ]
+}
