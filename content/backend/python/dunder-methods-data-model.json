@@ -1,0 +1,58 @@
+{
+  "id": "dunder-methods-data-model",
+  "title": "Python Data Model: __getitem__, __iter__, __enter__, and Descriptor Protocol",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "data-model", "dunder-methods", "descriptors", "protocols", "metaprogramming"],
+  "prerequisites": ["Python Classes and OOP", "Iterator protocol"],
+  "progressiveExplaining": {
+    "eli5": "In Python, special methods with double underscores (like `__getitem__` or `__len__`) are secret agreements with the language. If you put a `__len__` method on your class, Python lets you call `len(my_object)`; if you add `__getitem__`, your class behaves like a list or dictionary (`my_object[0]`), blending seamlessly with native Python syntax.",
+    "junior": "The Python Data Model defines how user-defined classes interact with language operators. Key dunder (double-underscore) methods include: Sequences (`__len__`, `__getitem__`, `__setitem__`), Iterators (`__iter__`, `__next__`), Context Managers (`__enter__`, `__exit__`), String representations (`__repr__`, `__str__`), and Callable objects (`__call__`). Implementing these protocols makes custom objects feel like native built-in types.",
+    "senior": "Architecturally, the Data Model maps high-level Python syntax directly to C-level type slots in the `PyTypeObject` struct. For example, `obj[key]` bypasses dictionary lookup on the instance and reads the `tp_as_mapping->mp_subscript` function pointer on the class. The **Descriptor Protocol** (`__get__`, `__set__`, `__delete__`) underpins methods, `@property`, `@classmethod`, `@staticmethod`, and ORM field mappings, governing how attribute access resolves on class and instance namespaces.",
+    "underTheHood": "When CPython executes `len(obj)`, it does not look up `obj.__dict__['__len__']`. Instead, it checks `Py_TYPE(obj)->tp_as_sequence->sq_length`. Special dunder methods are looked up on the **Class**, not the instance, which is why assigning an instance attribute `obj.__len__ = lambda: 5` will *not* change the behavior of `len(obj)`."
+  },
+  "rosettaStone": {
+    "python": "Dunder protocols (`__getitem__`, `__iter__`, `__enter__`).",
+    "rust": "Standard library traits (`Index`, `Iterator`, `Drop`, `Display`).",
+    "csharp": "Operator overloading (`this[int index]`, `IDisposable`).",
+    "cpp": "Operator overloading (`operator[]`, `operator*`)."
+  },
+  "codeComparison": {
+    "title": "Java-Style Getters/Setters vs Python Data Model Protocols",
+    "summary": "Writing explicit `getItem()` and `getLength()` methods is un-Pythonic; implementing dunder methods integrates with native syntax.",
+    "legacyOrBad": {
+      "label": "Java-Style Custom API",
+      "snippet": "deck.getItem(0); deck.getLength(); // ❌ Un-Pythonic, cannot use len(), for-in, or slicing",
+      "fullFile": {
+        "filename": "deck_legacy.py",
+        "language": "python",
+        "code": "# ❌ OLD: Writing custom method names prevents using standard Python features\n# like len(deck), for card in deck, deck[0], or random.choice(deck).\nclass DeckLegacy:\n  def __init__(self):\n    self._cards = ['A', 'K', 'Q', 'J']\n\n  def getLength(self):\n    return len(self._cards)\n\n  def getItem(self, index):\n    return self._cards[index]\n\n# Cannot do: len(deck) -> TypeError\n# Cannot do: deck[0] -> TypeError"
+      }
+    },
+    "modernOrGood": {
+      "label": "Pythonic Data Model Deck",
+      "snippet": "def __len__(self): ... def __getitem__(self, i): ... // ✅ NEW: Supports slicing, iteration, and len()",
+      "fullFile": {
+        "filename": "deck_modern.py",
+        "language": "python",
+        "code": "import random\n\nclass DeckModern:\n  def __init__(self):\n    self._cards = ['A', 'K', 'Q', 'J', '10', '9']\n\n  # ✅ Enables: len(deck)\n  def __len__(self):\n    return len(self._cards)\n\n  # ✅ Enables: deck[0], deck[1:3], for card in deck, 'A' in deck!\n  def __getitem__(self, position):\n    return self._cards[position]\n\ndeck = DeckModern()\nprint(len(deck)) # 6\nprint(deck[0]) # 'A'\nprint(random.choice(deck)) # Works out of the box with standard library!"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why are special dunder methods (like `__getitem__` or `__len__`) looked up on the Class rather than on the instance?",
+      "contextIntro": "Interviewers test your deep understanding of CPython's slot lookup optimization.",
+      "detailedAnswer": "Special dunder methods are resolved directly via the class's type object slots (`Py_TYPE(obj)->tp_as_mapping`). CPython bypasses the instance `__dict__` entirely for performance and internal consistency. If special methods were looked up on instances, every single `len()` or arithmetic `+` operation would require an expensive instance dictionary lookup and descriptor binding pass.",
+      "trapWarning": "Setting `my_instance.__len__ = lambda: 42` will **not** work; `len(my_instance)` will continue calling the class's `__len__` or throw a `TypeError`."
+    },
+    {
+      "question": "What is the difference between a Data Descriptor and a Non-Data Descriptor in Python?",
+      "contextIntro": "Checks mastery of Python's attribute lookup resolution order.",
+      "detailedAnswer": "A **Data Descriptor** defines both `__get__` and `__set__` (or `__delete__`) (e.g. `@property` with a setter, ORM field descriptors). A **Non-Data Descriptor** defines only `__get__` (e.g. standard methods, `@classmethod`, `@staticmethod`). The key difference is resolution priority: **Data Descriptors override instance attributes** in the instance `__dict__`, whereas **instance attributes override Non-Data Descriptors**.",
+      "trapWarning": "If an instance dictionary has a key named `foo`, but the class has a Data Descriptor named `foo`, the Data Descriptor's `__get__` wins."
+    }
+  ]
+}

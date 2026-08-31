@@ -1,0 +1,58 @@
+{
+  "id": "circular-dependencies-forward-ref",
+  "title": "Circular Dependencies: forwardRef() and Module Dependency Cycles",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "circular-dependency", "forwardRef", "dependency-injection", "architecture"],
+  "prerequisites": ["NestJS Dependency Injection Container", "JavaScript ES Module loading order"],
+  "progressiveExplaining": {
+    "eli5": "Imagine two builders: Builder A cannot start without a tool from Builder B, but Builder B cannot start without a tool from Builder A. If they both wait at the same time, neither starts (a circular deadlock). `forwardRef` tells them: 'start building your frame now, and hand over the tool in one second once both frames exist.'",
+    "junior": "Circular dependencies occur when Service A injects Service B, and Service B injects Service A (or Module A imports Module B, which imports Module A). At runtime, one service receives `undefined` because JavaScript cannot resolve the circular import. NestJS solves this using `forwardRef(() => TargetClass)` on both the module import and the constructor `@Inject(forwardRef(() => TargetService))`.",
+    "senior": "Architecturally, circular dependencies are code smells signaling violations of the Single Responsibility Principle (SRP) and poor domain boundary modeling. At the engine level, ES module execution assigns `undefined` to uninitialized exports in circular graphs (Temporal Dead Zone). `forwardRef()` wraps the class reference inside a lazy closure `() => ClassRef`. NestJS defers provider instantiation, resolving the dependency lazily after both classes are defined in the IoC container registry.",
+    "underTheHood": "When NestJS's `DependenciesScanner` encounters `forwardRef(fn)`, it registers a lazy token descriptor. During container instantiation (`InstanceLoader`), NestJS does not resolve the token immediately. Instead, it marks the dependency as deferred, instantiates both provider wrappers, invokes `fn()` to obtain the real class constructor, and wires the resolved instance into the constructor parameter array."
+  },
+  "rosettaStone": {
+    "nestjs": "`@Inject(forwardRef(() => UsersService)) private usersService: UsersService`.",
+    "spring": "Spring `@Lazy` annotation on constructor parameters to break circular dependency graphs.",
+    "angular": "Angular `forwardRef(() => CustomComponent)` in control value accessors.",
+    "fastapi": "FastAPI string annotation forward references or function-level dependency injection."
+  },
+  "codeComparison": {
+    "title": "Circular Import Crash vs Resolved forwardRef() Injection",
+    "summary": "Circular injection causes `TypeError: Cannot read properties of undefined`; `forwardRef()` defers reference resolution.",
+    "legacyOrBad": {
+      "label": "Circular Dependency Crash",
+      "snippet": "constructor(private usersService: UsersService) {} // ❌ Receives undefined at runtime",
+      "fullFile": {
+        "filename": "orders.service.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: UsersService imports OrdersService, and OrdersService imports UsersService.\n// NestJS throws 'Nest cannot create the OrdersService instance. The argument at index [0] is undefined'.\nimport { Injectable } from '@nestjs/common';\nimport { UsersService } from './users.service';\n\n@Injectable()\nexport class OrdersService {\n  constructor(private usersService: UsersService) {} // ❌ undefined at boot!\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Resolved with forwardRef()",
+      "snippet": "constructor(@Inject(forwardRef(() => UsersService)) private usersService: UsersService) {} // ✅ NEW",
+      "fullFile": {
+        "filename": "orders.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable, Inject, forwardRef } from '@nestjs/common';\nimport { UsersService } from './users.service';\n\n// ✅ NEW: forwardRef wraps the class reference in a closure to defer evaluation\n@Injectable()\nexport class OrdersService {\n  constructor(\n    @Inject(forwardRef(() => UsersService))\n    private usersService: UsersService\n  ) {}\n}\n\n// In orders.module.ts:\n// @Module({\n//   imports: [forwardRef(() => UsersModule)],\n//   providers: [OrdersService],\n//   exports: [OrdersService]\n// })\n// export class OrdersModule {}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "If two modules have a circular dependency, do you need `forwardRef()` on the modules, the services, or both?",
+      "contextIntro": "Interviewers test your practical debugging experience with circular dependency resolution.",
+      "detailedAnswer": "You must use `forwardRef()` on **both the Module imports and the Service constructors**. In `UsersModule`, use `imports: [forwardRef(() => OrdersModule)]`. In `OrdersModule`, use `imports: [forwardRef(() => UsersModule)]`. Additionally, in the service constructor parameters, you must add `@Inject(forwardRef(() => ServiceName))` on both sides.",
+      "trapWarning": "Adding `forwardRef` only to the services while forgetting the module `imports` array will still cause module compilation crashes."
+    },
+    {
+      "question": "What is the architectural best practice to eliminate circular dependencies without using `forwardRef()`?",
+      "contextIntro": "Checks domain-driven design and refactoring skills.",
+      "detailedAnswer": "The architectural best practice is to refactor the shared domain logic using **Dependency Inversion** or by introducing a third intermediary module/service (e.g. `CommonModule` or an `EventBus`). Instead of Service A and Service B calling each other directly, they emit events or both depend on an extracted shared Service C.",
+      "trapWarning": "Treat `forwardRef()` as an emergency escape hatch, not a permanent architectural design pattern."
+    }
+  ]
+}

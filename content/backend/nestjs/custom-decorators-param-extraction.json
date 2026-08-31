@@ -1,0 +1,58 @@
+{
+  "id": "custom-decorators-param-extraction",
+  "title": "createParamDecorator(): Custom Parameter Decorators & Metadata Extraction",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "decorators", "createParamDecorator", "param-extraction", "clean-code"],
+  "prerequisites": ["NestJS ExecutionContext", "TypeScript Parameter Decorators"],
+  "progressiveExplaining": {
+    "eli5": "Instead of writing `req.user.profile.id` over and over in every single controller method, a custom parameter decorator is a shortcut: you write `@User('id') id: string` directly in your function arguments, and NestJS extracts the exact property for you automatically.",
+    "junior": "`createParamDecorator()` creates custom parameter decorators in NestJS. `export const User = createParamDecorator((data: string, ctx: ExecutionContext) => { const req = ctx.switchToHttp().getRequest(); return data ? req.user?.[data] : req.user; })`. In your controller, you can write `@Get() getProfile(@User() user: UserEntity, @User('id') userId: string)`.",
+    "senior": "Architecturally, custom parameter decorators decouple controller business logic from underlying transport request objects (`Request`). They enforce clean interface boundaries by transforming raw request headers, cookies, or JWT claims into strongly-typed parameter inputs. Custom decorators work seamlessly with NestJS `Pipes` (e.g. `@User('id', ParseUUIDPipe) id: string`), executing validation directly on the extracted value.",
+    "underTheHood": "Under the hood, `createParamDecorator(fn)` returns a parameter decorator function that registers a custom parameter metadata entry on the controller prototype with `CUSTOM_ROUTE_AGRS_METADATA`. When a request arrives, NestJS's `RouteParametersFactory` evaluates `fn(data, executionContext)` and pipes the extracted return value through any attached `PipeTransform`s before invoking the controller method."
+  },
+  "rosettaStone": {
+    "nestjs": "`export const User = createParamDecorator((data, ctx) => ...)`.",
+    "fastapi": "FastAPI `Depends()` parameter dependency injection (`user: User = Depends(get_current_user)`).",
+    "spring": "Spring `@AuthenticationPrincipal UserDetails user` or custom `HandlerMethodArgumentResolver`.",
+    "express": "Manually reading `req.user` inside controller handlers."
+  },
+  "codeComparison": {
+    "title": "Manual @Req() Inspection vs Declarative @User() Param Decorator",
+    "summary": "Extracting properties manually from `@Req()` couples controllers to Express; `@User()` creates clean, typed parameters.",
+    "legacyOrBad": {
+      "label": "Manual @Req() Inspection",
+      "snippet": "getProfile(@Req() req: any) { const user = req.user; // ❌ Directly coupled to Express",
+      "fullFile": {
+        "filename": "users.controller.ts",
+        "language": "typescript",
+        "code": "// ❌ OLD: Injecting raw @Req() exposes the entire underlying Express request,\n// breaks unit testing (requires mocking huge Request objects), and loses type safety.\nimport { Controller, Get, Req, UseGuards } from '@nestjs/common';\nimport { AuthGuard } from './auth.guard';\n\n@Controller('profile')\nexport class ProfileController {\n  @Get()\n  @UseGuards(AuthGuard)\n  getProfile(@Req() req: any) {\n    const userId = req.user.id;\n    return { id: userId };\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Custom @User() Decorator",
+      "snippet": "getProfile(@User('id', ParseIntPipe) userId: number) { // ✅ NEW: Clean, typed, pipeable",
+      "fullFile": {
+        "filename": "users.controller.ts",
+        "language": "typescript",
+        "code": "import { Controller, Get, UseGuards, createParamDecorator, ExecutionContext, ParseIntPipe } from '@nestjs/common';\nimport { AuthGuard } from './auth.guard';\n\n// ✅ NEW: Reusable custom parameter decorator\nexport const User = createParamDecorator(\n  (data: string | undefined, ctx: ExecutionContext) => {\n    const request = ctx.switchToHttp().getRequest();\n    const user = request.user;\n    return data ? user?.[data] : user;\n  },\n);\n\n@Controller('profile')\nexport class ProfileController {\n  @Get()\n  @UseGuards(AuthGuard)\n  getProfile(@User('id') userId: string) {\n    // ✅ Unit testing this method requires passing a simple string, not an Express mock!\n    return { id: userId };\n  }\n}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can you apply a `PipeTransform` (like `ValidationPipe` or `ParseUUIDPipe`) directly to a custom parameter decorator?",
+      "contextIntro": "Interviewers test your knowledge of parameter evaluation pipelines in NestJS.",
+      "detailedAnswer": "Yes. Custom parameter decorators integrate directly into the NestJS Pipe pipeline: `@Get() findOne(@User('id', ParseUUIDPipe) userId: string)`. NestJS first extracts the value using your custom decorator function, and then passes the extracted return value directly into `ParseUUIDPipe` for validation before the controller method runs.",
+      "trapWarning": "The pipe receives the *extracted* value from the decorator, not the full request object."
+    },
+    {
+      "question": "Why does using `@User()` instead of `@Req()` make unit testing significantly easier?",
+      "contextIntro": "Checks unit testing and software engineering best practices.",
+      "detailedAnswer": "When a controller method uses `@Req() req: Request`, unit tests must construct a massive mock Express `Request` object with headers, cookies, and socket properties. When using `@User() user: UserEntity`, unit tests can invoke the controller method directly as a plain JavaScript function with a simple object payload: `controller.getProfile({ id: '123' })`.",
+      "trapWarning": "Avoid using `@Req()` or `@Res()` in controllers unless you need low-level socket or streaming control."
+    }
+  ]
+}

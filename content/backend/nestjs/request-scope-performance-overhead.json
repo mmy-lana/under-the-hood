@@ -1,0 +1,58 @@
+{
+  "id": "request-scope-performance-overhead",
+  "title": "Scope.REQUEST: Propagation Overhead & Transient Provider Instances",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "request-scope", "performance", "memory", "ioc-container", "scope"],
+  "prerequisites": ["NestJS Dependency Injection Container", "Singleton vs Request vs Transient Scopes"],
+  "progressiveExplaining": {
+    "eli5": "In standard NestJS, services are built once when the server boots up (like buying a single coffee machine for the whole office). When you use `Scope.REQUEST`, NestJS throws away the machine and builds a brand-new coffee machine from scratch for every single customer request, which slows down the server and burns memory.",
+    "junior": "NestJS providers have three injection scopes: `DEFAULT` (singleton created once at startup), `REQUEST` (a new instance is created for every incoming request and garbage collected after), and `TRANSIENT` (a new instance per injection site). You set it via `@Injectable({ scope: Scope.REQUEST })`. Because `REQUEST` scope re-instantiates services on every HTTP call, it significantly degrades throughput (can drop RPS by 30-50%).",
+    "senior": "Architecturally, Request Scope suffers from **Scope Bubbling (Scope Infection)**: if a low-level service (e.g. `TenancyService`) is marked `Scope.REQUEST`, every service and controller that injects it is automatically forced into `Scope.REQUEST` up the entire dependency tree. This turns the entire controller hierarchy into ephemeral, per-request allocations, causing severe V8 garbage collection churn and latency spikes under high load.",
+    "underTheHood": "When a controller is `Scope.REQUEST`, NestJS's `ContextIdFactory` creates a unique `ContextId` for each incoming request. The `Injector` creates an ephemeral sub-container tree and evaluates constructors for all providers in that branch. After the response finishes, the entire sub-tree is unreferenced, forcing V8's Scavenger and Mark-Sweep GC to continuously collect thousands of short-lived class instances."
+  },
+  "rosettaStone": {
+    "nestjs": "`@Injectable({ scope: Scope.REQUEST })`.",
+    "spring": "Spring `@Scope(value = WebApplicationContext.SCOPE_REQUEST)`.",
+    "fastapi": "FastAPI `Depends()` function dependencies (instantiated per request by default).",
+    "node": "`AsyncLocalStorage` storing request context without re-instantiating services."
+  },
+  "codeComparison": {
+    "title": "Scope.REQUEST Bubble vs AsyncLocalStorage Singleton Pattern",
+    "summary": "`Scope.REQUEST` forces the entire controller tree to re-instantiate; `AsyncLocalStorage` preserves singletons with zero allocation overhead.",
+    "legacyOrBad": {
+      "label": "Scope.REQUEST (High Overhead)",
+      "snippet": "@Injectable({ scope: Scope.REQUEST }) export class TenantService { // ❌ Re-allocates tree per request",
+      "fullFile": {
+        "filename": "tenant.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable, Scope, Inject } from '@nestjs/common';\nimport { REQUEST } from '@nestjs/core';\nimport { Request } from 'express';\n\n// ❌ OLD: Injecting REQUEST forces TenantService, UserService, and\n// UserController to be re-instantiated on EVERY incoming request.\n@Injectable({ scope: Scope.REQUEST })\nexport class TenantService {\n  constructor(@Inject(REQUEST) private request: Request) {}\n\n  getTenantId(): string {\n    return this.request.headers['x-tenant-id'] as string;\n  }\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Singleton with AsyncLocalStorage",
+      "snippet": "const tenantStorage = new AsyncLocalStorage<string>(); // ✅ NEW: 100% Singleton performance",
+      "fullFile": {
+        "filename": "tenant.service.ts",
+        "language": "typescript",
+        "code": "import { Injectable } from '@nestjs/common';\nimport { AsyncLocalStorage } from 'node:async_hooks';\n\nexport const tenantStorage = new AsyncLocalStorage<string>();\n\n// ✅ NEW: TenantService remains a high-performance SINGLETON.\n// Request context is accessed through native AsyncLocalStorage with zero re-instantiations.\n@Injectable()\nexport class TenantService {\n  getTenantId(): string | undefined {\n    return tenantStorage.getStore();\n  }\n}\n\n// In a global middleware:\n// tenantStorage.run(req.headers['x-tenant-id'], () => next());"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is 'Scope Bubbling' (Scope Infection) in NestJS?",
+      "contextIntro": "Interviewers test your knowledge of how dependency injection scopes propagate.",
+      "detailedAnswer": "Scope Bubbling means that **a provider's scope bubbles up the dependency chain**. If Service C is `Scope.REQUEST`, and Service B injects Service C, Service B *must* also become `Scope.REQUEST`. If Controller A injects Service B, Controller A also becomes `Scope.REQUEST`. A single request-scoped service at the bottom of the graph forces all dependent ancestors to be re-created on every request.",
+      "trapWarning": "Do not assume that making only a database service request-scoped will leave your controllers as singletons; the entire tree above it becomes request-scoped."
+    },
+    {
+      "question": "How can you achieve multi-tenancy without using `Scope.REQUEST`?",
+      "contextIntro": "Checks performance-oriented architecture design for enterprise applications.",
+      "detailedAnswer": "Use **Node.js `AsyncLocalStorage`** in an authentication middleware to store the tenant context for the asynchronous execution chain. Keep all NestJS services and controllers as `DEFAULT` (singletons). When database queries run, the singleton repository reads the active tenant ID from `AsyncLocalStorage.getStore()` without any DI re-instantiation overhead.",
+      "trapWarning": "Migrating from `Scope.REQUEST` to `AsyncLocalStorage` often results in a 3x to 5x throughput improvement in benchmarks."
+    }
+  ]
+}

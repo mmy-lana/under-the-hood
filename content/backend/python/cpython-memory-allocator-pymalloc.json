@@ -1,0 +1,58 @@
+{
+  "id": "cpython-memory-allocator-pymalloc",
+  "title": "CPython Memory Allocator: pymalloc Arenas, Pools, and Size Classes",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "cpython", "memory", "pymalloc", "arenas", "pools", "allocation"],
+  "prerequisites": ["Python object memory model", "Operating system `malloc`/`free`"],
+  "progressiveExplaining": {
+    "eli5": "If you ask the city government for a new permit every time you buy a piece of candy, the city gets overwhelmed. CPython's `pymalloc` buys a giant box of candy slots (an Arena of 256KB) from the operating system once. When your code creates small numbers or strings (candy), `pymalloc` gives you an instant slot in microseconds without talking to the slow OS.",
+    "junior": "CPython uses a dedicated small-object allocator called `pymalloc` for allocations `<= 512 bytes` (which covers 95%+ of typical Python integers, strings, tuples, and dict entries). `pymalloc` organizes memory hierarchically into **Arenas** (256KB chunks requested from OS `malloc`), **Pools** (4KB blocks inside arenas corresponding to a single size class), and **Blocks** (small chunks in 8-byte increments from 8 to 512 bytes). Objects larger than 512 bytes bypass `pymalloc` and use system `malloc`.",
+    "senior": "Architecturally, `pymalloc` eliminates memory fragmentation and kernel context switching for small objects. Standard system `malloc` has significant per-allocation metadata overhead (8-16 bytes header per object) and suffers high thread contention. `pymalloc` pools require zero per-block headers: pool headers track free block singly-linked lists via offset pointers. Arenas maintain a doubly-linked list sorted by free pool count, ensuring that memory allocations concentrate in partially-used arenas so empty arenas can be released back to the OS via `free()`.",
+    "underTheHood": "In `obmalloc.c`, size classes range from 8 to 512 bytes in increments of 8 (`size_class = (size - 1) >> 3`). A 4KB Pool contains `4096 / size_class_bytes` blocks. The pool header contains `freeblock` (a pointer to the head of the free list) and `nextoffset`. When an object is allocated via `PyObject_Malloc(size)`, it indexes `usedpools[size_class]`. If an available pool exists, allocation is a 3-instruction pointer bump (`*freeblock`). If full, a fresh pool is carved out of the active 256KB Arena."
+  },
+  "rosettaStone": {
+    "python": "CPython `pymalloc` (Arenas 256KB -> Pools 4KB -> Blocks <=512B).",
+    "go": "Go runtime `mcache` / `mcentral` / `mheap` size-class allocator (TCMalloc derivative).",
+    "java": "JVM TLAB (Thread-Local Allocation Buffers) bump pointer allocation.",
+    "rust": "`jemalloc` / `mimalloc` size-class arena allocators."
+  },
+  "codeComparison": {
+    "title": "Small Object Allocation (pymalloc fastpath) vs Large Object Allocation (System malloc)",
+    "summary": "Small Python objects use fast `pymalloc` pools; objects >512B incur system `malloc` overhead.",
+    "legacyOrBad": {
+      "label": "Large Object (>512 bytes) System Malloc",
+      "snippet": "bytearray(1024) # ❌ Bypasses pymalloc, calls system malloc()",
+      "fullFile": {
+        "filename": "large_alloc.py",
+        "language": "python",
+        "code": "import sys\n\n# Allocations > 512 bytes bypass pymalloc pools entirely,\n# invoking OS system malloc() with kernel context overhead.\nlarge_buffer = bytearray(1024) # 1024 bytes -> System malloc\nprint('Size:', sys.getsizeof(large_buffer))"
+      }
+    },
+    "modernOrGood": {
+      "label": "Small Object (<=512 bytes) pymalloc Fastpath",
+      "snippet": "items = [i for i in range(1000)] # ✅ NEW: Fast 8-instruction pymalloc pool bump",
+      "fullFile": {
+        "filename": "small_alloc.py",
+        "language": "python",
+        "code": "import sys\n\n# Small objects (ints, small strings, tuples) allocate in microseconds\n# via 4KB pymalloc pools with 0 syscall overhead:\nnumbers = [i for i in range(1000)] # Each int (28 bytes) uses size-class 32\nprint('Single int size:', sys.getsizeof(42)) # 28 bytes -> pymalloc pool class 32"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does Python sometimes not release memory back to the Operating System even after deleting millions of objects?",
+      "contextIntro": "This is the classic production Python memory debugging interview question.",
+      "detailedAnswer": "Because `pymalloc` operates in **256KB Arenas**. An arena can only be released back to the OS via `free()` if **every single pool inside that arena is 100% empty**. If you allocate 1,000,000 objects and then delete 999,000 of them, but the remaining 1,000 surviving objects happen to be scattered across different arenas (1 object per arena), **none of the arenas can be freed**, and Python's RSS memory usage reported by the OS will remain high.",
+      "trapWarning": "Calling `gc.collect()` or `del my_list` frees objects inside `pymalloc` pools for Python reuse, but does not guarantee the OS will see lower process RSS memory."
+    },
+    {
+      "question": "What is the maximum size threshold for `pymalloc` in CPython?",
+      "contextIntro": "Checks precision regarding CPython internal constants.",
+      "detailedAnswer": "The threshold is **512 bytes** (`SMALL_REQUEST_THRESHOLD` in `obmalloc.c`). Any allocation request of 513 bytes or larger bypasses `pymalloc` and delegates directly to the standard C library `malloc()`.",
+      "trapWarning": "Prior to Python 3.8, the default threshold was 256 bytes; in modern Python (3.8+ / 3.12+), it is 512 bytes."
+    }
+  ]
+}

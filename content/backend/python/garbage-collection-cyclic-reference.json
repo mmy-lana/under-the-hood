@@ -1,0 +1,58 @@
+{
+  "id": "garbage-collection-cyclic-reference",
+  "title": "GC: Reference Counting + Generational Cyclic Garbage Collector",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "cpython", "garbage-collection", "reference-counting", "cyclic-gc", "memory-leaks"],
+  "prerequisites": ["CPython Object Model (`PyObject`)", "Graph cycles and pointers"],
+  "progressiveExplaining": {
+    "eli5": "Every Python object has a counter on its back showing how many people are pointing at it. When the counter hits zero, it is instantly thrown in the trash. But if Object A points to Object B, and Object B points back to Object A, their counters never hit zero even if the rest of the world forgets them. A special garbage detective (the Cyclic GC) periodically walks the memory, finds these isolated circles, and deletes them.",
+    "junior": "CPython's primary memory management is **Reference Counting** (`ob_refcnt`). When an object's reference count reaches `0`, it is deallocated immediately and synchronously. To solve **Cyclic References** (where Object A references B and B references A, keeping `refcnt >= 1` forever), CPython has a secondary **Generational Cyclic Garbage Collector** (`gc` module) with 3 generations (Gen 0, Gen 1, Gen 2).",
+    "senior": "Architecturally, Reference Counting is deterministic: destructors (`__del__`) and context manager cleanups run immediately when references drop to zero. The Cyclic GC is an asynchronous stop-the-world tracing collector that runs only on container objects (`list`, `dict`, `set`, custom class instances) that can hold references to other objects. It tracks doubly-linked lists of `PyGC_Head` headers. Generation 0 collections run frequently based on allocation thresholds; surviving objects are promoted to Generation 1 and eventually Generation 2.",
+    "underTheHood": "Container objects allocate a `PyGC_Head` header immediately before the `PyObject` structure. The cyclic collection algorithm works by copying `ob_refcnt` to a temporary `gc_refs` field in the GC list. It iterates through all pointers in the candidate set using `tp_traverse`, decrementing `gc_refs` on referenced objects. If an object's `gc_refs` drops to `0`, it can only be reached through internal cyclic references within the candidate group and is marked unreachable and freed."
+  },
+  "rosettaStone": {
+    "python": "Reference Counting (immediate) + Generational Cyclic GC (3 generations).",
+    "go": "Tri-color Mark-Sweep concurrent collector (no reference counting).",
+    "java": "Generational G1 / ZGC tracing collectors (no reference counting).",
+    "rust": "Compile-time RAII ownership (`Drop`) + explicit `Arc`/`Rc` reference counting."
+  },
+  "codeComparison": {
+    "title": "Immediate Reference Count Deallocation vs Cyclic Reference Leak",
+    "summary": "Linear references die immediately on scope exit; cyclic references stay in memory until the cyclic GC runs.",
+    "legacyOrBad": {
+      "label": "Cyclic Reference (Requires Tracing GC)",
+      "snippet": "nodeA.other = nodeB; nodeB.other = nodeA; del nodeA, nodeB; // ❌ refcnt stays 1, requires GC cycle",
+      "fullFile": {
+        "filename": "cycle.py",
+        "language": "python",
+        "code": "import gc\n\nclass Node:\n  def __init__(self, name):\n    self.name = name\n    self.other = None\n\n# ❌ Creating a cyclic graph:\na = Node('A')\nb = Node('B')\na.other = b\nb.other = a\n\n# Dropping global variables:\ndel a\ndel b\n# a and b are NOT freed here! Both have refcnt = 1 because they point to each other.\n# They will remain in memory until gc.collect() runs."
+      }
+    },
+    "modernOrGood": {
+      "label": "Weak References (Zero-Cycle Reference Counting)",
+      "snippet": "import weakref; nodeB.other = weakref.ref(nodeA); // ✅ NEW: Instant refcnt=0 deallocation",
+      "fullFile": {
+        "filename": "weakref_cycle.py",
+        "language": "python",
+        "code": "import weakref\n\nclass Node:\n  def __init__(self, name):\n    self.name = name\n    self.other = None\n\n# ✅ NEW: Use weakref to break cyclic reference graphs\na = Node('A')\nb = Node('B')\na.other = b\nb.other = weakref.ref(a) # Weak reference does not increment ob_refcnt!\n\ndel a\n# a is deallocated IMMEDIATELY and synchronously because its refcnt hit 0!\nprint('Is a alive?', b.other() is not None) # False"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why did `__del__` methods historically prevent CPython's cyclic GC from collecting cycles (pre-Python 3.4 / PEP 442)?",
+      "contextIntro": "Interviewers test your historical knowledge of CPython's finalization mechanics.",
+      "detailedAnswer": "Prior to Python 3.4, if two cyclic objects both defined a `__del__` destructor, Python had no safe way to determine which destructor should execute first without passing a half-destroyed object to the other. Consequently, CPython threw the cycle into `gc.garbage` and **leaked the memory forever**. In Python 3.4+ (PEP 442), Python modernized finalization: it breaks the cycle before calling `__del__`, allowing cyclic objects with destructors to be safely collected.",
+      "trapWarning": "Even in modern Python, relying on `__del__` for critical cleanup is an anti-pattern; always use Context Managers (`with` blocks)."
+    },
+    {
+      "question": "Can you disable the cyclic garbage collector in Python with `gc.disable()`, and what happens if you do?",
+      "contextIntro": "Checks performance tuning and high-throughput production optimization skills.",
+      "detailedAnswer": "Yes. Calling `gc.disable()` **disables the generational cyclic collector, but Reference Counting continues to function 100% normally**. 99% of non-cyclic objects are still deallocated immediately when their reference count reaches 0. High-scale services (like Instagram/Instagram Web) disable the cyclic GC to prevent GC pause latency during peak traffic, manually invoking `gc.collect()` during idle periods.",
+      "trapWarning": "`gc.disable()` will cause cyclic graphs to leak permanently unless broken manually via `weakref` or periodic manual `gc.collect()`."
+    }
+  ]
+}

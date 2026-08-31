@@ -1,0 +1,58 @@
+{
+  "id": "context-managers-exit-stack",
+  "title": "Context Managers: __enter__ / __exit__, @contextmanager, and ExitStack",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "context-manager", "exit-stack", "contextlib", "resource-management", "with"],
+  "prerequisites": ["Python `with` statement basics", "Exception handling (`try/finally`)"],
+  "progressiveExplaining": {
+    "eli5": "A context manager is a safety contract: 'Before I start, open the lock (`__enter__`); no matter what happens—even if the program catches fire—guarantee you close the lock when I leave (`__exit__`)'. `ExitStack` is a magical bag that can hold 50 different locks and cleans them all up in reverse order if anything fails.",
+    "junior": "Context managers guarantee resource cleanup via `with`. Create them by implementing `__enter__()` (returns resource) and `__exit__(exc_type, exc_val, exc_tb)` (handles cleanup). Alternatively, use the `@contextmanager` generator decorator from `contextlib`: everything before `yield` is setup, and everything in `finally` is teardown. `contextlib.ExitStack` manages dynamic or variable numbers of context managers programmatically.",
+    "senior": "Architecturally, Context Managers replace error-prone `try/finally` blocks with scoped resource management (RAII in Python). If an exception occurs inside a `with` block, `__exit__` receives the exception tuple; returning `True` from `__exit__` suppresses the exception. `ExitStack` solves the dynamic resource problem: opening `N` files or acquiring `N` database locks where a failure on item 5 must cleanly rewind and close items 1 through 4 in LIFO order.",
+    "underTheHood": "CPython compiles `with expr as var:` into bytecode instructions `SETUP_WITH` / `BEFORE_WITH`. The VM pushes `__exit__` onto the block stack. Upon normal block exit or exception unwind, the interpreter calls `__exit__(*sys.exc_info())`. If it returns a truthy value, the VM clears the exception and resumes normal execution at the next instruction."
+  },
+  "rosettaStone": {
+    "python": "`with open('file') as f:` / `contextlib.ExitStack()`.",
+    "java": "Java `try-with-resources` implementing `AutoCloseable`.",
+    "csharp": "C# `using (var resource = ...)` implementing `IDisposable`.",
+    "rust": "Rust RAII `Drop` trait automatically executing on scope exit."
+  },
+  "codeComparison": {
+    "title": "Fragile Nested Try/Finally vs Dynamic ExitStack",
+    "summary": "Opening multiple dynamic files with nested try/finally causes deep nesting and leaked handles on failure; `ExitStack` cleans up in LIFO order.",
+    "legacyOrBad": {
+      "label": "Nested Try/Finally (Leaked Handles)",
+      "snippet": "f1 = open('a'); try: f2 = open('b'); try: ... // ❌ Pyramid of doom",
+      "fullFile": {
+        "filename": "nested_files.py",
+        "language": "python",
+        "code": "# ❌ OLD: Managing a dynamic list of files with nested try/finally is unreadable\n# and if file 3 fails to open, file 1 and 2 may leak unless carefully tracked.\nfiles = []\ntry:\n  f1 = open('file1.txt')\n  files.append(f1)\n  try:\n    f2 = open('file2.txt')\n    files.append(f2)\n    # Process files...\n  finally:\n    f2.close()\nfinally:\n  f1.close()"
+      }
+    },
+    "modernOrGood": {
+      "label": "contextlib.ExitStack Dynamic Resource Pool",
+      "snippet": "with ExitStack() as stack: files = [stack.enter_context(open(f)) for f in filenames] // ✅ NEW",
+      "fullFile": {
+        "filename": "exit_stack_modern.py",
+        "language": "python",
+        "code": "from contextlib import ExitStack\n\n# ✅ NEW: ExitStack dynamically manages any number of context managers.\n# If opening file #5 fails, files 1-4 are guaranteed closed in LIFO order.\nfilenames = ['file1.txt', 'file2.txt', 'file3.txt']\n\nwith ExitStack() as stack:\n  files = [stack.enter_context(open(fname)) for fname in filenames]\n  \n  # Process all files safely:\n  for f in files:\n    print(f.readline())\n# All files are automatically and cleanly closed upon exiting the block!"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How do you suppress an exception from bubbling out of a `with` block using `__exit__`?",
+      "contextIntro": "Interviewers test your knowledge of exception handling contracts in the Context Manager protocol.",
+      "detailedAnswer": "To suppress an exception, the `__exit__` method **must explicitly return `True`** (or a truthy value): `def __exit__(self, exc_type, exc_val, exc_tb): return True`. If it returns `None`, `False`, or anything falsy, Python will re-raise the exception after `__exit__` finishes.",
+      "trapWarning": "Never return `True` unintentionally in `__exit__` (e.g. from an accidental trailing expression), as it will silently swallow all crashes and bugs in the `with` block."
+    },
+    {
+      "question": "What happens if an exception is raised inside a `@contextmanager` generator function after the `yield` statement?",
+      "contextIntro": "Checks understanding of generator execution in `contextlib`.",
+      "detailedAnswer": "When an exception occurs inside the `with` block, `@contextmanager` catches it and re-throws the exception *into the generator at the point of the `yield` statement* (`generator.throw()`). To ensure cleanup executes, the code following `yield` **must be enclosed in a `try...finally` block**.",
+      "trapWarning": "If you do not wrap `yield` in `try...finally`, code after `yield` will never run if an exception occurs in the caller's `with` block."
+    }
+  ]
+}

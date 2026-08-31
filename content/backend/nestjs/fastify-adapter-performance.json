@@ -1,0 +1,58 @@
+{
+  "id": "fastify-adapter-performance",
+  "title": "Fastify Adapter (platform-fastify): Routing Performance vs Express",
+  "category": "backend",
+  "subcategory": "nestjs",
+  "versionContext": "NestJS 10+ (`@nestjs/platform-fastify`)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["nestjs", "fastify", "express", "performance", "platform-fastify", "throughput"],
+  "prerequisites": ["NestJS HTTP Adapters (`HttpAdapterHost`)", "Express vs Fastify architectures"],
+  "progressiveExplaining": {
+    "eli5": "By default, NestJS uses Express as its delivery engine (reliable, but built on older JavaScript). Fastify is a modern rocket engine for web servers: it uses hyper-optimized routing and lightning-fast JSON serialization, doubling the number of requests your server can handle per second with a two-line configuration change.",
+    "junior": "NestJS is platform-agnostic: it uses Express by default (`@nestjs/platform-express`), but you can switch to Fastify by installing `@nestjs/platform-fastify` and initializing `NestFactory.create(AppModule, new FastifyAdapter())`. Fastify provides up to **2x higher throughput (RPS)** and lower latency than Express due to its radix-tree router and fast JSON serializer (`fast-json-stringify`).",
+    "senior": "Architecturally, `FastifyAdapter` replaces Express's linear array middleware matching with a **Radix Tree (Find-My-Way)** router, achieving `O(k)` URL route lookup (where `k` is URL length) instead of `O(N)` route matching. It avoids Express's synchronous `res.send()` buffer overhead by using schema-based serialization. Trade-offs: Express-specific middleware (e.g. `multer`, `passport` without fastify session wrappers) must be replaced with Fastify plugins (`@fastify/multipart`).",
+    "underTheHood": "`FastifyAdapter` implements `AbstractHttpAdapter`. When `app.listen()` executes, NestJS compiles route metadata into Fastify route definitions (`fastify.route()`). Fastify pre-compiles route parameter regexes into radix tree nodes. When returning JSON, Fastify uses pre-compiled schema serializers to write string fragments directly into the HTTP response stream."
+  },
+  "rosettaStone": {
+    "nestjs": "`NestFactory.create(AppModule, new FastifyAdapter())`.",
+    "fastapi": "Uvicorn running Starlette on `uvloop` (high performance C-based event loop).",
+    "node": "Fastify (`fastify({ logger: true })`) vs Express (`express()`).",
+    "bun": "`Bun.serve()` high-throughput native server."
+  },
+  "codeComparison": {
+    "title": "Default Express Platform vs High-Throughput Fastify Adapter",
+    "summary": "Switching from Express to Fastify doubles request throughput in high-QPS NestJS microservices.",
+    "legacyOrBad": {
+      "label": "Default Express Bootstrap",
+      "snippet": "const app = await NestFactory.create(AppModule); // ❌ Defaults to slower Express platform",
+      "fullFile": {
+        "filename": "main-express.ts",
+        "language": "typescript",
+        "code": "import { NestFactory } from '@nestjs/core';\nimport { AppModule } from './app.module';\n\n// ❌ OLD: Defaults to Express platform\n// Suitable for standard apps, but caps out at ~15k-25k RPS under high load.\nasync function bootstrap() {\n  const app = await NestFactory.create(AppModule);\n  await app.listen(3000);\n}\nbootstrap();"
+      }
+    },
+    "modernOrGood": {
+      "label": "High-Performance Fastify Adapter",
+      "snippet": "const app = await NestFactory.create(AppModule, new FastifyAdapter()); // ✅ NEW: Fastify engine",
+      "fullFile": {
+        "filename": "main-fastify.ts",
+        "language": "typescript",
+        "code": "import { NestFactory } from '@nestjs/core';\nimport { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';\nimport { AppModule } from './app.module';\n\n// ✅ NEW: Switch to Fastify adapter for 2x higher throughput (35k-50k RPS)\nasync function bootstrap() {\n  const app = await NestFactory.create<NestFastifyApplication>(\n    AppModule,\n    new FastifyAdapter({ logger: true })\n  );\n  \n  // Fastify requires '0.0.0.0' for Docker/Kubernetes container binding:\n  await app.listen(3000, '0.0.0.0');\n}\nbootstrap();"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the common host binding mistake when deploying a NestJS Fastify app inside a Docker container?",
+      "contextIntro": "This is the classic production deployment gotcha with Fastify.",
+      "detailedAnswer": "Express binds to `0.0.0.0` (all network interfaces) by default. Fastify binds to `127.0.0.1` (localhost only) by default. If you deploy a Fastify app inside a Docker container and call `await app.listen(3000)`, the container port will **not be reachable from outside the container**. You **must pass `'0.0.0.0'` explicitly**: `await app.listen(3000, '0.0.0.0')`.",
+      "trapWarning": "Forgetting `'0.0.0.0'` in `app.listen(3000)` causes container health checks and ingress routing to fail with connection refused."
+    },
+    {
+      "question": "Can you use standard Express middleware (like `app.use(morgan())`) with Fastify in NestJS?",
+      "contextIntro": "Checks knowledge of middleware compatibility layers.",
+      "detailedAnswer": "No. Standard Express middleware relies on the `(req, res, next)` signature and Express-specific methods (like `res.send()`). With `FastifyAdapter`, you must use native Fastify plugins (e.g. `@fastify/helmet`, `@fastify/cors`) or register them using `app.register()`.",
+      "trapWarning": "Attempting to use `@Res() res: express.Response` in a Fastify controller will result in undefined method crashes (`res.status is not a function`)."
+    }
+  ]
+}

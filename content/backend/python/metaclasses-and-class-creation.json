@@ -1,0 +1,58 @@
+{
+  "id": "metaclasses-and-class-creation",
+  "title": "Metaclasses: type, __new__, __init_subclass__, and Dynamic Class Generation",
+  "category": "backend",
+  "subcategory": "python",
+  "versionContext": "CPython 3.12+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["python", "metaclasses", "type", "init_subclass", "metaprogramming", "class-creation"],
+  "prerequisites": ["Python Classes and OOP", "Python Data Model"],
+  "progressiveExplaining": {
+    "eli5": "In Python, everything is an object, including classes themselves. A normal class is a blueprint that creates objects. A metaclass is a 'super-blueprint' that creates the class itself. When Python reads `class MyClass:`, it calls the metaclass (usually `type`) to build the class object in memory.",
+    "junior": "In Python, `type` is both the default metaclass and a function. You can dynamically create a class using `type(name, bases, dict)`: `MyClass = type('MyClass', (object,), {'x': 10})`. To customize class creation, define a class inheriting from `type`: `class Meta(type): def __new__(cls, name, bases, dct): ...`. In modern Python (3.6+), you can often use `__init_subclass__` instead of full metaclasses for validating or registering subclasses.",
+    "senior": "Architecturally, Metaclasses intercept the three phases of class construction: (1) `__prepare__(metacls, name, bases)` returns the namespace dictionary (e.g. an `OrderedDict`), (2) `__new__(metacls, name, bases, namespace)` allocates the new `type` object, and (3) `__init__(cls, name, bases, namespace)` initializes the class before it is bound to the module namespace. Frameworks like Pydantic v1, Django ORM, and ABCs use metaclasses to inspect class attributes and build field registries.",
+    "underTheHood": "When executing a `class` statement, CPython resolves the metaclass via `PyType_CalculateMetaclass`. It invokes `metaclass.__prepare__()` to get the namespace. It executes the class body code within that namespace. Finally, it invokes `metaclass.__new__(metaclass, name, bases, namespace)` which calls `PyType_FromSpec` / `tp_new` to allocate the `PyTypeObject` struct in memory."
+  },
+  "rosettaStone": {
+    "python": "`class Meta(type): def __new__(cls, name, bases, dct): ...`.",
+    "ruby": "Ruby singleton classes / `self.inherited(subclass)` hooks.",
+    "typescript": "TypeScript class decorators (`@ClassDecorator`).",
+    "rust": "Rust procedural derive macros generating trait implementations at compile time."
+  },
+  "codeComparison": {
+    "title": "Heavy Metaclass vs Modern __init_subclass__ Hook",
+    "summary": "Metaclasses add complexity and conflict risks; `__init_subclass__` provides simple subclass validation without metaclass overhead.",
+    "legacyOrBad": {
+      "label": "Complex Custom Metaclass",
+      "snippet": "class ValidateMeta(type): def __new__(cls, name, bases, dct): ... // ❌ Metaclass conflict risk",
+      "fullFile": {
+        "filename": "validator_meta.py",
+        "language": "python",
+        "code": "# ❌ OLD: Using full metaclass inheritance for simple subclass validation\n# causes metaclass conflicts if multiple parent classes use different metaclasses.\nclass ValidatorMeta(type):\n  def __new__(cls, name, bases, dct):\n    if 'table_name' not in dct and name != 'BaseModel':\n      raise TypeError(f\"{name} must define 'table_name' attribute!\")\n    return super().__new__(cls, name, bases, dct)\n\nclass BaseModel(metaclass=ValidatorMeta):\n  pass"
+      }
+    },
+    "modernOrGood": {
+      "label": "Modern __init_subclass__ Hook",
+      "snippet": "class BaseModel: def __init_subclass__(cls, **kwargs): ... // ✅ NEW: Clean, no metaclass conflicts",
+      "fullFile": {
+        "filename": "validator_modern.py",
+        "language": "python",
+        "code": "# ✅ NEW: __init_subclass__ (Python 3.6+) handles subclass validation and registration\n# cleanly without creating custom metaclasses or risking metaclass conflicts.\nclass BaseModel:\n  def __init_subclass__(cls, table_name: str | None = None, **kwargs):\n    super().__init_subclass__(**kwargs)\n    if table_name is None:\n      raise TypeError(f\"{cls.__name__} must specify a 'table_name' argument!\")\n    cls._table = table_name\n\n# Clean, declarative subclass definition:\nclass User(BaseModel, table_name='users'):\n  id: int\n  name: string"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What causes a 'metaclass conflict' in Python, and how is it resolved?",
+      "contextIntro": "Interviewers test your deep understanding of multiple inheritance and metaclass resolution.",
+      "detailedAnswer": "A metaclass conflict occurs when a class inherits from multiple base classes whose metaclasses are not subclasses of one another (e.g. Class A has `MetaA`, Class B has `MetaB`). When defining `class C(A, B):`, Python cannot determine which metaclass to use and throws `TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases`. The fix is to create a common derived metaclass: `class MetaC(MetaA, MetaB): pass`.",
+      "trapWarning": "Prefer `__init_subclass__` or class decorators to avoid metaclass conflicts in public libraries."
+    },
+    {
+      "question": "What is the purpose of `__prepare__` in a metaclass?",
+      "contextIntro": "Checks knowledge of the earliest stage of class definition in Python.",
+      "detailedAnswer": "`__prepare__(metacls, name, bases)` is called **before the class body is executed**. It returns a mapping object (namespace) in which the class body's code will be executed. By default, it returns a standard `dict`. Before Python 3.6 (when dicts became insertion-ordered), metaclasses used `__prepare__` to return an `collections.OrderedDict` to preserve the exact declaration order of class attributes and fields (essential for ORMs).",
+      "trapWarning": "`__prepare__` must be declared as a `@classmethod` or static method on the metaclass."
+    }
+  ]
+}
