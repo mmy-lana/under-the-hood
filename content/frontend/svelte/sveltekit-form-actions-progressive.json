@@ -1,0 +1,68 @@
+{
+  "id": "sveltekit-form-actions-progressive",
+  "title": "SvelteKit Form Actions: Progressive Enhancement POST",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "SvelteKit 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "sveltekit",
+    "form-actions",
+    "progressive-enhancement",
+    "forms",
+    "use-form",
+    "server"
+  ],
+  "prerequisites": [
+    "SvelteKit routing and load functions",
+    "Understanding of HTML forms and POST"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel's check-in desk has a paper form that guests fill in and hand over. The desk processes it and writes the room number on the same paper (returning the form with a note). If the paper isn't available (no JavaScript), the guest can still hand over the form and get a reply — the desk works either way. If JavaScript IS available, a clerk speeds things up by handling the form silently and updating the page without a full reload. The same form works in both worlds; the clerk only adds speed when possible.",
+    "junior": "SvelteKit form actions handle form submissions on the server. In +page.server.ts: export const actions = { default: async ({ request }) => { const data = await request.formData(); return { success: true }; } }. In the page: <form method=\"POST\" action=\"?/default\"> or just <form method=\"POST\">. Use the use:enhance action to progressively enhance: it submits via fetch, updates the page with the returned result, and handles loading/validation without a full reload. The returned action data is available as form in the page. This is the standard way to do mutations in SvelteKit.",
+    "senior": "Architecturally, form actions are server endpoints tied to a page: a POST to the page's URL (with ?/action-name) runs the action, which returns a result object. The response is a full server round trip that also invalidates and re-runs load functions (the SvelteKit 'invalidates all load data after a successful action'). Without JavaScript, the browser does a native POST and the server responds with the re-rendered page — forms work without JS. With use:enhance, the framework intercepts the submit, fetches the action endpoint, applies the returned form data/errors to the page, and updates the UI without navigation. This is progressive enhancement by design: the same action serves both the no-JS and enhanced paths.",
+    "underTheHood": "A form action is compiled into a server route handler. On native submission, the browser POSTs the form-encoded body; SvelteKit's server calls the action, awaits its result, then re-runs load functions, and either returns the updated page HTML (full load) or a JSON response for fetch-based submissions. use:enhance wraps the form's submit: it calls fetch with the form data, gets a structured response (the action result + invalidated data), and updates the page's form state via the returned update function. Actions can be named (?/login, ?/register) and their results are typed through the page store's form property. Failure returns are handled by throwing or returning { error } to populate the form state."
+  },
+  "rosettaStone": {
+    "react": "Next.js Server Actions / React Router actions are the framework-level analogues.",
+    "angular": "Angular has no built-in form action primitive; services + reactive forms fill the role.",
+    "vue": "Nuxt's useFormActions / server routes approximate the same pattern.",
+    "svelte": "SvelteKit form actions — the current topic."
+  },
+  "codeComparison": {
+    "title": "Client-only fetch handler vs progressive form action",
+    "summary": "Hand-rolled client-side submission breaks without JS and duplicates validation; a form action serves both the no-JS POST and the enhanced fetch path from one definition.",
+    "legacyOrBad": {
+      "label": "Client-only submit handler",
+      "snippet": "async function onSubmit(e) {\n  e.preventDefault(); // ❌ OLD: blocks native submission entirely\n  await fetch('/api/login', { method: 'POST', body: new FormData(e.target) });\n}",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // ❌ OLD: Client-only submission. preventDefault kills the native\n  // form behavior, so the form is completely broken without JS, and\n  // every error/loading state is hand-managed.\n  let error = $state('');\n\n  async function onSubmit(e) {\n    e.preventDefault(); // ❌ OLD: no-JS users can never submit\n    try {\n      const res = await fetch('/api/login', {\n        method: 'POST',\n        body: new FormData(e.currentTarget),\n      });\n      if (!res.ok) error = 'Login failed'; // ❌ OLD: manual error handling\n    } catch {\n      error = 'Network error';\n    }\n  }\n</script>\n\n<form onsubmit={onSubmit}>\n  <input name=\"email\" />\n  <button>Login</button>\n</form>\n{#if error}<p>{error}</p>{/if}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Progressive form action",
+      "snippet": "export const actions = {\n  default: async ({ request }) => {\n    const fd = await request.formData();\n    return { ok: true }; // ✅ NEW: server handles submission\n  },\n};",
+      "fullFile": {
+        "filename": "+page.server.ts",
+        "language": "typescript",
+        "code": "// ✅ NEW: The action is a server endpoint. Native POST works without\n// JS; use:enhance upgrades it to a fetch-based submit with no reload.\nexport const actions = {\n  default: async ({ request }) => {\n    const fd = await request.formData();\n    const email = String(fd.get('email') ?? '');\n\n    if (!email.includes('@')) {\n      return { error: 'Invalid email' }; // ✅ NEW: returned to the form\n    }\n    return { ok: true }; // ✅ NEW: success result\n  },\n};\n\n// +page.svelte:\n// <script>\n//   import { enhance } from '$app/forms';\n//   let { form } = $props();\n// </script>\n// <form method=\"POST\" use:enhance> ... </form>\n// {#if form?.error}<p>{form.error}</p>{/if}\n// use:enhance intercepts the submit, fetches, and applies the result."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does a form action work when JavaScript is disabled, and what response does the server send?",
+      "contextIntro": "This tests the progressive-enhancement contract — interviewers want to confirm you understand that form actions are genuinely server endpoints that work without JS, not fetch-only APIs.",
+      "detailedAnswer": "A form action is a server route handler for POST requests to the page URL (with the ?/action-name query when named). Without JavaScript, the browser performs a native form POST: it serializes the form fields, submits to the page URL, and the SvelteKit server runs the matching action, re-runs the load functions, and returns the full re-rendered HTML page. The browser renders that response as a normal page load — no JS required. The action's return value is available to the page via the form prop, which SvelteKit serializes into the HTML. This means validation, mutation, and error display all work server-side with zero client script. use:enhance only adds the enhanced fetch path on top; it is strictly additive.",
+      "trapWarning": "The naive answer is 'form actions are like API routes — they need fetch'. They are server endpoints that also support native browser POST. Another trap: assuming the action result is automatically applied without reload in no-JS mode — the whole page re-renders, which is correct behavior, not a failure. Candidates who explain the dual path (native POST vs fetch) show real understanding."
+    },
+    {
+      "question": "What does use:enhance actually change, and how does SvelteKit update the page with the action result?",
+      "contextIntro": "This probes the enhancement mechanics — the fetch interception and the invalidate-and-update flow that makes the SPA-like UX work while preserving the no-JS path.",
+      "detailedAnswer": "use:enhance is an action (the SvelteKit built-in enhance) applied to a form. It intercepts the submit event, prevents the native navigation, serializes the form data, and fetches the page URL with POST (including ?/action for named actions). The server runs the action and re-runs load functions; the response contains the action result and the updated data. SvelteKit then updates the page: it re-renders the affected data (via the returned update callback you can customize), populates the form prop with the action result, and resets or keeps the form per your options. The enhancement also manages pending state (submitting) and can call invalidate() to refresh specific data. If the fetch fails, it falls back to the native submission so the form still works.",
+      "trapWarning": "The naive answer is 'use:enhance just makes a fetch call'. It coordinates the full update cycle: action result application, load invalidation, pending state, and the fallback path. Another trap: forgetting that the action result flows through the form prop — if your page doesn't read form, error messages silently vanish. Candidates who describe the fetch → invalidate → apply pipeline show real SvelteKit experience."
+    }
+  ]
+}

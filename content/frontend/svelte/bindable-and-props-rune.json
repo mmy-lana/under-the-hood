@@ -1,0 +1,67 @@
+{
+  "id": "bindable-and-props-rune",
+  "title": "$props() Destructuring and $bindable() Two-Way Bindings",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (runes)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "runes",
+    "props",
+    "bindable",
+    "two-way-binding",
+    "component-api"
+  ],
+  "prerequisites": [
+    "Svelte 5 runes basics",
+    "Understanding of props and bindings in Svelte 4"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A form you hand to a visitor has fields that the office fills in (props) and a special scratch pad where the visitor writes and the office can read back (bindable). The office hands over the form by listing which fields are pre-filled, and the visitor can scribble in the scratch pad — when they do, the office's copy updates too. The visitor never gets to change the pre-filled fields, only the scratch pad. Everything is explicit: you can see at a glance which parts are one-way and which are two-way.",
+    "junior": "In Svelte 5, props are declared with $props(): let { name, age = 18 } = $props();. Destructuring gives you local variables that update when the parent changes them. For two-way binding, mark a prop $bindable(): let { count, onChange } = $props(); and in the parent <Child bind:count>. Alternatively: let { count = $bindable(0) } = $props(). The child can assign to count (count += 1) and the parent's variable updates. This replaces Svelte 4's export let + bind: syntax.",
+    "senior": "Architecturally, $props() is a compiler-analyzed declaration of the component's public prop contract. Each destructured variable becomes a prop backed by a signal; the compiler tracks reads/writes to determine which props are bindable (written in the child) vs read-only. $bindable() marks a prop as two-way: the child's writes propagate to the parent via the internal binding mechanism (compiled to an update on the parent's state signal). This gives explicit, type-safe prop APIs and avoids the Svelte 4 ambiguity where any export let was technically assignable. The props object is reactive: reading a destructured prop registers the current reactive context.",
+    "underTheHood": "The compiler transforms $props() destructuring into accessor calls on the component's props signal (a rune-backed proxy/signal holding the incoming props). Each destructured name becomes a getter that reads the props signal; writes to $bindable() props are compiled into signal writes that mark the component's bindings dirty and propagate to the parent's signal through the binding channel established by bind:. Default values in the destructure (age = 18) become fallbacks applied when the prop is undefined. The runtime uses the props proxy to keep child and parent in sync; a bindable write flushes via the scheduler and notifies the parent's reactive graph."
+  },
+  "rosettaStone": {
+    "react": "Destructured props are read-only; two-way requires lifting state + callbacks — Svelte's $bindable is sugar for that.",
+    "angular": "input() (read-only) + model() (two-way) mirror $props/$bindable.",
+    "vue": "defineProps + defineModel in <script setup> are the direct analogues."
+  },
+  "codeComparison": {
+    "title": "Svelte 4 export let + bind vs Svelte 5 $props/$bindable",
+    "summary": "Svelte 4's export let made all props technically writable (ambiguous two-way); $props()/$bindable() make the contract explicit.",
+    "legacyOrBad": {
+      "label": "Svelte 4 export let",
+      "snippet": "export let count = 0; // ❌ OLD: props via export let\n// any prop could be assigned internally — no explicit two-way marker",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // ❌ OLD: Svelte 4 props via export let. There is no explicit\n  // marker for two-way binding — any exported variable can be\n  // assigned inside the child, and `bind:` in the parent is what\n  // makes it two-way, which is implicit and easy to misuse.\n  export let count = 0; // ❌ OLD: default value in the declaration\n\n  function inc() {\n    // ❌ OLD: if the parent used <Counter {count} /> (no bind), this\n    // write is local-only and silently diverges from the parent.\n    count += 1;\n  }\n</script>\n\n<button onclick={inc}>{count}</button>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Svelte 5 $props + $bindable",
+      "snippet": "let { count = $bindable(0), label } = $props(); // ✅ NEW: explicit two-way marker",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // ✅ NEW: Explicit prop contract. `label` is read-only; `count` is\n  // explicitly two-way via $bindable. The child may assign to count,\n  // and the parent's bound variable updates.\n  let { count = $bindable(0), label = 'Counter' } = $props(); // ✅ NEW\n\n  function inc() {\n    count += 1; // ✅ NEW: only bindable props may be written\n  }\n</script>\n\n<button aria-label={label} onclick={inc}>{count}</button>\n\n<!-- Parent: <Counter bind:count={n} label=\"Points\" /> -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is $bindable() needed at all, and what happens if a parent doesn't use bind: with a bindable prop?",
+      "contextIntro": "This tests the two-way binding contract — interviewers want to know the write-propagation semantics and the silent-divergence trap when the parent doesn't bind.",
+      "detailedAnswer": "$bindable() declares that the child may write to the prop, establishing a two-way channel: the child's assignment compiles into a write that propagates back to the parent's state through the bind: mechanism. If the parent renders <Child count={n}> WITHOUT bind:, the child's write has nowhere to propagate — the write updates the child's local prop value, but the parent's n does not change, so the UI diverges silently until the parent re-renders. This is why $bindable() props should be used with bind: in the parent, or the child should treat the prop as a controlled value and emit changes via a callback instead. The compiler helps by marking bindable props distinctly, but the parent's usage determines whether writes actually flow.",
+      "trapWarning": "The naive answer is '$bindable just lets the child change its prop'. Without bind:, the parent never sees the change — the classic controlled-component pitfall. Another trap: assuming bindable props must always be used two-way; a common pattern is to pair a bindable with a change callback for controlled usage. Candidates who explain the bind: propagation requirement show real understanding."
+    },
+    {
+      "question": "How does $props() destructuring stay reactive, given that destructuring normally copies values?",
+      "contextIntro": "This probes the compiler transformation — interviewers want to know how a destructured variable can remain a live binding rather than a one-time copy, which contradicts plain JS semantics.",
+      "detailedAnswer": "The Svelte compiler does not let destructuring be a plain copy. It transforms each $props() destructured name into a reactive accessor: reading the name compiles to a read of the props signal, and (for bindable props) writing it compiles to a signal write. The component's template and effects read these accessors inside reactive contexts, so when the parent updates the prop, the props signal changes and the dependent reads re-run. The default-value fallbacks are applied lazily when the incoming value is undefined. This is why destructured props behave as live bindings rather than snapshots — the compiler rewrites the destructure into signal-backed accessors, preserving reactivity across the component boundary.",
+      "trapWarning": "The naive answer is 'destructuring copies the value at mount'. The compiler replaces the copy with reactive accessors; reads track, writes propagate. Another trap: destructuring $props() inside a non-reactive context (e.g. an event handler called later) still works for reading, but reading it outside a component context is not a thing — the accessors are component-scoped. Candidates who describe the compiler rewrite into signal accessors show real Svelte 5 knowledge."
+    }
+  ]
+}

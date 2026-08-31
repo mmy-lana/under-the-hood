@@ -1,0 +1,67 @@
+{
+  "id": "actions-use-directive-lifecycle",
+  "title": "use:action Directive: DOM Element Lifecycle Attachment",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (actions)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "actions",
+    "use-directive",
+    "lifecycle",
+    "dom",
+    "directives"
+  ],
+  "prerequisites": [
+    "Svelte element directives",
+    "Understanding of DOM lifecycle and cleanup"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A building manager installs a specialized door handle on a door. The handle's job is to sense when the door is used and do something (count visitors, lock at night). When the door is installed, the manager attaches the handle; if the door's purpose changes (the handle gets a new setting), the manager adjusts it; and when the door is removed, the manager uninstalls the handle so nothing is left dangling. The handle is the action, and the manager follows a strict attach-update-detach routine.",
+    "junior": "Actions run a function when an element is created: <div use:tooltip>Hover me</div>. The action receives the element (and an optional parameter): function tooltip(node, params) { ... return { update(params) {}, destroy() {} }; }. The action runs once on mount, update() runs when the parameter changes, and destroy() runs when the element is removed. Use actions for: focus management, click-outside handling, IntersectionObserver attachment, drag-and-drop, and any imperative DOM work that has a lifecycle. They are Svelte's replacement for the imperative parts of old Angular/React directives.",
+    "senior": "Architecturally, actions are the framework's escape hatch for imperative DOM manipulation with a defined lifecycle contract: action(node, params) runs at element insertion; the returned object's update() is called whenever the action's parameter expression changes (Svelte tracks it as a dependency); destroy() is called when the element is removed from the DOM. The action runs inside the component's reactive scope — the params can be reactive state, and Svelte re-invokes update() when they change. This makes actions the idiomatic way to integrate non-Svelte libraries (templates, charts, editors) with proper cleanup, avoiding the listener leaks that plague manual integration.",
+    "underTheHood": "The compiler lowers use:action into the element's creation sequence: it emits a call to the action function with the node and the current parameter value, storing the returned action object in a slot tied to the element's lifecycle. Reactive parameter tracking: if the param expression references $state, the compiler wraps update() in an effect so changing the state re-runs update(newParams). On element destroy (DOM removal during block teardown), the runtime calls destroy() on the action object, enabling cleanup. Actions participate in the SSR story as well: they are client-only, so SSR output skips them (they run on hydration)."
+  },
+  "rosettaStone": {
+    "react": "React custom hooks + refs approximate actions, but with manual lifecycle management.",
+    "angular": "Angular directives with ngOnInit/ngOnChanges/ngOnDestroy are the direct analogues.",
+    "vue": "Vue custom directives (mounted/updated/unmounted) mirror the action lifecycle."
+  },
+  "codeComparison": {
+    "title": "Manual addEventListener + cleanup vs use:action",
+    "summary": "Attaching listeners in onMount requires manual removal in onDestroy and manual re-wiring on param change; the action lifecycle handles all three phases.",
+    "legacyOrBad": {
+      "label": "Manual listener lifecycle",
+      "snippet": "onMount(() => {\n  el.addEventListener('click', handler); // ❌ OLD\n  return () => el.removeEventListener('click', handler); // ❌ OLD: manual\n});",
+      "fullFile": {
+        "filename": "Tooltip.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { onMount, onDestroy } from 'svelte';\n  let el;\n  let show = $state(false);\n\n  // ❌ OLD: Manual wiring. Listeners attach in onMount and must be\n  // removed in onDestroy. If `show` changes the handler's behavior,\n  // you must detach and re-attach or check the value inside.\n  function onEnter() { show = true; }\n  function onLeave() { show = false; }\n\n  onMount(() => {\n    el.addEventListener('mouseenter', onEnter); // ❌ OLD\n    el.addEventListener('mouseleave', onLeave);\n    return () => {\n      el.removeEventListener('mouseenter', onEnter); // ❌ OLD: manual teardown\n      el.removeEventListener('mouseleave', onLeave);\n    };\n  });\n</script>\n\n<div bind:this={el}>Hover</div>\n{#if show}<div class=\"tip\">Tooltip</div>{/if}"
+      }
+    },
+    "modernOrGood": {
+      "label": "use:action lifecycle",
+      "snippet": "function tooltip(node, params) {\n  function onEnter() { params.show = true; }\n  // ✅ NEW: attach in the action, clean up in destroy()\n  node.addEventListener('mouseenter', onEnter);\n  return { update(p) {}, destroy() { node.removeEventListener('mouseenter', onEnter); } };\n}",
+      "fullFile": {
+        "filename": "Tooltip.svelte",
+        "language": "svelte",
+        "code": "<script>\n  let show = $state(false);\n\n  // ✅ NEW: The action encapsulates attach/update/destroy. The element\n  // is passed in; listeners attach here and are removed in destroy().\n  function tooltip(node: HTMLElement) {\n    function onEnter() { show = true; } // ✅ NEW\n    function onLeave() { show = false; }\n    node.addEventListener('mouseenter', onEnter);\n    node.addEventListener('mouseleave', onLeave);\n\n    return {\n      update() { /* ✅ NEW: re-run when params change */ },\n      destroy() {\n        // ✅ NEW: guaranteed cleanup on element removal\n        node.removeEventListener('mouseenter', onEnter);\n        node.removeEventListener('mouseleave', onLeave);\n      },\n    };\n  }\n</script>\n\n<div use:tooltip>Hover</div> <!-- ✅ NEW: declarative lifecycle -->\n{#if show}<div class=\"tip\">Tooltip</div>{/if}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the full action lifecycle, and how does update() get called with new parameters?",
+      "contextIntro": "This tests the three-phase contract — interviewers want to confirm you know the action runs on mount, update() reacts to param changes, and destroy() runs on unmount, and how the reactive param tracking works.",
+      "detailedAnswer": "The action function runs once when the element is inserted into the DOM, receiving the node and the current parameter value. If it returns an object with update(), Svelte calls update(newParams) whenever the action's parameter expression changes — the compiler wraps the update call in an effect that tracks any $state read inside the parameter expression, so reactive params trigger updates automatically. destroy() is called when the element is removed (during block teardown), letting the action release listeners/observers. The action does not auto-re-run its main body on param changes; only update() does. This contract makes actions safe for third-party integrations: setup in the body, reaction in update, teardown in destroy.",
+      "trapWarning": "The naive answer is 'the action function re-runs when params change'. The body runs once; update() is the reactive phase. Another trap: forgetting destroy() — actions that attach listeners without cleanup leak them when the element unmounts, exactly the bug actions are meant to prevent. Candidates who enumerate the three phases and the effect-wrapped update mechanism show real understanding."
+    },
+    {
+      "question": "How do actions differ from event handlers or onMount, and when is an action the right choice?",
+      "contextIntro": "This probes the design boundaries — interviewers want to know why actions exist as a distinct primitive rather than onMount + bind:this boilerplate, and when each is appropriate.",
+      "detailedAnswer": "Event handlers (onclick) are declarative for simple events directly on the element. onMount + bind:this works for imperative setup but requires manual cleanup (return a teardown or use onDestroy) and manual re-wiring when parameters change. Actions formalize the imperative lifecycle: attach (body), react to param changes (update), and clean up (destroy) in one reusable unit that can be applied to any element with use:. They are the right choice when the behavior is reusable (tooltips, observers, drag handlers, library mount points) and needs parameterized reactivity and guaranteed teardown. For one-off component-internal imperative setup, onMount remains fine; for reusable, parameterized element behaviors, actions are idiomatic.",
+      "trapWarning": "The naive answer is 'actions are just event handlers'. Event handlers don't provide lifecycle or parameter updates. Another trap: assuming actions run during SSR — they are client-only (the node doesn't exist server-side), so SSR markup omits action effects and they activate on hydration. Candidates who describe the reusability and the SSR/client boundary show real understanding."
+    }
+  ]
+}

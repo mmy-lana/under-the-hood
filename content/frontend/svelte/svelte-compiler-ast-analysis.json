@@ -1,0 +1,67 @@
+{
+  "id": "svelte-compiler-ast-analysis",
+  "title": "Svelte AST Parser: Reactive Variable Hoisting & JS Lowering",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (compiler)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "compiler",
+    "ast",
+    "parser",
+    "lowering",
+    "codegen"
+  ],
+  "prerequisites": [
+    "Svelte component syntax",
+    "Understanding of compilers and ASTs"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A translator takes a play written in stage directions and turns it into precise actor instructions. First they read the whole script and build a map of every scene, prop, and line (the parsing step). Then they rewrite the script into plain, executable instructions for the stagehands (the lowering step): every 'when the bell rings, the curtain rises' becomes a numbered cue. The map tells the translator which lines depend on which props, so the cues are exact. That map and rewriting is what this translation tool does for a Svelte play.",
+    "junior": "Svelte compiles your .svelte files into plain JavaScript at build time — there's no runtime framework interpreting your markup. The compiler: (1) parses the template into an AST, (2) analyzes which variables are reactive (read/written in the template), (3) transforms the component into JS that creates DOM nodes and updates them directly. The output includes a create function (initial DOM) and update functions per reactive binding. Svelte 5 also transforms runes ($state, $derived, $effect) into signal calls. You can inspect the output with the Svelte REPL's 'JS output' tab.",
+    "senior": "Architecturally, the Svelte compiler is a multi-pass pipeline: parse → analyze → transform → generate. The parser produces an AST mixing HTML structure and JS expressions. The analyzer performs dependency analysis: it determines which top-level variables are referenced in the template and whether they're assigned (making them reactive). Code generation then emits minimal DOM instructions: template literals or createElement calls for the static skeleton, and targeted update statements for each reactive value (rather than a full re-render). This 'compile-time reactivity' is why Svelte has no Virtual DOM and no runtime diffing.",
+    "underTheHood": "The compiler uses acorn to parse <script> content and a custom HTML/template parser (with re-parsing of attribute expressions) to build the template AST. In Svelte 5, runes analysis marks variable declarations: $state → signal(initial), $derived → derived(getter), $effect → effect(fn). The component's render is lowered to a createRoot + render effect that contains imperative DOM creation (using template element cloning in compiled output) and effect-based updates. Reactive assignments in Svelte 4 triggered whole-component invalidation with a dirty-check set; Svelte 5 runes produce granular signal dependencies. The generator prints the final JS with source maps and tree-shakeable imports."
+  },
+  "rosettaStone": {
+    "react": "React uses a runtime (Fiber + reconciler); Svelte compiles away the framework, keeping only signal primitives.",
+    "angular": "Angular's compiler (ngtsc) also transforms templates to JS, but keeps a runtime CD engine; Svelte's runtime is minimal.",
+    "vue": "Vue compiles templates to render functions executed at runtime against the Virtual DOM; Svelte compiles to direct DOM instructions."
+  },
+  "codeComparison": {
+    "title": "Runtime framework interpretation vs compiled DOM instructions",
+    "summary": "A runtime approach interprets templates at runtime (Virtual DOM diffing); Svelte compiles the template into direct DOM update code at build time.",
+    "legacyOrBad": {
+      "label": "Runtime template interpretation (VDOM)",
+      "snippet": "render(h('div', {}, [text]), container); // ❌ OLD: runtime builds/diffs a virtual tree",
+      "fullFile": {
+        "filename": "app.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: A runtime-driven framework. The template is compiled to a\n// render function that builds a Virtual DOM tree on every update, then\n// a reconciler diffs the old and new trees to compute DOM changes.\n// This interpretation + diffing happens at RUNTIME.\nfunction render(count) {\n  return h('div', { class: 'counter' }, [\n    h('p', {}, ['Count: ', count]), // ❌ OLD: tree built per render\n    h('button', { onclick: inc }, ['+1']),\n  ]);\n}\n\n// Every state change re-runs render() and diffs — the framework is\n// shipped to the browser and does the work there."
+      }
+    },
+    "modernOrGood": {
+      "label": "Compiled DOM instructions",
+      "snippet": "// compiled output: direct DOM creation + targeted updates\nlet count = $state(0); // ✅ NEW: compiled to signal(0)",
+      "fullFile": {
+        "filename": "Counter.svelte (compiled)",
+        "language": "javascript",
+        "code": "// ✅ NEW: Svelte compiles the component at BUILD time into imperative\n// JS. The DOM skeleton is created once; updates target only the nodes\n// that depend on changed state. No Virtual DOM is shipped.\n\n// (Simplified compiled output of: let count = $state(0); <p>{count}</p>)\nlet count = signal(0); // ✅ NEW: rune lowered to a signal\n\nconst p = element('p'); // ✅ NEW: direct DOM creation\nconst text = text('Count: ');\n\n// ✅ NEW: a render effect updates ONLY this text node when count changes\nrender_effect(() => {\n  set_text(text, count());\n});\n\n// The browser receives plain JS with no template interpreter and no\n// reconciler — reactivity is compiled in."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does the Svelte compiler decide which variables are reactive, and what's the difference between Svelte 4 and Svelte 5 analysis?",
+      "contextIntro": "This tests the compiler's dependency analysis — interviewers want to know how reactivity is determined at compile time and how the runes change simplified that determination.",
+      "detailedAnswer": "In Svelte 4, reactivity was inferred: the compiler analyzed which top-level variables were referenced in the template and assigned anywhere in the script (assignment = potential invalidation). This inference was heuristic — it could miss indirect mutations (array.push without reassignment needed explicit reassignment) and required the compiler to build an invalidation graph per component. In Svelte 5 with runes, reactivity is explicit: you annotate state with $state, derivations with $derived, and effects with $effect. The compiler no longer guesses; it transforms the annotated declarations into signals and tracks reads/writes through the signal runtime. This makes the analysis deterministic and removes the Svelte 4 edge cases (mutating objects without reassignment, $: ordering).",
+      "trapWarning": "The naive answer is 'Svelte makes all variables reactive'. Only state explicitly marked (or inferred by the old heuristics) is reactive; plain let in runes mode is NOT reactive unless wrapped in $state. Another trap: assuming the compiler tracks deep mutations automatically — in Svelte 5, mutating a $state object's property is tracked because the runtime uses signals/proxies, but in Svelte 4 you needed reassignment. Candidates who can compare the inference vs explicit-annotation models show real compiler understanding."
+    },
+    {
+      "question": "Why does Svelte compile to direct DOM instructions instead of shipping a runtime, and what is the trade-off?",
+      "contextIntro": "This probes the compile-first architectural decision — interviewers want the performance rationale and the honest costs (build complexity, dynamic-content handling) of eliminating the runtime.",
+      "detailedAnswer": "Compiling templates to imperative DOM creation and targeted update statements removes the need for a framework runtime: no Virtual DOM, no reconciler, no template interpreter shipped to the browser. The update code is exactly as minimal as the template requires — a text node update for {{count}}, not a subtree diff. The trade-offs: the build step is more sophisticated (a full compiler with AST analysis and code generation), and highly dynamic content (arbitrary HTML, runtime-defined components) is harder to optimize because the compiler cannot pre-analyze it — such cases fall back to more generic runtime paths (svelte:component, {@html}). For typical apps, the compile-first model yields smaller bundles and faster updates, which is why it remains Svelte's core identity.",
+      "trapWarning": "The naive answer is 'Svelte has no runtime at all'. It ships a small runtime for signals, effects, transitions, and lifecycle — but no template engine or reconciler. Another trap: assuming dynamic features compile as efficiently as static ones — {@html} and dynamic components need generic runtime handling. Candidates who can name what remains in the runtime and where the compiler excels show real architectural understanding."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "critical-rendering-path-optimization",
+  "title": "Resource Hints: preload, prefetch, modulepreload, dns-prefetch",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "HTML spec (resource hints)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "browser",
+    "preload",
+    "prefetch",
+    "modulepreload",
+    "resource-hints",
+    "performance"
+  ],
+  "prerequisites": [
+    "Critical rendering path basics",
+    "Understanding of HTML parsing and network requests"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant kitchen knows some ingredients will definitely be needed for tonight's main dish (preload: fetch them now, don't wait until the cook asks). Some ingredients are likely needed for a later course (prefetch: get them quietly during a slow moment). The chef's assistant also warms up the phone line to the fish supplier in advance (dns-prefetch) so that when an order is placed, the line is already open. Each hint is a different kind of preparation, timed to use spare capacity without disturbing the current course.",
+    "junior": "Resource hints tell the browser about future needs: <link rel=\"preload\" href=\"font.woff2\" as=\"font\"> fetches a critical resource early (before the parser discovers it). <link rel=\"prefetch\" href=\"/next-page.js\"> fetches a likely-next resource at low priority during idle. <link rel=\"modulepreload\" href=\"module.js\"> fetches + prepares an ES module. <link rel=\"dns-prefetch\" href=\"//api.example.com\"> resolves the DNS early. <link rel=\"preconnect\" href=\"//cdn.example.com\"> opens the connection early. Use preload for above-the-fold critical resources, prefetch for probable future navigations, and preconnect/dns-prefetch for third-party origins.",
+    "senior": "Architecturally, resource hints change the resource-loading scheduler's behavior: preload is a high-priority fetch initiated during HTML parsing (before the resource is referenced), reducing discovery latency; prefetch is a low-priority, idle-time fetch cached for future use (in the HTTP cache, not executed); modulepreload fetches a module and parses/compiles it ahead of import; dns-prefetch only resolves DNS; preconnect performs DNS + TCP + TLS handshake. Each has a distinct cost and priority. Overusing preload wastes bandwidth and can starve critical resources; prefetching too eagerly wastes data. The hints must be matched to actual resource timing needs — preload is for resources the CURRENT page needs sooner than the parser would find them.",
+    "underTheHood": "The HTML parser, upon seeing a preload link, calls the resource fetcher with a high priority and an 'as' type (font/script/style/image) used for correct request headers (e.g. crossorigin for fonts). Prefetch uses the idle-net stack priority and stores the response in the cache (or memory cache) for later use — it does not execute. modulepreload fetches the module, parses it, and may compile it, so a later dynamic import finds it ready. dns-prefetch triggers an async host resolution; preconnect opens the socket and can reuse it for the first real request. Browsers apply heuristics: Chrome may auto-preconnect to origins discovered via link headers. The hints compose with the browser's priority classes (High/Medium/Low) and the HTTP/2 or HTTP/3 connection pool."
+  },
+  "rosettaStone": {
+    "react": "Vite/webpack emit preload/modulepreload for code-split chunks; React Router prefetch integrations use prefetch hints.",
+    "angular": "Angular SSR emits preload for critical CSS/fonts; lazy chunks get modulepreload.",
+    "vue": "Nuxt emits prefetch/preload for route chunks and fonts automatically.",
+    "svelte": "SvelteKit emits preload hints for critical assets and prefetch for link hover via its own hinting."
+  },
+  "codeComparison": {
+    "title": "Font discovered late by CSS vs preloaded font",
+    "summary": "A font referenced only in CSS is discovered after CSSOM parsing — delaying text render; preloading it starts the fetch during HTML parsing.",
+    "legacyOrBad": {
+      "label": "Font discovered via CSS",
+      "snippet": "@font-face { src: url('/fonts/body.woff2'); } /* ❌ OLD: font found only when CSS is parsed */",
+      "fullFile": {
+        "filename": "styles.css",
+        "language": "css",
+        "code": "/* ❌ OLD: The browser only discovers this font when it parses the\n   stylesheet and reaches the @font-face rule. That happens after the\n   CSSOM builds — a full round trip after HTML parsing. The font\n   arrives late, delaying the text render (FOIT/invisible text) and\n   hurting LCP on font-heavy pages. */\n\n@font-face {\n  font-family: 'Body';\n  src: url('/fonts/body.woff2') format('woff2'); /* ❌ OLD: late discovery */\n}\n\nbody {\n  font-family: 'Body', sans-serif;\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Preloaded font",
+      "snippet": "<link rel=\"preload\" href=\"/fonts/body.woff2\" as=\"font\" type=\"font/woff2\" crossorigin /> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!doctype html>\n<html>\n  <head>\n    <!-- ✅ NEW: The preload hint starts the font fetch during HTML\n         parsing, before the stylesheet is even reached. By the time\n         CSSOM parsing discovers the @font-face, the font is already\n         downloading (or cached). -->\n    <link\n      rel=\"preload\"\n      href=\"/fonts/body.woff2\"\n      as=\"font\"\n      type=\"font/woff2\"\n      crossorigin\n    /> <!-- ✅ NEW: crossorigin required for fonts (anonymous CORS) -->\n\n    <!-- ✅ NEW: preconnect to a third-party origin whose first request\n         is on the critical path -->\n    <link rel=\"preconnect\" href=\"https://cdn.example.com\" />\n\n    <link rel=\"stylesheet\" href=\"/styles.css\" />\n  </head>\n  <body>...</body>\n</html>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between preload and prefetch, and what happens to a prefetched resource?",
+      "contextIntro": "This tests the resource-hint semantics — interviewers want the priority/execution distinction and the cache behavior, since mixing them up causes real performance mistakes.",
+      "detailedAnswer": "preload is for resources the CURRENT page needs but that the parser would discover too late (critical fonts, hero images, early scripts). It is a high-priority fetch initiated during parsing, and the response is used by the current page. prefetch is for resources a FUTURE page will likely need (next route's JS/CSS/images). It is a low-priority, idle-time fetch stored in the HTTP cache — the prefetched response is NOT executed or rendered, just cached, so a later navigation can reuse it. Key distinctions: preload has high priority and is consumed now; prefetch has low priority and is cached for later. Prefetching too aggressively wastes bandwidth/data, and prefetch does not guarantee the future page will use the exact URL.",
+      "trapWarning": "The naive answer is 'prefetch is just a lower-priority preload'. They serve different pages (current vs future) and have different cache/execution semantics. Another trap: forgetting crossorigin on font preloads — fonts are fetched with CORS mode, so a preload without crossorigin and the actual font request with it are treated as two different requests, wasting the preload. Candidates who explain the current-vs-future distinction and the crossorigin gotcha show real understanding."
+    },
+    {
+      "question": "How does modulepreload differ from preload for scripts, and why do bundlers emit it for code-split chunks?",
+      "contextIntro": "This probes the ES module preparation pipeline — interviewers want to know that modulepreload fetches AND parses/compiles, which is more than preload, and why it matters for dynamic import latency.",
+      "detailedAnswer": "A plain preload with as=script only fetches the file. modulepreload additionally fetches, parses, and (optionally) compiles the module, so that when a dynamic import() or static import later references it, the module is already parsed and compiled — avoiding the parse/compile latency on the critical path. Bundlers (Vite/webpack/Rollup) emit modulepreload links for code-split chunks precisely because navigation or interaction will import them soon; the hint hides the module preparation cost. It also pre-emptively populates the module map. The cost is that parse/compile is real work done even if the module is never used, so modulepreload should target chunks that are likely to be imported.",
+      "trapWarning": "The naive answer is 'modulepreload is preload for ES modules'. It is preload PLUS parse/compile — more work, more memory. Another trap: thinking modulepreload guarantees the module executes — it does not; it prepares it for a later import. Candidates who mention the module map and the parse/compile step show real understanding."
+    }
+  ]
+}

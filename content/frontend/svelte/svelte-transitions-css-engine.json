@@ -1,0 +1,67 @@
+{
+  "id": "svelte-transitions-css-engine",
+  "title": "Svelte Transition Engine: JS-Driven CSS Keyframe Generation",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (transitions via fly/fade/etc.)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "transitions",
+    "animation",
+    "keyframes",
+    "css",
+    "motion"
+  ],
+  "prerequisites": [
+    "Svelte template directives (transition:)",
+    "Understanding of CSS animations and keyframes"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel concierge shows a guest to their room with a smooth walk (the intro) and walks them back out with a wave (the outro). The concierge doesn't just teleport the guest — they describe the walk in steps ('start at the lobby, glide to the elevator, arrive at the room'), and the elevator (the browser) follows those steps. When the guest leaves, the concierge reverses the steps. The instruction list is written fresh each time, so the walk always matches the current building floor plan.",
+    "junior": "Svelte transitions animate elements as they enter/leave the DOM: <p transition:fade> or with parameters {#if show}<div transition:fly={{ y: 100, duration: 300 }}>{/if}. Built-in transitions: fade, fly, slide, scale, draw, blur, crossfade. Custom transitions are functions returning { duration, delay, easing, css(t, u) } where t goes 0→1 (u = 1 - t). Svelte generates the CSS keyframes from your css function and applies them. Use in: transitions for enter, out: for leave, and both with transition:. Transitions require the element to be in a {#if}/{#each} block (conditional mounting).",
+    "senior": "Architecturally, Svelte's transition engine turns each transition into a generated CSS animation: the runtime builds @keyframes from the transition's css(t, u) function at the moment the element mounts/unmounts, applies it as an inline style animation, and removes the element after the outro completes (or its duration/tick callback finishes). Because keyframes are generated from JS functions, transitions can be parameterized and can depend on the element's actual size/position at runtime (fly/slide measure geometry). The engine coordinates intro/outro with the scheduler: an element being removed stays in the DOM until its outro finishes. This is a JS-to-CSS bridge: your JS describes the motion, CSS runs it compositor-friendly where possible.",
+    "underTheHood": "When an element with a transition mounts, the runtime calls the transition function to get a transition spec, then constructs keyframes: for each step it evaluates css(t, u) to produce a style string, assembles them into a @keyframes rule (a generated name), and applies animation with the duration/delay/easing. For outros, the element is retained in the DOM, the reverse animation runs, and onAnimationEnd (or a tick fallback) triggers removal. The engine supports cancelation (interrupting an intro to run an outro), grouping (multiple transitions on one element), and the global {#each} transitions with keyed blocks. In Svelte 5 this runs inside the render effect lifecycle, coordinated with the microtask scheduler for flush timing."
+  },
+  "rosettaStone": {
+    "react": "React has no built-in transitions; libraries (framer-motion) or CSS classes fill the gap.",
+    "angular": "Angular animations (@angular/animations) build a similar JS-described motion engine.",
+    "vue": "Vue's <Transition> component wraps CSS/JS hooks with a similar enter/leave lifecycle."
+  },
+  "codeComparison": {
+    "title": "Hand-written CSS classes toggling vs Svelte transition directive",
+    "summary": "Manually toggling CSS classes requires waiting for animationend and matching enter/exit styles; the transition directive generates keyframes and handles removal.",
+    "legacyOrBad": {
+      "label": "Manual CSS class toggling",
+      "snippet": "el.classList.add('fade-in'); // ❌ OLD: manual class + animationend handling",
+      "fullFile": {
+        "filename": "fade.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Hand-rolled enter/exit with CSS classes. You must add the\n// class, wait for animationend, remove the element for exits, handle\n// rapid toggles (interrupting an animation), and keep the CSS in sync\n// with the JS.\nfunction enter(el) {\n  el.classList.add('fade-in'); // ❌ OLD: relies on matching CSS\n}\n\nfunction exit(el) {\n  el.classList.add('fade-out');\n  el.addEventListener('animationend', () => el.remove(), { once: true });\n  // ❌ OLD: manual removal timing; rapid toggles can double-fire or\n  // leave the element stuck mid-animation.\n}\n\n/* CSS must be hand-written separately:\n   .fade-in { animation: fade-in 300ms ease; }\n   .fade-out { animation: fade-out 300ms ease; } */"
+      }
+    },
+    "modernOrGood": {
+      "label": "Svelte transition directive",
+      "snippet": "{#if show}<div transition:fade={{ duration: 300 }}>Hi</div>{/if} // ✅ NEW",
+      "fullFile": {
+        "filename": "App.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { fade } from 'svelte/transition';\n  let show = $state(true);\n</script>\n\n<!-- ✅ NEW: the transition directive generates the keyframes, applies\n     them, and removes the element after the outro completes. -->\n{#if show}\n  <div transition:fade={{ duration: 300 }}>Hi</div> <!-- ✅ NEW -->\n{/if}\n\n<button onclick={() => (show = !show)}>Toggle</button>\n\n<!-- Custom transition: a function returning css(t, u):\n   function myFade(node, { duration = 200 } = {}) {\n     return { duration, css: (t) => `opacity: ${t}` };\n   } -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "How does Svelte know when an outro animation is finished, and what happens if the transition has no CSS?",
+      "contextIntro": "This probes the removal coordination — interviewers want the animationend/tick mechanism and the fallback path for transitions that only use JS ticks, not just the happy-path CSS case.",
+      "detailedAnswer": "For CSS-based transitions, Svelte generates keyframes and listens for the animationend event on the element to know the outro completed, then removes the element from the DOM (and destroys its bindings). If the transition returns no css (only a tick function), there is no CSS animation to listen to, so the runtime falls back to polling the tick function's returned duration: it waits that duration and then removes the element. The engine also handles interruption: if an intro is in flight and the element starts an outro (or vice versa), the current animation is cancelled and the new one starts from the element's current state. This lifecycle is what guarantees the DOM is never left with half-animated ghost elements.",
+      "trapWarning": "The naive answer is 'the element is removed immediately when the condition flips'. The element stays until the outro finishes (animationend or duration tick). Another trap: assuming transitions work on elements not in a conditional block — the transition lifecycle is tied to mount/unmount, so {#if}/{#each} is required. Candidates who mention animationend and the tick fallback show real understanding."
+    },
+    {
+      "question": "What does the css(t, u) function signature mean, and why is the transition engine considered a JS-to-CSS bridge?",
+      "contextIntro": "This probes the custom-transition authoring model — interviewers want you to explain the t/u parameters and why generating CSS keyframes (rather than running JS per frame) is the design choice.",
+      "detailedAnswer": "css(t, u) is called per keyframe step: t goes from 0 (start) to 1 (end) as the transition progresses, and u is the complement (u = 1 - t). Your function returns a style string (e.g. opacity: ${t}) which Svelte evaluates across the transition duration to build a full set of @keyframes. The engine then runs that animation as native CSS, which is compositor-friendly and off the main thread where possible — far cheaper than a JS rAF loop mutating styles every frame. The JS function is only the description (the 'what'), and CSS is the execution (the 'how'). This is why Svelte transitions are smooth: the heavy per-frame work is delegated to the browser's animation machinery, while JS stays in control of the keyframe definition and lifecycle.",
+      "trapWarning": "The naive answer is 'Svelte animates with JavaScript frame by frame'. It generates CSS keyframes from your JS function — per-frame JS animation only happens when you use the tick() hook. Another trap: ignoring u — easing functions that need the complement (e.g. elastic) rely on u; using only t limits the expressiveness. Candidates who explain the keyframe generation and the t/u semantics show real engine-level understanding."
+    }
+  ]
+}

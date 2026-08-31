@@ -1,0 +1,68 @@
+{
+  "id": "speculative-rules-prerendering",
+  "title": "Speculation Rules API: Instant Background Page Prerendering",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "Speculation Rules API (Chrome 103+ for prefetch, 108+ for prerender)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "browser",
+    "speculation-rules",
+    "prerender",
+    "prefetch",
+    "navigation",
+    "performance"
+  ],
+  "prerequisites": [
+    "Resource hints (preload/prefetch)",
+    "Understanding of navigation and the back-forward cache"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A concierge at a hotel notices which room a guest is likely to visit next. Instead of just memorizing the room number, he actually prepares the room: turns on the lights, sets out the towels, and opens the door so the guest walks straight in. That's prerendering — not merely fetching the room key in advance (prefetch), but having the whole room ready. The concierge's instructions are written on a whiteboard (the speculation rules) saying which rooms to prepare, and the hotel follows them quietly in the background.",
+    "junior": "The Speculation Rules API lets you hint which future navigations should be prefetched or prerendered. Add a JSON block: <script type=\"speculationrules\">{ \"prerender\": [{ \"source\": \"list\", \"urls\": [\"/about\", \"/pricing\"] }] }</script>. Prerendering fully renders the page in the background (including JS execution), so navigating to it is instant — the browser swaps the prepared page in. Prefetching only fetches the document and some resources. Rules can also use document rules ({ \"source\": \"document\", \"where\": { \"href_matches\": \"/docs/*\" } }). This is a modern alternative/replacement for the deprecated <link rel=\"prerender\">.",
+    "senior": "Architecturally, prerendering via speculation rules loads and renders the target page in a hidden, separate browsing context (a prerendered document) while the user is still on the current page: the browser runs the full navigation pipeline (fetch, parse, layout, JS, subresource loads) in the background. When the user navigates to that URL, the browser activates the prerendered page instantly (swapping it into the tab), yielding near-zero navigation time. Constraints apply: prerendered pages must not perform intrusive actions (no notifications, no audio without user gesture), and certain APIs are deferred or restricted until activation. The browser manages memory/CPU budgets, prerendering only what rules specify and evicting under pressure.",
+    "underTheHood": "The speculation rules are parsed into a SpeculationHost (the page's speculation service) that schedules prefetch/prerender via the browser's speculation engine. For prerender, the engine creates a hidden RenderFrameHost (in Blink: a prerender host) with its own navigation, loads the page, and freezes some behaviors until activation: scripts run, but restricted APIs (e.g. Web Locks, notifications, storage prompts) are held or checked for a 'prerendering' state (document.prerendering === true; the page can listen for prerenderingchange). On activation (a same-tab navigation to the URL), the hidden host is promoted to the visible page. The engine also dedupes and respects memory/CPU budgets, and uses heuristics for document rules."
+  },
+  "rosettaStone": {
+    "react": "Next.js integrates speculation rules for prefetch/prerender of route targets.",
+    "angular": "Angular SSR can emit speculation rules for likely-next routes.",
+    "vue": "Nuxt's link prefetching aligns with speculation rules for instant navigation.",
+    "svelte": "SvelteKit's link hover prefetching is being superseded/augmented by speculation rules."
+  },
+  "codeComparison": {
+    "title": "Link rel=prefetch/prerender (deprecated) vs speculation rules",
+    "summary": "The old rel=prefetch/prerender hints were per-element and prerender was removed; speculation rules batch JSON rules for prefetch and full prerender.",
+    "legacyOrBad": {
+      "label": "Deprecated rel=prerender / rel=prefetch",
+      "snippet": "<link rel=\"prefetch\" href=\"/about\"> <!-- ❌ OLD: per-element, prefetch only -->\n<link rel=\"prerender\" href=\"/about\"> <!-- ❌ OLD: deprecated/removed in most browsers -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!doctype html>\n<html>\n  <head>\n    <!-- ❌ OLD: The old hint model. rel=prefetch only fetches the\n         document (no JS execution, limited benefit), and rel=prerender\n         was deprecated and removed from Chrome because it always\n         prerendered with no budget control — wasting resources. -->\n    <link rel=\"prefetch\" href=\"/about\" /> <!-- ❌ OLD: fetch-only -->\n    <link rel=\"prerender\" href=\"/pricing\" /> <!-- ❌ OLD: removed -->\n\n    <!-- Per-element hints are also awkward to maintain for many\n         routes and cannot express 'match all /docs/* URLs'. -->\n  </head>\n  <body>...</body>\n</html>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Speculation rules JSON",
+      "snippet": "<script type=\"speculationrules\">\n  { \"prerender\": [{ \"source\": \"list\", \"urls\": [\"/about\", \"/pricing\"] }] }\n</script> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!doctype html>\n<html>\n  <head>\n    <!-- ✅ NEW: Speculation rules in a JSON block. The browser\n         prerenders the listed URLs in the background (full render,\n         JS included) so navigation is instant on activation. -->\n    <script type=\"speculationrules\">\n      {\n        \"prerender\": [\n          { \"source\": \"list\", \"urls\": [\"/about\", \"/pricing\"] }\n        ]\n      }\n    </script>\n\n    <!-- Document rules match by pattern:\n    <script type=\"speculationrules\">\n      { \"prefetch\": [{ \"source\": \"document\",\n          \"where\": { \"href_matches\": \"/docs/*\" } }] }\n    </script> -->\n  </head>\n  <body>...</body>\n</html>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between speculation-rule prefetch and prerender, and what can a prerendered page do that a prefetched one can't?",
+      "contextIntro": "This tests the two-level speculation model — interviewers want the fetch-only vs full-render distinction and the practical UX difference on navigation.",
+      "detailedAnswer": "Speculation prefetch fetches the document (and, in some cases, subresources) into the cache but does NOT execute it or render it — the navigation still runs the normal load pipeline when triggered, just faster because the bytes are cached. Speculation prerender fully renders the page in a hidden context: it runs HTML parsing, CSS, JavaScript, layout, and subresource loading in the background. When the user navigates to that URL, the browser activates the already-rendered document, so the page appears instantly — no parsing or JS execution on the critical path. The cost: prerender consumes real memory/CPU (a whole live page), so it should target likely-next navigations only, while prefetch is cheaper and safer for speculative candidates.",
+      "trapWarning": "The naive answer is 'prerender is just a stronger prefetch'. It is a different mechanism (a live hidden page vs cached bytes). Another trap: assuming a prerendered page behaves identically to a normally-loaded one — restricted APIs are deferred until activation (document.prerendering is true during prerender), so pages must handle the prerendering state or they may misbehave. Candidates who explain the hidden-document lifecycle and activation swap show real understanding."
+    },
+    {
+      "question": "What restrictions apply to pages while they are being prerendered, and how should a page detect that it is in a prerendering state?",
+      "contextIntro": "This probes the safety model — interviewers want to know what a prerendered page cannot do (intrusive side effects) and how authors should code for the hidden state.",
+      "detailedAnswer": "While prerendering, the page runs in a hidden document (document.prerendering === true) and must avoid intrusive behaviors: it cannot show notifications, play audio without a user gesture, prompt for permissions, or interact with the user, because the user hasn't navigated yet. Restricted APIs (e.g. notification.requestPermission, some storage/payment prompts, Web Locks in certain modes) are deferred or fail until activation. Pages that need to adjust behavior can listen for the prerenderingchange event to run activation-time work (e.g. start analytics, resume deferred rendering). The browser also enforces budgets (memory/CPU) and may evict prerendered pages under pressure. Authors must ensure analytics and side effects don't double-fire when a prerendered page activates.",
+      "trapWarning": "The naive answer is 'prerendered pages are just invisible pages, no special rules'. Restricted APIs and the hidden state are real constraints. Another trap: analytics counting prerendered pages as real visits — prerender runs scripts, so analytics fire before activation unless guarded by document.prerendering. Candidates who mention the prerendering state flag and the activation event show real production knowledge."
+    }
+  ]
+}

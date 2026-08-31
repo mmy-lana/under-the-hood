@@ -1,0 +1,68 @@
+{
+  "id": "dom-cssom-render-tree-construction",
+  "title": "HTML Parser, CSSOM Blocking, and RenderTree Construction",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "Chromium rendering pipeline",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "browser",
+    "html-parser",
+    "cssom",
+    "render-tree",
+    "rendering",
+    "critical-path"
+  ],
+  "prerequisites": [
+    "HTML/CSS basics",
+    "Understanding of how browsers load a page"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A construction crew gets the blueprints (HTML) and the decoration list (CSS) for a building. First they read the blueprints line by line, erecting each wall as they go. The decorator reads the decoration list, and whenever a wall is finished they decide what color to finish it. The building cannot be 'shown' to the public until enough walls and colors are done. If the decoration list is huge or arrives slowly, the crew waits before revealing anything — because no one wants to see an unfinished skeleton.",
+    "junior": "When a browser loads a page, it parses HTML into the DOM (a tree of elements) and CSS into the CSSOM (a tree of style rules). Both trees combine into the RenderTree: the visible nodes with their computed styles. A <style> or <link rel=\"stylesheet\"> blocks rendering: the browser must build the CSSOM before painting, so CSS is a render-blocking resource. Scripts without async/defer also block parsing (they pause HTML parsing while executing). The RenderTree contains only visible elements (display:none elements are excluded). This pipeline (DOM + CSSOM → RenderTree → Layout → Paint) is the critical rendering path.",
+    "senior": "Architecturally, HTML parsing is incremental: the parser builds the DOM as tokens arrive, so the browser can start building the render tree before the full document downloads. But CSS is render-blocking: the browser delays first paint until the CSSOM is constructed (or a timeout), because painting without styles would cause a flash of unstyled content. The RenderTree construction walks the DOM and CSSOM, matching elements to rules (style resolution), producing layout objects with computed styles. This is also where display:none, head elements, and comment nodes are filtered out. Scripts block parsing (unless async/defer) because they can modify the DOM via document.write and must run at their position.",
+    "underTheHood": "The HTML parser (in Blink: HTMLDocumentParser + tokenizer) produces tokens → nodes via the tree construction step, with speculative parsing for subsequent fetches. The CSS parser builds the CSSOM (StyleSheetContents + StyleRule nodes) with rule matching via the selector matcher (and StyleEngine with cascade/specificity resolution). The RenderTree (LayoutObject tree) is created by StyleResolver/Element::RecalcStyle walking the DOM; each rendered element gets a computed style and a LayoutObject. Render-blocking is implemented by deferring the first 'BeginFrame'/paint until the pending stylesheets are loaded (the render-blocking count) or a timeout (for crossorigin/async styles). Layout then computes geometry (LayoutTree), followed by paint/composite."
+  },
+  "rosettaStone": {
+    "react": "React apps ship one CSS bundle typically; critical CSS extraction inlines render-blocking styles.",
+    "angular": "Angular adds inline styles per component (Emulated); global stylesheets still block render.",
+    "vue": "Vue SFC styles are bundled; async components defer CSS until needed.",
+    "svelte": "Svelte compiles scoped CSS; the critical path still blocks on the stylesheet load."
+  },
+  "codeComparison": {
+    "title": "Render-blocking stylesheet vs async-loaded critical CSS",
+    "summary": "A synchronous <link> blocks first paint until it loads; loading critical CSS inline and deferring the rest unblocks rendering.",
+    "legacyOrBad": {
+      "label": "Render-blocking stylesheet",
+      "snippet": "<link rel=\"stylesheet\" href=\"/app.css\"> <!-- ❌ OLD: render-blocking — paint waits for this file -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!doctype html>\n<html>\n  <head>\n    <!-- ❌ OLD: This stylesheet is render-blocking. The browser must\n         download and parse app.css to build the CSSOM before it paints\n         anything — a large or slow stylesheet delays first paint\n         entirely, showing a blank white page. -->\n    <link rel=\"stylesheet\" href=\"/app.css\" /> <!-- ❌ OLD -->\n  </head>\n  <body>\n    <h1>Hello</h1>\n    <script src=\"/app.js\"></script> <!-- ❌ OLD: also blocks parsing until it runs -->\n  </body>\n</html>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Inline critical CSS + deferred full CSS",
+      "snippet": "<style>/* critical styles inline */</style>\n<link rel=\"stylesheet\" href=\"/full.css\" media=\"print\" onload=\"this.media='all'\"> <!-- ✅ NEW -->",
+      "fullFile": {
+        "filename": "index.html",
+        "language": "html",
+        "code": "<!doctype html>\n<html>\n  <head>\n    <!-- ✅ NEW: Critical CSS is inlined so the CSSOM builds instantly\n         from the HTML itself — no network wait for first paint. -->\n    <style>\n      h1 { font-size: 2rem; } /* ✅ NEW: above-the-fold styles inline */\n    </style>\n\n    <!-- ✅ NEW: The full stylesheet loads without blocking render:\n         media=print makes it non-blocking initially, then swaps to all\n         once loaded. -->\n    <link\n      rel=\"stylesheet\"\n      href=\"/full.css\"\n      media=\"print\"\n      onload=\"this.media='all'\"\n    />\n    <noscript><link rel=\"stylesheet\" href=\"/full.css\" /></noscript>\n  </head>\n  <body>\n    <h1>Hello</h1>\n    <script src=\"/app.js\" defer></script> <!-- ✅ NEW: defer → doesn't block parsing -->\n  </body>\n</html>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why does CSS block rendering but not HTML parsing, and what exactly is 'render-blocking'?",
+      "contextIntro": "This tests the critical rendering path — interviewers want the precise mechanics of which resource blocks which phase, not the vague 'CSS is slow'.",
+      "detailedAnswer": "CSS is render-blocking because the browser will not paint without a complete-enough CSSOM: painting unstyled content would cause a flash of unstyled text (FOUC) and wasteful repaints. So the browser delays the first paint (and the first layout) until all render-blocking stylesheets are downloaded and parsed (subject to a timeout for some cases). HTML parsing itself continues incrementally while CSS loads — the parser keeps building the DOM — it's the RENDER (paint) that waits. Scripts, by contrast, block HTML parsing: a classic synchronous script must execute at its position because it may call document.write or read the partially-built DOM. This asymmetry (CSS blocks render, scripts block parse) is central to the critical path.",
+      "trapWarning": "The naive answer is 'CSS blocks everything'. It blocks render, not parsing. Another trap: assuming all stylesheets block — media queries that don't match the current device (e.g. media=print) are non-blocking, which is the trick used for async loading. Candidates who distinguish parse-blocking vs render-blocking show real understanding."
+    },
+    {
+      "question": "What goes into the RenderTree, and what is filtered out during its construction?",
+      "contextIntro": "This tests the DOM-to-render-tree mapping — interviewers want to know exactly which nodes become layout objects and which are skipped, and why that matters for performance and behavior.",
+      "detailedAnswer": "The RenderTree contains the visible nodes: every DOM element that has a computed style and participates in rendering becomes a layout object (LayoutObject/RenderObject) in the tree. Filtered out during construction: elements with display: none (removed entirely), <head> and its children, comment nodes, and non-rendered elements like <script>, <meta>, and <title>. visibility: hidden elements ARE in the render tree (they occupy layout space) but are not painted — a key distinction from display: none. The render tree is built by combining the DOM and CSSOM: each element's computed style (after cascade) determines whether it becomes a layout object. This tree is what feeds Layout (geometry) and then Paint.",
+      "trapWarning": "The naive answer is 'the render tree is the DOM'. It is a filtered, style-resolved projection. Another trap: confusing visibility: hidden with display: none — visibility keeps the box (affects layout) while display removes it entirely. Candidates who enumerate the filtered node types and the computed-style requirement show real renderer knowledge."
+    }
+  ]
+}

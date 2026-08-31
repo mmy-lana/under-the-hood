@@ -1,0 +1,68 @@
+{
+  "id": "sveltekit-load-universal-vs-server",
+  "title": "+page.ts (Universal) vs +page.server.ts (Server-Only) Load",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "SvelteKit 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "sveltekit",
+    "load",
+    "universal",
+    "server",
+    "ssr",
+    "data-fetching"
+  ],
+  "prerequisites": [
+    "SvelteKit routing basics",
+    "Understanding of SSR and client-side navigation"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A restaurant has two kitchens. The main kitchen has the full pantry: the secret recipes, the database of ingredients, and the expensive ovens. The prep station sits in the dining room: it can assemble dishes from ingredients it is given, but it can't access the pantry. Some dishes must be made in the main kitchen (they need secret data); others can be assembled at the prep station from what's already on hand. The chef decides which kitchen to use based on what the dish needs and whether guests are being served fresh from the main kitchen or from the pass in the dining room.",
+    "junior": "+page.server.ts runs only on the server (during SSR and when the route is loaded on the server). +page.ts (universal load) runs on both the server and the client. Use +page.server.ts when you need direct DB access, secrets, or server-only APIs. Use +page.ts for data that can be fetched from public APIs on either side, or when you need to run code in the browser. The universal load's returned data is available in the page's $props; the server load's data is merged into the same props. Server load runs before universal load on the server (universal receives the server data as input).",
+    "senior": "Architecturally, the two load types define where data fetching executes. Server load runs in the server runtime (Node/edge) with access to environment secrets, direct database connections, and server-only modules — the returned data is serialized (via devalue) and shipped to the client. Universal load runs on the server during SSR AND on the client during client-side navigation, so it can use browser APIs, but cannot access server secrets. During SSR, the server load runs first, and its data is passed to the universal load as the parent argument (or via the first arg). On client navigation, only universal load runs (server load is not re-run) unless the route is loaded server-side.",
+    "underTheHood": "SvelteKit compiles +page.server.ts into a server-only route module and +page.ts into a shared module. During SSR, the server calls the server load, awaits it, then calls the universal load with { parent } data, serializes the combined result into the HTML (data-sveltekit-fetched and inline script payloads), and hydrates the page with that data on the client. On client-side navigation, the router fetches the server load result (a JSON payload from the server) and runs the universal load locally. The load functions receive a LoadEvent with fetch, params, url, parent, depends, and (server-only) cookies, request, locals. The returned data is serialized with devalue, which supports richer types than JSON (dates, maps, cyclic refs)."
+  },
+  "rosettaStone": {
+    "react": "Next.js RSC server components + client data fetching map to server load vs universal load.",
+    "angular": "Angular SSR resolvers (ResolveFn) run server-side; interceptor-based client fetching is the split.",
+    "vue": "Nuxt's useAsyncData with ssr: false vs server routes mirrors the distinction.",
+    "svelte": "SvelteKit +page.server.ts vs +page.ts — the current topic."
+  },
+  "codeComparison": {
+    "title": "Fetching in a component vs server load",
+    "summary": "Fetching inside a component couples data logic to the UI and lacks SSR serialization; server load runs before render on the server and ships the data with the page.",
+    "legacyOrBad": {
+      "label": "Fetch in onMount (client-only)",
+      "snippet": "onMount(async () => {\n  data = await fetch('/api/users').then(r => r.json()); // ❌ OLD: client-only\n});",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { onMount } from 'svelte';\n  let data = $state([]); // ❌ OLD: empty during SSR\n\n  // ❌ OLD: Fetching in onMount means the data is NEVER on the server:\n  // SSR renders an empty/loading state, the page flashes, and SEO\n  // crawlers see no content. Client-side navigation re-fetches every\n  // time the component mounts.\n  onMount(async () => {\n    const res = await fetch('/api/users');\n    data = await res.json(); // ❌ OLD: client-only round trip\n  });\n</script>\n\n{#each data as u}<p>{u.name}</p>{/each}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Server load",
+      "snippet": "export const load = async ({ fetch }) => {\n  const res = await fetch('/api/users'); // ✅ NEW: runs on the server during SSR\n  return { users: await res.json() };\n};",
+      "fullFile": {
+        "filename": "+page.server.ts",
+        "language": "typescript",
+        "code": "// ✅ NEW: The server load runs during SSR (and server-side navigation),\n// fetching data before the page renders. The result is serialized into\n// the HTML and hydrated on the client — no flash, SEO-friendly.\nexport const load = async ({ fetch }) => {\n  const res = await fetch('/api/users'); // ✅ NEW: server-side fetch\n  const users = await res.json();\n  return { users }; // ✅ NEW: shipped to the page via devalue\n};\n\n// +page.svelte:\n// <script>\n//   let { data } = $props(); // ✅ NEW: { users } arrives pre-fetched\n// </script>\n// {#each data.users as u}<p>{u.name}</p>{/each}\n\n// Server-only data (DB, secrets) lives here; universal +page.ts would\n// use the same shape for public API data that also runs client-side."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "When should you use +page.server.ts instead of +page.ts, and what can server load access that universal load cannot?",
+      "contextIntro": "This tests the data-fetching architecture decision — interviewers want the security and capability boundary, not just 'server runs first'.",
+      "detailedAnswer": "Use +page.server.ts when the load needs server-only capabilities: direct database access, private environment variables/secrets, cookies (reading AND writing), request headers, and server-side mutation logic. These must not be exposed to the client. Universal +page.ts runs in both environments, so it can use browser APIs and run during client-side navigation without a server round trip, but it cannot access secrets or read/write cookies. The guidance: default to server load for data that originates server-side (DB, authenticated data, CMS), and use universal load for public API data, browser-dependent computation, or when you need the same load to run during client navigation. Both serialize their results to the page; server data is merged and available to the universal load via the parent argument.",
+      "trapWarning": "The naive answer is 'use universal load to be faster'. Universal load re-runs on every client navigation and cannot access secrets — putting sensitive logic there leaks it. Another trap: assuming server load runs on every client-side navigation — it does not; only universal load runs client-side, so data needing re-fetch must be handled by universal load or invalidation. Candidates who map capabilities to the two files show real architectural understanding."
+    },
+    {
+      "question": "How does the serialization work between server and client, and what types survive the round trip?",
+      "contextIntro": "This probes the data-transfer mechanics — interviewers want to know how SvelteKit ships load data (not plain JSON) and what constraints that places on returned values.",
+      "detailedAnswer": "SvelteKit serializes load data with devalue, a serializer that supports more than JSON: Date, Map, Set, RegExp, BigInt, undefined, NaN, cyclic references, and repeated references. This is why load functions can return richer structures than a JSON API would allow. The serialized payload is inlined into the SSR HTML (in a script tag) and rehydrated on the client; during client-side navigation, the server returns the same payload JSON for server loads, and universal load runs locally. The constraint is the opposite of JSON: functions, promises, and class instances (with methods) cannot be serialized — return plain data and plain objects. Also, a top-level promise in the return triggers SvelteKit's streaming (await it or accept the partial-hydration streaming behavior).",
+      "trapWarning": "The naive answer is 'load data is sent as JSON'. It uses devalue, which handles richer types. Another trap: returning class instances or functions from load — they break serialization and produce errors or lose identity. Candidates who mention devalue and the non-serializable types show real under-the-hood knowledge."
+    }
+  ]
+}

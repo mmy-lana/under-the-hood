@@ -1,0 +1,67 @@
+{
+  "id": "cross-fade-and-flip-animations",
+  "title": "crossfade() and FLIP Technique DOM Layout Animations",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (svelte/transition, svelte/animate)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "crossfade",
+    "flip",
+    "animation",
+    "layout",
+    "transitions"
+  ],
+  "prerequisites": [
+    "Svelte transitions and {#each} blocks",
+    "Understanding of layout measurement and DOM order"
+  ],
+  "progressiveExplaining": {
+    "eli5": "In a magic show, two performers swap places on stage. The audience blinks — one performer fades out on the left while a second fades in on the right, and it looks like they glided across. For the second trick (FLIP), when the whole line of performers shifts because one left the stage, each performer instantly remembers where they were, then slides smoothly to their new spot. No one teleports; the stage manager measures the before and after positions and lets each performer glide the gap.",
+    "junior": "crossfade() creates paired transitions for elements moving between lists: const [send, receive] = crossfade({ duration: 400 });. Apply send to the source element's out: transition and receive to the destination's in: transition; Svelte measures both positions and animates one fading out while the other fades in at the matching spot. The FLIP technique animates reordering: {#each items as item (item.id)}<div animate:flip>{item}</div>{/each} — when items reorder, elements smoothly slide to their new positions. The animate: directive only fires when the element's position changes due to reordering in a keyed each block.",
+    "senior": "Architecturally, crossfade works by measuring the source and destination elements' bounding boxes when the transition starts, then generating a transform that moves the fading element toward the other's position while crossfading opacity. FLIP (First-Last-Invert-Play) is the technique: on reorder, the engine records each element's first position, measures the last position after the layout change, computes the delta, applies an inverted transform (so the element appears unmoved), then animates the transform to zero — producing a smooth slide from old to new position with no layout reflow during the animation. The keyed {#each} (item.id) is required so Svelte can track identity across reorders.",
+    "underTheHood": "crossfade() returns two transition functions sharing a module-level map of sent/received elements keyed by a generated id; the send transition captures the element's rect, stores it, and on the receive side the engine compares rects and builds a translate/scale transform (plus opacity) to glide between them, with the fallback of a simple fade when no partner is found. The animate:flip directive integrates with the scheduler: after the each block reorders and layout settles, it measures old vs new rects per keyed item, computes the inverse delta, applies a transform, and animates to identity via the generated CSS keyframes. FLIP avoids forced synchronous layout in the common path because measurement happens after the layout pass that the reorder caused."
+  },
+  "rosettaStone": {
+    "react": "Framer Motion's layoutId and AnimatePresence approximate crossfade/FLIP.",
+    "angular": "Angular animations have no built-in FLIP; libraries provide it.",
+    "vue": "Vue's <TransitionGroup> with FLIP (move-class) is the direct analogue."
+  },
+  "codeComparison": {
+    "title": "Keyed reorder without animation vs animate:flip",
+    "summary": "Reordering a keyed list snaps items instantly; the FLIP directive slides each item from its old to new position.",
+    "legacyOrBad": {
+      "label": "Keyed list without FLIP",
+      "snippet": "{#each items as item (item.id)}\n  <div>{item}</div> <!-- ❌ OLD: reorder snaps instantly -->\n{/each}",
+      "fullFile": {
+        "filename": "List.svelte",
+        "language": "svelte",
+        "code": "<script>\n  let items = $state(['A', 'B', 'C', 'D']);\n  function shuffle() {\n    items = [...items].reverse(); // ❌ OLD: reorders the array\n  }\n</script>\n\n<!-- ❌ OLD: The keyed each block handles identity (so state stays with\n     each item), but reordering is a hard snap: items jump instantly to\n     their new positions with no motion feedback. -->\n{#each items as item (item.id)}\n  <div>{item}</div> <!-- ❌ OLD: no reorder animation -->\n{/each}\n\n<button onclick={shuffle}>Shuffle</button>"
+      }
+    },
+    "modernOrGood": {
+      "label": "animate:flip FLIP animation",
+      "snippet": "{#each items as item (item.id)}\n  <div animate:flip>{{item}}</div> <!-- ✅ NEW: slides to new position -->\n{/each}",
+      "fullFile": {
+        "filename": "List.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { flip } from 'svelte/animate';\n  let items = $state(['A', 'B', 'C', 'D']);\n  function shuffle() {\n    items = [...items].reverse(); // ✅ NEW: same reorder\n  }\n</script>\n\n<!-- ✅ NEW: animate:flip records each item's old position, measures the\n     new position after the reorder, and slides the element from old to\n     new (FLIP: First, Last, Invert, Play). -->\n{#each items as item (item.id)}\n  <div animate:flip>{item}</div> <!-- ✅ NEW: smooth reorder motion -->\n{/each}\n\n<button onclick={shuffle}>Shuffle</button>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What does FLIP stand for and how does the technique avoid layout jank during reorder animations?",
+      "contextIntro": "This tests the core animation technique — interviewers want the First/Last/Invert/Play mechanics and why it is performant (transform-only animation), not just that Svelte has an animate: directive.",
+      "detailedAnswer": "FLIP stands for First, Last, Invert, Play. First: record each element's starting position. Last: let the layout change happen and record the final positions. Invert: apply a transform equal to the negative delta (old - new) so each element appears exactly where it was, even though the DOM/layout has already moved it. Play: animate the transform back to zero, so the element visibly slides from its old spot to its new one. Because the animation is a pure transform (translate), it runs on the compositor without triggering layout or paint per frame — avoiding jank. The keyed each block is what lets Svelte track identity so FLIP can measure the same element's before/after rects.",
+      "trapWarning": "The naive answer is 'FLIP animates between old and new layout positions directly'. The inverted-transform trick is the essence: the element is ALREADY at its new layout position, and the animation is the transform unwinding to zero. Another trap: thinking FLIP works without keyed each blocks — identity tracking is required to pair before/after rects. Candidates who name the four steps and the transform-only payoff show real understanding."
+    },
+    {
+      "question": "How does crossfade() synchronize the outgoing and incoming elements, and what happens when there's no matching partner?",
+      "contextIntro": "This probes the paired-transition coordination — interviewers want to know how send/receive find each other across lists and the graceful fallback when a move isn't a clean swap.",
+      "detailedAnswer": "crossfade() returns two transition functions (send and receive) that share an internal registry. When an element with the send transition starts its outro, it records its bounding rect in the registry. When an element with the receive transition starts its intro, it looks up a pending send partner (matched by a shared key when you pass one, or by order/heuristic). If a partner exists, the engine computes the transform between the outgoing and incoming rects and animates both — the sender slides/fades toward the receiver's position while the receiver fades in there, creating the illusion of one element moving across lists. If no partner exists (e.g. an element simply appears), the receive transition falls back to a plain fade/scale intro. The fallback keeps the API safe for non-swap cases.",
+      "trapWarning": "The naive answer is 'crossfade just fades both elements'. The position-matching transform is what makes it look like an element travels between lists — without a matched partner it degrades to a plain fade. Another trap: assuming crossfade works without keyed each blocks or without the send/receive pairing correctly — misordered pairs produce jittery double-fades. Candidates who describe the registry and the transform computation show real depth."
+    }
+  ]
+}

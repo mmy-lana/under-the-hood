@@ -1,0 +1,69 @@
+{
+  "id": "layout-reflow-vs-repaint",
+  "title": "Layout Reflow vs Repaint: Forced Synchronous Layouts & Geometry Reads",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "Chromium/WebKit layout & paint model",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "browser",
+    "reflow",
+    "repaint",
+    "layout",
+    "forced-layout",
+    "performance",
+    "geometry"
+  ],
+  "prerequisites": [
+    "CSS layout and the box model",
+    "Understanding of the rendering pipeline"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A warehouse has a floor plan that says exactly where every box goes. When you move one box, the manager must re-draw the floor plan (reflow) and then re-color the labels on the floor (repaint). Re-drawing the plan is expensive because it can move other boxes. Now imagine someone asks, 'where is box X right now?' while the manager is mid-move — the manager is forced to finish re-drawing the plan immediately, even if he was going to batch several moves. That's an on-the-spot re-planning: an innocent question that makes the expensive re-drawing happen instantly.",
+    "junior": "Reflow (layout) recomputes the geometry (position/size) of elements; repaint redraws the pixels. Reading layout properties like offsetWidth, getBoundingClientRect(), offsetTop forces a synchronous reflow if the layout is dirty — the browser cannot answer without computing layout first. Writing styles (changing width/height) marks layout dirty but batches the actual reflow until needed. The classic perf bug is a read-write-read-write loop (layout thrashing): each read forces a reflow, making the loop O(N) reflows. Fix: batch reads together and writes together, or use modern APIs (IntersectionObserver, ResizeObserver).",
+    "senior": "Architecturally, the browser maintains a dirty-layout flag: style/layout invalidations mark the document (or affected subtrees) dirty, and the actual layout pass runs lazily before paint. Reading geometry properties (offsetWidth, clientTop, getBoundingClientRect, scrollHeight, etc.) forces the layout to run synchronously if dirty, because the read must return current values. This 'forced synchronous layout' (FSL) breaks the browser's batching and can cascade: in a loop, each iteration reads then writes, so the write dirties and the read flushes — reflowing the whole tree per iteration. Layout is also affected by style recalculation scope (dirty style → layout), and both are global-ish in classic engines, which is why CSS containment and content-visibility were introduced to scope invalidation.",
+    "underTheHood": "In Blink, a dirty bit (needsLayout/needsStyleRecalc) marks subtrees. The layout pass is invoked by UpdateLayout() which runs when the dirty bit is set before paint or on demand. Reading a geometry property triggers a synchronous layout via the layout tree's UpdateStyleAndLayoutIfNeeded() — the engine walks the dirty subtree, recomputes boxes (BlockLayoutAlgorithm, floats, etc.), and then the read returns. FSL is why reading offsetTop in a loop is O(N^2)-ish: each read flushes the full pending layout. Repaint is separate: after layout, Paint records draw commands (display lists) into layers; paint invalidation only repaints the dirty regions (or the whole layer if not optimized). Writing a style only sets the dirty bit; the cost materializes at the next flush — so reading-then-writing interleaving is the worst pattern."
+  },
+  "rosettaStone": {
+    "react": "React re-renders can trigger FSL when effects measure the DOM; useLayoutEffect reads pre-paint by design.",
+    "angular": "Angular change detection + DOM reads in lifecycle hooks can force layout; CDK uses ResizeObserver to avoid it.",
+    "vue": "Vue watchers reading layout after DOM updates force reflow; batching reads avoids thrash.",
+    "svelte": "Svelte $effect timing around DOM writes/reads determines whether reads force synchronous layout."
+  },
+  "codeComparison": {
+    "title": "Layout-thrashing read/write loop vs batched measurements",
+    "summary": "Interleaving geometry reads and style writes forces a synchronous reflow per iteration; batching reads and writes collapses the work into one or two flushes.",
+    "legacyOrBad": {
+      "label": "Read/write thrashing loop",
+      "snippet": "for (const el of els) {\n  const w = el.offsetWidth; // ❌ OLD: forces layout (dirty from previous write)\n  el.style.width = (w + 10) + 'px'; // write dirties layout again\n}",
+      "fullFile": {
+        "filename": "thrash.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Layout thrashing. Each iteration: the write to style.width\n// dirties layout, then offsetWidth forces a synchronous reflow to\n// answer the read. With N elements, that's N full (or subtree-wide)\n// layouts — the classic jank source in resize/measure loops.\nconst els = document.querySelectorAll('.item');\n\nfor (const el of els) {\n  // ❌ OLD: read — forces layout if dirty from the previous write\n  const w = el.offsetWidth;\n  el.style.width = `${w + 10}px`; // ❌ OLD: write — dirties layout again\n}\n\n// Each iteration reflows; total cost scales with N * layout-cost."
+      }
+    },
+    "modernOrGood": {
+      "label": "Batched read-then-write",
+      "snippet": "const widths = [...els].map(el => el.offsetWidth); // ✅ NEW: all reads together\nels.forEach((el, i) => { el.style.width = (widths[i] + 10) + 'px'; }); // ✅ NEW: all writes",
+      "fullFile": {
+        "filename": "batch.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Separate reads and writes. All geometry reads happen first\n// (one layout flush, because the layout was clean), then all writes\n// happen together (one dirty pass flushed later before paint).\nconst els = document.querySelectorAll('.item');\n\n// ✅ NEW: Phase 1 — read everything (single synchronous layout)\nconst widths = [...els].map((el) => el.offsetWidth);\n\n// ✅ NEW: Phase 2 — write everything (layout dirty once, flushed once)\nels.forEach((el, i) => {\n  el.style.width = `${widths[i] + 10}px`;\n});\n\n// Total: one forced layout for the reads, one batched layout for the\n// writes — versus N forced layouts in the thrashing version."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly is a forced synchronous layout, and which properties trigger it?",
+      "contextIntro": "This is the core performance question about layout — interviewers want the dirty-flag mechanism and the concrete list of properties that force reflow, not just 'reads are slow'.",
+      "detailedAnswer": "A forced synchronous layout (FSL) happens when you read a geometry-dependent property while the layout is dirty: the browser cannot return a current value without first running the layout pass, so it flushes synchronously, regardless of any batching. Triggering properties include offsetTop/Left/Width/Height, clientTop/Left/Width/Height, getBoundingClientRect(), getComputedStyle() (for some properties), scrollTop/Left/Width/Height, and range/selection geometry. In a loop that alternates writes and these reads, every iteration forces a reflow — the worst pattern. Avoiding FSL means separating reads from writes (batch them), caching measurements, and using APIs that report without forcing layout synchronously (IntersectionObserver, ResizeObserver, or rAF-timed measurement).",
+      "trapWarning": "The naive answer is 'layout happens once when the page loads'. Layout is lazy and flushes on reads or before paint. Another trap: thinking getComputedStyle is always safe — reading layout-dependent properties from it also forces layout. Candidates who list the offending properties and the dirty-flag flush mechanism show real performance understanding."
+    },
+    {
+      "question": "What is the difference between reflow and repaint, and why does changing a color cost less than changing a width?",
+      "contextIntro": "This tests the pipeline phases — interviewers want the geometry-vs-pixels distinction and the cascade of work each change triggers, which determines optimization strategy.",
+      "detailedAnswer": "Reflow (layout) recomputes the geometry of elements: position, size, and the flow of descendants and (potentially) ancestors — a change to width or position can cascade through the layout tree. Repaint redraws pixels without recomputing geometry: changing color, background, or visibility only invalidates the paint of that element's layer. Reflow almost always triggers a repaint afterward, so it is strictly more expensive. A pure color change skips layout entirely (if no geometry is affected) and only repaints. Transforms and opacity are even cheaper: they are composited on the GPU without layout or repaint (compositor-only). The optimization hierarchy: compositor-only (transform/opacity) < repaint (color) < reflow (geometry).",
+      "trapWarning": "The naive answer is 'repaint is always cheap'. Repainting a large layer is not free, and layout-triggered repaints compound the cost. Another trap: assuming transform causes reflow — it does not (it's composited); animating transform/opacity is the standard way to avoid layout/paint during animations. Candidates who place each property change on the layout→paint→composite scale show real depth."
+    }
+  ]
+}

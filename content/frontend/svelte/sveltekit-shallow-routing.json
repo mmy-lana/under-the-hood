@@ -1,0 +1,68 @@
+{
+  "id": "sveltekit-shallow-routing",
+  "title": "SvelteKit Shallow Routing: pushState & Modal State Sync",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "SvelteKit 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "sveltekit",
+    "shallow-routing",
+    "pushstate",
+    "modals",
+    "url",
+    "navigation"
+  ],
+  "prerequisites": [
+    "SvelteKit navigation basics",
+    "Understanding of the History API"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A hotel uses a guest registry (the URL) to record which room a visitor is in. Normally, changing the registry entry means actually moving the guest to a different room (loading new page data). Shallow routing is writing a note in the registry WITHOUT moving anyone: the entry says 'visitor is viewing the photo', but no new room was prepared — the same page just records the state. When the visitor closes the photo, the note is erased and the registry goes back to the original entry, without anyone being relocated.",
+    "junior": "Shallow routing updates the URL without running load functions or triggering a navigation. In SvelteKit: import { pushState } from '$app/navigation'; pushState(url, state);. This changes the address bar and adds a history entry, but does NOT call load, so no data is re-fetched and no component re-renders from the router. Use it for modal/drawer state that you want reflected in the URL (shareable, back-button-closable) without a real page change. To close: pushState back to the original URL, or use the browser's back button (the history entry exists). Read the state via $page.url or $page.state.",
+    "senior": "Architecturally, shallow routing separates URL state from data loading: pushState writes a new entry into the history stack and updates $page (url and state) without invoking the navigation pipeline (no load, no component re-creation). This is ideal for ephemeral UI state that must be URL-representable — modals, filters, selected tabs — where a full navigation would be wasteful and disruptive. The state argument (pushState(url, { modal: 'photo' })) stores arbitrary serializable data in the history entry, retrievable from $page.state. Combining shallow routes with modals gives back-button-close behavior: the previous history entry is the closed state.",
+    "underTheHood": "pushState in SvelteKit wraps the browser's history.pushState: it constructs the new URL, calls history.pushState(state, '', url), and notifies the router to update the reactive $page store (url, params, state) WITHOUT running the load pipeline or reconciling the component tree. The router distinguishes this from a normal navigation by the absence of a load trigger. The History API itself stores the state object on the entry; SvelteKit reads it back into $page.state on popstate/back navigation. Because no load runs, the page's data stays intact — only the URL and state change. This makes the URL a first-class container for ephemeral UI state with zero data-fetching cost."
+  },
+  "rosettaStone": {
+    "react": "React Router's history.pushState and URL-search-param state patterns mirror shallow routing.",
+    "angular": "Angular's Location.go / Router without navigation events approximates it.",
+    "vue": "Vue Router's router.replace with same-route params is the analogue.",
+    "svelte": "SvelteKit pushState — the current topic."
+  },
+  "codeComparison": {
+    "title": "Full navigation for a modal vs shallow routing",
+    "summary": "Navigating to a modal URL re-runs load and recreates the page; shallow routing updates only the URL/state, keeping the page and data intact.",
+    "legacyOrBad": {
+      "label": "Navigate to a real route for the modal",
+      "snippet": "await goto('/photos/1'); // ❌ OLD: full navigation — load runs, page re-renders",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { goto } from '$app/navigation';\n  let selected = $state(null);\n\n  async function openPhoto(id) {\n    // ❌ OLD: A real navigation. This runs the target route's load\n    // functions, fetches data, and swaps the whole page component —\n    // heavyweight for something that should be an overlay on top of\n    // the current list.\n    await goto(`/photos/${id}`); // ❌ OLD: full route change\n  }\n</script>\n\n<!-- The list page unmounts, the photo route mounts; back navigation\n     re-runs the list load and loses scroll position. -->"
+      }
+    },
+    "modernOrGood": {
+      "label": "Shallow routing for the modal",
+      "snippet": "pushState(new URL('/photos/1', location.href), { modal: 'photo' }); // ✅ NEW",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { pushState } from '$app/navigation';\n  import { page } from '$app/state';\n\n  let selected = $state(null);\n\n  function openPhoto(id) {\n    // ✅ NEW: update the URL + history WITHOUT loading anything.\n    // The list stays mounted; the modal opens on top.\n    selected = id;\n    pushState(new URL(`/photos/${id}`, location.href), { modal: id }); // ✅ NEW\n  }\n\n  function closePhoto() {\n    selected = null;\n    pushState(new URL('/photos', location.href)); // ✅ NEW: restore the URL\n  }\n\n  // $page.state.modal tells you which photo the URL says is open, and\n  // the browser back button returns to the previous URL state."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly does pushState NOT do that goto does, and why does that matter for modals?",
+      "contextIntro": "This tests the navigation pipeline distinction — interviewers want you to enumerate what a full navigation triggers (load, component swap) and why shallow routing avoids each for ephemeral UI state.",
+      "detailedAnswer": "goto (full navigation) runs the navigation pipeline: it resolves the new route, calls its load functions (fetching data), potentially invokes guards, swaps the component tree, and updates the document. pushState bypasses all of that: it only calls history.pushState, updates the $page url/state, and leaves the current component and its data untouched. For a modal, that is exactly right — the overlay is UI state layered on the current page, not a new page. Full navigation would unmount the list, re-fetch data on return, and lose scroll position. Shallow routing also makes the modal's state part of the URL: refresh restores the URL (and you can re-open the modal from it), and the back button naturally closes it because the previous history entry is the closed state.",
+      "trapWarning": "The naive answer is 'pushState is just a faster goto'. It does not run load at all — that's a semantic difference, not a speed one. Another trap: expecting the new URL to reflect server state or trigger data updates — it won't, and code that relies on load running will silently keep stale data. Candidates who enumerate the skipped pipeline steps show real understanding."
+    },
+    {
+      "question": "How do you restore modal state on refresh with shallow routing, and what role does $page.state play?",
+      "contextIntro": "This probes the state-recovery pattern — interviewers want to know how the URL becomes the source of truth for ephemeral UI after a page reload, which is the point of URL-syncing modals.",
+      "detailedAnswer": "On refresh, the URL is the only thing that survives — the in-memory modal state is gone. To restore, your page reads $page.url (and $page.state) during initialization: if the URL path/query indicates a modal (e.g. /photos/1), re-open the modal and load its content. The state argument passed to pushState is stored on the history entry and available via $page.state after back/forward navigation, but on a hard refresh the state object is NOT restored (only the URL is) — so recovery must be driven primarily from the URL, with $page.state as supplementary ephemeral data. The robust pattern: derive modal-openness from the URL, not from component state alone, so refresh, share, and back-button all behave consistently.",
+      "trapWarning": "The naive answer is '$page.state survives a refresh'. History state does not survive a full page reload — only the URL does. Another trap: storing non-serializable data in the state argument — the History API requires structured-cloneable values. Candidates who center recovery on the URL and treat state as ephemeral show real production experience."
+    }
+  ]
+}

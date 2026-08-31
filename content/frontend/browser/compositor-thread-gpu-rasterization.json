@@ -1,0 +1,68 @@
+{
+  "id": "compositor-thread-gpu-rasterization",
+  "title": "Main Thread vs Compositor Thread, GPU Tiling & Paint Worklets",
+  "category": "frontend",
+  "subcategory": "browser",
+  "versionContext": "Chromium rendering architecture",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "browser",
+    "compositor",
+    "gpu",
+    "rasterization",
+    "tiling",
+    "threads"
+  ],
+  "prerequisites": [
+    "The rendering pipeline (layout, paint)",
+    "Understanding of browser threads and GPU"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A theater has two crews. The main crew writes the script, plans the scenes, and paints the backdrops. The stage crew simply slides the finished backdrops around on tracks — moving a backdrop sideways or fading it doesn't require the main crew to redo anything. The stage crew works on its own schedule (a separate crew that can work at the same time), so even if the main crew is busy writing a new scene, the backdrops keep sliding smoothly. That's why moving things with smooth slides feels fluid while resizing (which needs the main crew) can stutter.",
+    "junior": "The browser uses multiple threads: the main thread (JS, style, layout, paint recording) and the compositor thread (GPU-friendly layer placement). Animating transform or opacity is handled by the compositor: it just repositions existing layer textures, so it runs on the compositor thread and stays smooth even when the main thread is busy. Animating width, height, or top forces the main thread to re-run layout and paint, then the compositor re-uploads — jank risk. Rasterization converts paint commands into pixels (often on the GPU via tiles). Paint Worklets (CSS Paint API) let you generate images procedurally for properties like background-image.",
+    "senior": "Architecturally, the rendering pipeline splits into: main thread (style → layout → paint, producing display lists and layer info) and compositor thread (tiling, rasterization scheduling, and compositing layer quads). Layers are GPU textures; the compositor draws them with a draw quad per layer, transformed by the layer tree. Animating transform/opacity only changes the compositor's transform/opacity values (compositor-driven animation), avoiding main-thread work entirely. Rasterization is often tiled: each layer is split into tiles, rasterized (GPU or CPU) and uploaded as textures. This is why will-change/transform promote elements to their own layers. Paint Worklets run in the main thread's paint phase (procedurally generating paint) but can be cached as tiles.",
+    "underTheHood": "In Blink, the main thread produces a property tree (transform, clip, effect nodes) + layer list; the compositor (viz/cc) consumes it. Composited layers are managed by cc::LayerTreeHost; tiles are rasterized via Skia (GPU-backed) into textures and drawn by the GPU process. Compositor-driven animations are promoted when the browser recognizes transform/opacity animations and creates a cc::Animation running on the compositor thread, sampling the animation timeline each frame without main-thread involvement. Main-thread property changes (layout) mark layers dirty, re-record paint (display list), re-raster affected tiles, and re-upload — the expensive path. The Paint Worklet (CSS.paintWorklet.addModule) registers a paint function invoked during paint recording to generate the backing image for a property (e.g. custom background), output cached per tile."
+  },
+  "rosettaStone": {
+    "react": "React's concurrent rendering keeps JS off the critical path but cannot help compositor-vs-main work; transform animations still win.",
+    "angular": "Angular animations that use transform are compositor-friendly; those animating layout properties are not.",
+    "vue": "Vue <Transition> with transform-based classes composits smoothly; layout-based transitions jank.",
+    "svelte": "Svelte transitions generating transform keyframes run on the compositor; geometry animations don't."
+  },
+  "codeComparison": {
+    "title": "Animating layout properties vs compositor-only transform",
+    "summary": "Animating left/top/width forces main-thread layout+paint every frame; animating transform runs entirely on the compositor thread.",
+    "legacyOrBad": {
+      "label": "Animating layout properties",
+      "snippet": "el.animate([{ left: '0px' }, { left: '200px' }], { duration: 1000 }); // ❌ OLD: layout per frame",
+      "fullFile": {
+        "filename": "animate-bad.js",
+        "language": "javascript",
+        "code": "// ❌ OLD: Animating `left` changes geometry, so every animation frame\n// runs the full main-thread pipeline: style recalc, layout (the\n// element's position moves, potentially reflowing others), paint\n// recording, and re-raster — all on the main thread, competing with\n// your JS. If the main thread is busy, the animation stutters.\nconst el = document.querySelector('.box');\n\nel.animate([{ left: '0px' }, { left: '200px' }], {\n  duration: 1000,\n}); // ❌ OLD: layout-triggering animation\n\n// Also: the element likely isn't on its own composited layer, so every\n// frame re-rasterizes the affected region."
+      }
+    },
+    "modernOrGood": {
+      "label": "Compositor-only transform animation",
+      "snippet": "el.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(200px)' }], { duration: 1000 }); // ✅ NEW",
+      "fullFile": {
+        "filename": "animate-good.js",
+        "language": "javascript",
+        "code": "// ✅ NEW: Animating transform (translateX) is compositor-driven: the\n// element is promoted to a layer and the compositor thread updates its\n// transform per frame. No layout, no paint, no main-thread work — the\n// animation stays smooth even when the main thread is busy.\nconst el = document.querySelector('.box');\n\nel.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(200px)' }], {\n  duration: 1000,\n}); // ✅ NEW: compositor-only animation\n\n// To guarantee layer promotion up front, use will-change: transform\n// (or leave the animation to trigger auto-promotion). The GPU just\n// repositions an existing texture every frame."
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why do transform/opacity animations run on the compositor thread, and what makes them smooth when the main thread is busy?",
+      "contextIntro": "This tests the compositing architecture — interviewers want the layer/texture model and the thread separation, not just 'transforms are fast'.",
+      "detailedAnswer": "When an element is composited (promoted to its own layer), its rendering is captured as a GPU texture. The compositor thread owns the layer tree and draws each layer as a quad with a transform and opacity. Animating transform or opacity only changes those compositor-side values (via a cc::Animation sampled on the compositor thread), so no main-thread style/layout/paint runs — the existing texture is just repositioned/blended each frame. This is why these animations stay smooth even when the main thread is blocked: they don't need it. Animating any layout-affecting property (width, height, top, left) invalidates the layer's content, forcing main-thread layout + paint + re-raster + texture upload, which is both slow and main-thread-bound. Layer promotion has memory cost (a full texture per layer), which is why overusing will-change can hurt.",
+      "trapWarning": "The naive answer is 'transforms are GPU-accelerated so they're always free'. They need the element to be on a composited layer, and the texture memory is a real cost. Another trap: thinking animating width is 'GPU-accelerated too' because some engines do partial optimization — geometry animations still engage layout, and layout-invalidating animations can't be compositor-driven. Candidates who mention texture upload and layer promotion show real understanding."
+    },
+    {
+      "question": "What is tiling and why does the compositor rasterize in tiles rather than whole layers?",
+      "contextIntro": "This probes the rasterization strategy — interviewers want the memory/time trade-off behind tiling and how it relates to viewport visibility and scrolling.",
+      "detailedAnswer": "A composited layer can be enormous (a long scrolling page), so rasterizing it as one texture is impractical — memory-heavy and slow. Instead, the compositor splits layers into tiles (e.g. 256×256 or 512×512) and rasterizes tiles independently, prioritizing visible tiles and tiles near the viewport. This enables: fast initial paint (only visible tiles rasterize), progressive rendering while scrolling (new tiles rasterize as they enter the viewport), and incremental invalidation (a content change re-rasterizes only the affected tile, not the whole layer). Tiles are rasterized on the GPU (or CPU workers as fallback) and uploaded as textures; the compositor draws only the tiles intersecting the viewport. Rasterization priority and budget management are core compositor responsibilities for smooth scrolling.",
+      "trapWarning": "The naive answer is 'the whole layer is one GPU texture'. Large layers are tiled. Another trap: assuming repainting is per-pixel cheap — invalidating a tile re-rasterizes that tile fully, and invalidating many tiles (e.g. a layer-wide paint change) is costly. Candidates who explain visible-tile prioritization and incremental invalidation show real compositor knowledge."
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "sveltekit-page-state-snapshots",
+  "title": "SvelteKit snapshot: Client-Side Scroll & Input Restoration",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "SvelteKit 2.x",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "sveltekit",
+    "snapshot",
+    "restore",
+    "scroll",
+    "form-state",
+    "navigation"
+  ],
+  "prerequisites": [
+    "SvelteKit navigation and page lifecycle",
+    "Understanding of SPA back-navigation behavior"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A bookmark in a book remembers exactly where you stopped reading. When you leave the book on the shelf (navigate away) and pick it up again later (come back), the bookmark lets you return to the same page — and even to the same line you were reading. SvelteKit snapshots are bookmarks for your page's state: they save the part of the page you care about (like a search box's text or a scroll position) and restore it when you come back, as long as you're still holding the same book.",
+    "junior": "SvelteKit's snapshot feature preserves page state across navigations. In a component (usually +page.svelte or +layout.svelte), export a snapshot object: export const snapshot = { capture: () => ({ query: searchTerm }), restore: (value) => { searchTerm = value; } };. When you navigate away and then back (browser back/forward), the captured value is restored. This is ideal for search inputs, filter states, and scroll positions that should survive back-navigation. SvelteKit also preserves scroll position automatically for simple cases; snapshots extend this to arbitrary component state. The captured value must be JSON-serializable (no functions, no DOM nodes).",
+    "senior": "Architecturally, snapshots are SvelteKit's answer to the SPA back-navigation state-loss problem. The capture function runs when the user navigates away from a page that has a snapshot export; the returned value is stored in the history state (in the bfcache-like navigation entry). When the user returns via back/forward, restore is called with the saved value, letting the component rebuild its UI state without re-running load or re-fetching. This is scoped per component instance and per history entry. The system coexists with scroll restoration: SvelteKit tracks scroll positions in history state too, restoring them on return. Snapshots handle the app-level state (filters, form drafts) that the browser cannot infer.",
+    "underTheHood": "When navigating away, SvelteKit iterates the current page's component tree, collects each component's snapshot.capture() result, and stores the values in the history state associated with the outgoing entry (via history.pushState's state). The values are serialized as part of the navigation state (structured-cloneable). On back/forward navigation, SvelteKit re-hydrates the page and calls snapshot.restore(value) on the matching components with the stored values, before or during the page's mount, so the UI can rebuild. Because the state lives in the history entry, it survives back/forward within the same tab but not a hard refresh. The framework also restores scroll positions from the same history state."
+  },
+  "rosettaStone": {
+    "react": "React Router's <ScrollRestoration> and component state keyed by location cover similar ground.",
+    "angular": "Angular's Router scroll restoration + route state is the analogue.",
+    "vue": "Vue Router's scrollBehavior and keep-alive state play the same role.",
+    "svelte": "SvelteKit snapshots — the current topic."
+  },
+  "codeComparison": {
+    "title": "Lost form state on back vs snapshot restoration",
+    "summary": "Without snapshots, navigating away and back clears the search input; the snapshot capture/restore pair rebuilds it exactly.",
+    "legacyOrBad": {
+      "label": "State lost on back-navigation",
+      "snippet": "let query = $state(''); // ❌ OLD: navigating away and back resets this",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  let query = $state(''); // ❌ OLD: component state only\n  let results = $state([]);\n\n  async function search() {\n    results = await fetchResults(query);\n  }\n</script>\n\n<!-- ❌ OLD: If the user types a query, navigates to another page,\n     then presses Back, the component remounts fresh: query is empty,\n     results is empty, and the user must redo everything. The browser\n     restores the scroll position, but the app state is gone. -->\n<input bind:value={query} oninput={search} />\n{#each results as r}<p>{r}</p>{/each}"
+      }
+    },
+    "modernOrGood": {
+      "label": "snapshot capture/restore",
+      "snippet": "export const snapshot = {\n  capture: () => ({ query, results }), // ✅ NEW\n  restore: (value) => { query = value.query; results = value.results; }, // ✅ NEW\n};",
+      "fullFile": {
+        "filename": "+page.svelte",
+        "language": "svelte",
+        "code": "<script>\n  let query = $state('');\n  let results = $state([]);\n\n  async function search() {\n    results = await fetchResults(query);\n  }\n\n  // ✅ NEW: When navigating away, capture() saves the state; when the\n  // user returns via back/forward, restore() rebuilds it.\n  export const snapshot = {\n    capture: () => ({ query, results }), // ✅ NEW: JSON-serializable only\n    restore: (value: { query: string; results: unknown[] }) => {\n      query = value.query; // ✅ NEW: rebuild the input\n      results = value.results; // ✅ NEW: restore the results\n    },\n  };\n</script>\n\n<input bind:value={query} oninput={search} />\n{#each results as r}<p>{r}</p>{/each}\n\n<!-- Back-navigation now restores the query and results exactly as the\n     user left them. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What can't you store in a snapshot, and when does the snapshot NOT get restored?",
+      "contextIntro": "This probes the constraints and edge cases — interviewers want to know the serialization limit and the hard-refresh/new-tab behavior, which determines whether snapshots are a safe storage mechanism.",
+      "detailedAnswer": "Snapshots must be JSON-serializable: plain objects, arrays, strings, numbers, booleans, null, and Date (via the structured-clone-compatible history state). You cannot store functions, class instances, DOM nodes, Maps, or cyclic structures. Because the state lives in the browser's history entry, it is only restored on back/forward navigation within the same tab — a hard refresh (F5), opening the URL in a new tab, or sharing the link does NOT restore snapshots (the history state is gone). For those cases you need URL-driven state or persistence (localStorage/sessionStorage). Also, restore runs only if the component with the snapshot export is still the matching page; structural changes to the tree can orphan saved snapshots.",
+      "trapWarning": "The naive answer is 'snapshots survive refresh'. They live in history state and do not survive a full page reload. Another trap: trying to save non-serializable values (functions, DOM refs) — the state must be structured-cloneable and will fail or be stripped. Candidates who describe the history-state scoping and the serialization constraint show real understanding."
+    },
+    {
+      "question": "How do snapshots relate to scroll restoration, and why would you need both?",
+      "contextIntro": "This tests the division of labor between framework-managed scroll and app-managed state — interviewers want to know what SvelteKit does automatically and what snapshots add.",
+      "detailedAnswer": "SvelteKit automatically tracks and restores scroll positions across back/forward navigations: it records the scroll position in the history state and restores it on return, so a long list re-scrolls to where you were without any component code. Snapshots complement this for app-level state that the browser cannot infer — a search input's text, filter selections, form drafts, or the current pagination page. Scroll restoration is about the viewport; snapshots are about the component's reactive state. The two cooperate: on back navigation, the framework restores the scroll offset and then calls restore() on components so both the position and the data-driven UI come back together. You need snapshots whenever the visible state depends on more than the scroll offset.",
+      "trapWarning": "The naive answer is 'snapshots replace scroll restoration'. They serve different layers; scroll is handled automatically, snapshots carry app state. Another trap: assuming restore() runs before the DOM is ready — the timing is tied to the page mount, so reading layout in restore may need an effect. Candidates who articulate the scroll-vs-state split show real SvelteKit experience."
+    }
+  ]
+}

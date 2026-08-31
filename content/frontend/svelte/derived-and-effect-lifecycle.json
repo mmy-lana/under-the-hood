@@ -1,0 +1,67 @@
+{
+  "id": "derived-and-effect-lifecycle",
+  "title": "$derived() Memoization vs $effect() Microtask Scheduling",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (runes)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "runes",
+    "derived",
+    "effect",
+    "microtask",
+    "reactivity"
+  ],
+  "prerequisites": [
+    "Svelte 5 runes basics ($state)",
+    "Understanding of reactive values vs side effects"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A baker has two helpers. The first helper is a calculator: when the recipe's flour amount changes, he quietly recomputes the bread count on a note — but only when someone actually reads the note, and he never changes the kitchen itself. The second helper is a cleaner: when the recipe changes, he actively does a chore (wipes the counter, fills the oven) and then does it again only when the recipe changes again. The calculator produces values; the cleaner performs actions. They work at different times and are never confused with each other.",
+    "junior": "$derived computes a value from reactive state: let double = $derived(count * 2);. It recomputes lazily when count changes and is read. $effect runs code after state changes: $effect(() => { console.log(count); });. It runs once initially, then re-runs whenever its read state changes. Use $derived for derived values (it's cached), $effect for side effects (DOM, subscriptions, logging). In Svelte 5 runes you replace Svelte 4's reactive statements ($: double = count * 2) with $derived, and auto-subscriptions with explicit $effect.",
+    "senior": "Architecturally, $derived is a memoized computation node: it tracks dependencies, recomputes only when a dependency changes AND the value is read, and caches the result (with equality-based invalidation). $effect is an eager side-effect computation: it runs on the microtask queue after the current synchronous flush (batched), reads its dependencies during the run, and re-runs when any changes — with a cleanup function (returned from the callback) executed before re-run. This split mirrors the derived-vs-effect distinction in signals frameworks, keeping the reactive graph pure (derived) and the impure work (effects) explicit and ordered.",
+    "underTheHood": "The Svelte 5 compiler lowers $derived into a derived signal (an untracked memo backed by a getter that evaluates on read with a version check) and $effect into a render effect/root effect (a signal-effect). Effects are scheduled via the microtask scheduler: after state mutations, the runtime flushes the effect queue in dependency order, running cleanups before re-executions. The compiler statically tracks which signals are read inside each effect/derived (runes mode does not need the old $: dependency analysis; the runtime tracks reads dynamically). $derived.by(() => ...) allows block bodies. Effects must not write signals they read (writes trigger another flush)."
+  },
+  "rosettaStone": {
+    "react": "useMemo ≈ $derived (cached); useEffect ≈ $effect, though React effects run after commit per render.",
+    "angular": "computed() ≈ $derived; effect() in Angular 16+ ≈ $effect.",
+    "vue": "computed() ≈ $derived; watchEffect ≈ $effect (eager, microtask-flushed)."
+  },
+  "codeComparison": {
+    "title": "Svelte 4 $: reactive statement vs Svelte 5 $derived/$effect",
+    "summary": "The old $: syntax mixed derived values and side effects ambiguously; runes split them into explicit, memoized $derived and effectful $effect.",
+    "legacyOrBad": {
+      "label": "Svelte 4 $: statements",
+      "snippet": "$: double = count * 2; // ❌ OLD: reactive statement for a derived value\n$: console.log('count', count); // ❌ OLD: side effect mixed into the same syntax",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // ❌ OLD: Svelte 4 reactive statements. `$:` is a grab-bag: the\n  // compiler must statically analyze dependencies, ordering is\n  // implicit, and mixing derived values with side effects is legal\n  // but confusing.\n  let count = 0;\n  $: double = count * 2; // ❌ OLD: derived value via statement\n  $: console.log('count changed', count); // ❌ OLD: side effect, same syntax\n\n  function inc() {\n    count += 1;\n  }\n</script>\n\n<button onclick={inc}>{count} → {double}</button>"
+      }
+    },
+    "modernOrGood": {
+      "label": "Svelte 5 runes",
+      "snippet": "let double = $derived(count * 2); // ✅ NEW: memoized derived value\n$effect(() => console.log('count', count)); // ✅ NEW: explicit side effect",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  // ✅ NEW: Runes split the concerns explicitly.\n  let count = $state(0);\n  let double = $derived(count * 2); // ✅ NEW: lazy, cached, read-only\n\n  // ✅ NEW: side effects are explicit; runs initially, then on change,\n  // with an optional cleanup returned from the callback.\n  $effect(() => {\n    console.log('count changed', count); // ✅ NEW: microtask-scheduled\n    return () => console.log('cleanup'); // ✅ NEW: runs before re-run\n  });\n\n  function inc() {\n    count += 1;\n  }\n</script>\n\n<button onclick={inc}>{count} → {double}</button>"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is $derived called 'memoized' and how does its recomputation differ from a plain expression in the template?",
+      "contextIntro": "This tests whether you understand the caching semantics of derived state — interviewers want to know why derived values don't recompute on every render, unlike plain template expressions.",
+      "detailedAnswer": "$derived creates a computation node that caches its result. It recomputes only when (a) at least one of the signals it read during its last evaluation changed, and (b) something actually reads the derived value. This is lazy memoization with invalidation. A plain expression in the template (e.g. {count * 2}) is re-evaluated when its surrounding template binding re-runs, which may be more often and without caching. The memoization matters when the derived computation is expensive (filtering a large array, formatting): multiple reads of the same $derived in one update cycle share one cached result, whereas repeating the expression recomputes each time. The equality check (===) also suppresses downstream updates when the derived value didn't actually change.",
+      "trapWarning": "The naive answer is '$derived recomputes whenever state changes'. It recomputes lazily on read, and only if a dependency changed. Another trap: assuming a $derived with no readers ever runs — it doesn't (lazy), so side effects placed inside a $derived body may never fire. Candidates who explain the lazy read-triggered recomputation and equality suppression show real understanding."
+    },
+    {
+      "question": "When does an $effect actually run relative to DOM updates, and what is the cleanup contract?",
+      "contextIntro": "This probes the scheduling and lifecycle — interviewers want the microtask flush timing and the cleanup-before-rerun contract that distinguishes Svelte 5 effects from naive subscriptions.",
+      "detailedAnswer": "Effects are scheduled on the microtask queue: after a synchronous block mutates state, the runtime flushes the effect queue asynchronously (in a microtask), running each effect in dependency order. This means multiple state changes in one synchronous handler produce ONE effect run, and the effect sees the final values. The initial run happens during component initialization (after the DOM is created, before paint). Before each re-run, the cleanup function (whatever the previous callback returned) executes, letting you tear down subscriptions or DOM listeners. Effects read their dependencies during the run; reads outside the effect (e.g. in an async callback inside it) are not tracked. Writing a signal that the effect also reads triggers another flush — avoid such cycles.",
+      "trapWarning": "The naive answer is 'effects run immediately when state changes'. They are batched and deferred to a microtask flush. Another trap: forgetting the cleanup return value — without it, re-running effects leak subscriptions/listeners. Also, writing to state inside an effect without reading it is allowed, but reading-and-writing the same signal causes an infinite flush loop. Candidates who describe the microtask scheduling and the cleanup contract show real depth."
+    }
+  ]
+}

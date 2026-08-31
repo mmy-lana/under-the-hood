@@ -1,0 +1,67 @@
+{
+  "id": "svelte-store-contract",
+  "title": "Svelte Store Contract: subscribe() & set() with $ Auto-Subscription",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (stores still supported alongside runes)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "stores",
+    "subscribe",
+    "contract",
+    "reactivity",
+    "writable"
+  ],
+  "prerequisites": [
+    "Svelte basics and reactivity concepts",
+    "Understanding of subscriptions and unsubscribing"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A town crier stands in the square and reads the news. Anyone who wants the news subscribes: they give the crier a little bell to ring when there's an update (the subscribe callback), and the crier rings it every time the news changes. The crier's rulebook (the store contract) is simple: to hear updates, you must subscribe; to publish news, you call set. In Svelte templates, the town square handles subscriptions for you — you just write $news and the bell-ringing is automatic; outside the square, you must subscribe and unsubscribe yourself.",
+    "junior": "A Svelte store is any object with a subscribe method: { subscribe(callback): () => void }. That's the contract. writable() creates a store with set() and update(): const count = writable(0); count.set(1); count.update(n => n + 1);. To read a store's value in a template use the $ prefix: {$count}. The $ prefix auto-subscribes in templates and in .svelte files (it compiles to subscribe/unsubscribe). Outside components (plain .ts), call count.subscribe(v => ...) and keep the returned unsubscribe function. readable(), derived() create read-only and derived stores.",
+    "senior": "Architecturally, the store contract is minimal by design: subscribe is the only required method, enabling interop (any library can implement it) and testability. The $ prefix is compiler sugar: in templates, $count compiles to a subscription that updates a local reactive variable and is torn down when the component unmounts. In Svelte 5, stores still work alongside runes, but runes ($state) are the recommended primitive for local state; stores remain useful for cross-component/module state. derived stores chain subscriptions with dependency tracking and caching.",
+    "underTheHood": "writable() maintains an internal value and a Set of subscriber callbacks. subscribe(fn) adds fn, immediately calls fn with the current value (synchronous initial emission), and returns an unsubscribe function that removes fn. set(v) assigns the value and calls every subscriber synchronously (the store is not a signal — it is a simple observer pattern). The Svelte compiler's $ transformation wraps store references: in a template, $count becomes a tracked read that subscribes on mount, updates on store emission, and unsubscribes on destroy. In Svelte 5, the compiler still supports the $ store syntax while runes handle state; store-to-runes migration is via the runes plugin or manual conversion to $state."
+  },
+  "rosettaStone": {
+    "react": "Context + useSyncExternalStore is the React analogue of the subscribe contract.",
+    "angular": "BehaviorSubject/Observable + async pipe mirror the subscribe-and-render model.",
+    "vue": "Vue's ref() + provide/inject covers the same global-shared-state role."
+  },
+  "codeComparison": {
+    "title": "Manual subscribe/unsubscribe vs the $ auto-subscription",
+    "summary": "In plain JS you must subscribe and call the returned unsubscribe; in Svelte templates the $ prefix handles the full lifecycle automatically.",
+    "legacyOrBad": {
+      "label": "Manual subscription outside components",
+      "snippet": "const unsub = count.subscribe(v => { console.log(v); }); // ❌ OLD: must remember to unsubscribe",
+      "fullFile": {
+        "filename": "logger.ts",
+        "language": "typescript",
+        "code": "import { writable } from 'svelte/store';\n\nexport const count = writable(0);\n\n// ❌ OLD: Outside a component there is no $ sugar. You must call\n// subscribe and keep the returned unsubscribe function, and call it\n// when done — forgetting it leaks the subscriber (and its closure)\n// forever.\nconst unsub = count.subscribe((v) => {\n  console.log('count is', v); // ❌ OLD: manual callback\n});\n\n// later...\nunsub(); // ❌ OLD: manual teardown — easy to forget\n\n// A subscription that is never unsubscribed keeps the callback alive\n// and can accumulate in long-lived modules."
+      }
+    },
+    "modernOrGood": {
+      "label": "Template $ auto-subscription",
+      "snippet": "<p>{$count}</p> // ✅ NEW: compiler handles subscribe + unsubscribe lifecycle",
+      "fullFile": {
+        "filename": "Counter.svelte",
+        "language": "svelte",
+        "code": "<script>\n  import { writable } from 'svelte/store';\n\n  export const count = writable(0); // ✅ NEW: shared store\n\n  function inc() {\n    count.update((n) => n + 1); // ✅ NEW: set/update publish changes\n  }\n</script>\n\n<!-- ✅ NEW: the $ prefix compiles to an automatic subscribe on mount\n     and unsubscribe on destroy — no manual teardown needed. -->\n<button onclick={inc}>{$count}</button>\n\n<!-- The compiler rewrites $count into a subscription that updates a\n     local reactive binding, and inserts an onDestroy(unsubscribe). -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What exactly is the store contract, and why is subscribe() the only required method?",
+      "contextIntro": "This tests whether you understand the minimal interop contract — interviewers want to confirm you know that ANY object with subscribe is a store, which is what makes stores extensible and testable.",
+      "detailedAnswer": "The store contract is: an object with a subscribe method taking a callback and returning an unsubscribe function. That's it. writable/readable/derived are built-in implementations, but any object satisfying the contract is a valid store — which means third-party stores, mocks, and even streams wrapped with a subscribe method interoperate seamlessly with Svelte's $ sugar. The subscribe callback receives the current value immediately upon subscription (synchronous initial emission), then on every subsequent change. The returned unsubscribe function must remove the subscriber. This minimal contract is what allows Svelte to treat stores uniformly: the compiler's $ transformation only depends on subscribe existing.",
+      "trapWarning": "The naive answer is 'a store is a writable object'. The contract is just subscribe; writable adds set/update on top. Another trap: assuming subscription is lazy — the callback fires immediately with the current value on subscribe, so code must handle that initial emission. Candidates who can define the contract precisely and mention the synchronous initial call show real understanding."
+    },
+    {
+      "question": "What is the difference between stores and runes in Svelte 5, and when should you use each?",
+      "contextIntro": "This probes the migration story — interviewers want to know the conceptual overlap and the guidance for choosing between the two state primitives in modern Svelte.",
+      "detailedAnswer": "Stores (subscribe/set) are an observer-pattern primitive with a minimal interop contract; runes ($state, $derived) are compiler-backed signals integrated directly into the reactive graph. In Svelte 5, runes are the recommended default for component state: they are simpler (no subscribe/unsubscribe, no $ prefix), more granular, and avoid the wrapper object. Stores remain valuable for module-level shared state that must be consumed from plain TypeScript, for interop with libraries expecting the subscribe contract, and in codebases not yet migrated. The migration path converts writable(0) to $state(0) and $store to the rune syntax; the compiler keeps supporting the $ store prefix for compatibility. Both work side by side within one app.",
+      "trapWarning": "The naive answer is 'runes replace stores entirely'. Stores are still supported and still the right tool for module-scope shared state consumed outside components. Another trap: mixing the $ store prefix with runes in confusing ways — the $ prefix still refers to stores, while runes use $state/$derived. Candidates who articulate the coexistence and the module-state use case show real migration experience."
+    }
+  ]
+}

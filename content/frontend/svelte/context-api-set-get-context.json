@@ -1,0 +1,67 @@
+{
+  "id": "context-api-set-get-context",
+  "title": "setContext / getContext Component Hierarchy Scopes",
+  "category": "frontend",
+  "subcategory": "svelte",
+  "versionContext": "Svelte 5 (context API)",
+  "lastUpdated": "2026-08-31",
+  "tags": [
+    "svelte",
+    "context",
+    "setContext",
+    "getContext",
+    "component-hierarchy",
+    "di"
+  ],
+  "prerequisites": [
+    "Svelte component tree structure",
+    "Understanding of props vs shared state"
+  ],
+  "progressiveExplaining": {
+    "eli5": "A family has a shared household notebook. The grandparents write the household rules in the notebook, and any child or grandchild in the same house can open it and read the rules — but only people inside the house. Neighbors and guests can't see it. If a grandchild moves to a different house, they get that house's notebook instead. The notebook is shared down the family tree, not across the whole street. That's how shared household knowledge works: it flows down through the nested rooms of one house only.",
+    "junior": "setContext(key, value) stores a value for the current component; getContext(key) retrieves the nearest value set by an ancestor. Call them during component initialization: setContext('theme', theme); then in a descendant: const theme = getContext('theme');. The key can be a string, symbol, or object (often a Symbol or an object with an id to avoid collisions). Use context for: providing services/config to descendants without prop drilling, per-component-instance singletons, and library APIs (like SvelteKit's page store). Context is not reactive by itself — pass a $state value or store to share reactivity.",
+    "senior": "Architecturally, the context API is a per-component-instance key-value store: setContext associates a value with the current component's instance scope, and getContext walks up the component tree (the instance's parent chain) to find the first ancestor that set that key. It is component-hierarchy-scoped, unlike module-level singletons, so different subtrees can have different values. It is the idiomatic Svelte dependency-injection mechanism. Because it is non-reactive (a plain lookup), you should store reactive values (a $state reference, a store, or a writable) and let reactivity flow through that value, not through context itself.",
+    "underTheHood": "Each component instance has an internal context map (a Map keyed by the context key). setContext writes into the current instance's map; getContext checks the current instance's map, then walks up via the instance's parent reference (the component tree), returning the first match or undefined. This is a simple prototype-chain-like lookup over the instance tree, implemented as a plain per-instance Map in the runtime. SvelteKit and libraries use this to pass 'page', 'navigate', etc. down the tree. Context values are captured at component init; if you call getContext outside component initialization, it throws (no current instance)."
+  },
+  "rosettaStone": {
+    "react": "React's Context.Provider/useContext is the analogue, though it's implemented via the fiber tree and re-renders consumers.",
+    "angular": "Angular DI (providers + inject) provides the same hierarchy-scoped service sharing.",
+    "vue": "Vue's provide()/inject() is the direct equivalent."
+  },
+  "codeComparison": {
+    "title": "Prop drilling vs setContext/getContext",
+    "summary": "Threading the same value through many props couples components and bloats signatures; context shares it down the subtree without prop wiring.",
+    "legacyOrBad": {
+      "label": "Prop drilling",
+      "snippet": "<Grandparent theme={theme}><Parent theme={theme}><Child theme={theme} /></Parent></Grandparent> // ❌ OLD",
+      "fullFile": {
+        "filename": "drill.svelte",
+        "language": "svelte",
+        "code": "<!-- ❌ OLD: Prop drilling. Every level between the source and the\n     consumer must declare and forward the prop, even if the middle\n     components never use it. Adding a value means touching every\n     component in the chain. -->\n<script>\n  import Parent from './Parent.svelte';\n  let theme = $state('light');\n</script>\n\n<Parent theme={theme} /> <!-- ❌ OLD: must forward -->\n\n<!-- Parent.svelte must do: let { theme } = $props(); then forward it:\n     <Child theme={theme} />\n     Child.svelte then receives it. Every hop is boilerplate, and any\n     component that forgets to forward breaks the chain silently. -->"
+      }
+    },
+    "modernOrGood": {
+      "label": "setContext/getContext",
+      "snippet": "setContext('theme', theme); // ✅ NEW: provide once\n// deep descendant:\nconst theme = getContext('theme'); // ✅ NEW: read anywhere below",
+      "fullFile": {
+        "filename": "context.svelte",
+        "language": "svelte",
+        "code": "<!-- ✅ NEW: Context flows down the component tree without props. -->\n<script>\n  import Child from './Child.svelte';\n  let theme = $state('light'); // ✅ NEW: reactive state value\n\n  // ✅ NEW: store the reactive reference in context once\n  setContext('theme', theme);\n</script>\n\n<Child /> <!-- ✅ NEW: no prop forwarding needed -->\n\n<!-- Deep in the tree (any descendant):\n  <script>\n    import { getContext } from 'svelte';\n    // ✅ NEW: reads the nearest ancestor's value\n    const theme = getContext('theme');\n    $effect(() => console.log('theme is', theme)); // reactive via the $state ref\n  </script>\n  The context holds the state reference, so reactivity flows through it. -->"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Is context reactive, and how do you share reactive values through it correctly?",
+      "contextIntro": "This tests a common misconception — interviewers want to confirm you know setContext is a plain lookup, and that reactivity comes from the VALUE you store, not from context itself.",
+      "detailedAnswer": "Context itself is non-reactive: setContext writes a value into a Map, and getContext returns whatever was stored — it does not track reads or re-deliver on change. If you set a primitive (setContext('theme', 'light')) and later change it, descendants that already called getContext keep the old value. To share reactive state, store a reactive container: a $state variable (setContext('theme', themeState)), a Svelte store, or a writable. Then descendants read the container and subscribe/react to its changes through the normal reactive mechanisms (reading the $state in templates/effects, or the store's $ syntax). The pattern 'context carries the reference, reactivity lives in the value' is the correct mental model.",
+      "trapWarning": "The naive answer is 'setContext makes the value reactive'. It only shares the reference at init time. Another trap: calling setContext/getContext outside component initialization — getContext outside init throws, and calling setContext after the tree has read it has no retroactive effect. Candidates who explain the reference-carrying pattern show real understanding."
+    },
+    {
+      "question": "How does getContext resolve values when multiple ancestors set the same key, and how is this different from a module singleton?",
+      "contextIntro": "This probes the scoping semantics — the nearest-ancestor lookup and per-subtree isolation that distinguish context from global singletons.",
+      "detailedAnswer": "getContext starts at the current component instance and walks UP the component tree (parent, grandparent, ...), returning the first instance whose context map contains the key. So if a parent sets 'theme' and a grandparent also sets 'theme', the child gets the parent's value — nearest ancestor wins. This per-tree resolution means two sibling subtrees can each provide different values for the same key without conflict. Contrast with a module-level singleton (an exported variable), which is shared globally across the whole app — no scoping, no per-subtree variation, and it cannot be provided differently per instance. Context is the hierarchical, instance-scoped alternative, which is why component libraries use it for per-component configuration.",
+      "trapWarning": "The naive answer is 'context is like a global store'. It is scoped to the component subtree and resolved nearest-first. Another trap: assuming keys must be unique strings — string keys can collide across libraries, so Symbol or object keys are recommended to avoid accidental collisions. Candidates who describe the ancestor walk and the collision-avoidance keying show real depth."
+    }
+  ]
+}
