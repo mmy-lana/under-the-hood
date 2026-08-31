@@ -1,0 +1,58 @@
+{
+  "id": "streaming-responses-sse-events",
+  "title": "StreamingResponse: Async Generator Chunks and Server-Sent Events (SSE)",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "streaming-response", "sse", "async-generator", "server-sent-events", "ai-streaming"],
+  "prerequisites": ["Python Asynchronous Generators (`async def` with `yield`)", "HTTP Chunked Transfer Encoding"],
+  "progressiveExplaining": {
+    "eli5": "Instead of waiting for an AI model to write a 10-page essay and sending it all at once, `StreamingResponse` sends each word down the wire the instant it is generated, streaming text smoothly onto the screen like a typewriter.",
+    "junior": "`StreamingResponse(async_generator())` streams data chunk-by-chunk to the client using HTTP `Transfer-Encoding: chunked`. For Server-Sent Events (SSE), set `media_type='text/event-stream'` and yield strings formatted as `data: <content>\\n\\n`. It allows streaming large files, audio, and live LLM token completions without buffering the full response in server memory.",
+    "senior": "Architecturally, `StreamingResponse` maps Python asynchronous generators directly to the ASGI `http.response.body` chunk protocol. The event loop yields control after every `yield` expression, flushing bytes down the open TCP connection. It prevents server memory exhaustion when streaming multi-gigabyte files or handling thousands of concurrent real-time AI token streams.",
+    "underTheHood": "In `starlette.responses.StreamingResponse`, `__call__` sends `{'type': 'http.response.start', 'status': self.status_code, 'headers': ...}`. It then loops `async for chunk in self.content_iterator: await send({'type': 'http.response.body', 'body': chunk, 'more_body': True})`. When the iterator finishes, it sends `more_body: False` to terminate the HTTP stream."
+  },
+  "rosettaStone": {
+    "fastapi": "`StreamingResponse(generator(), media_type='text/event-stream')`.",
+    "nestjs": "NestJS `@Sse()` returning `Observable<MessageEvent>`.",
+    "spring": "Spring WebFlux `Flux<ServerSentEvent<String>>`.",
+    "node": "`res.writeHead(200, {'Content-Type': 'text/event-stream'}); res.write(...)`."
+  },
+  "codeComparison": {
+    "title": "Buffered Full String vs Async Generator StreamingResponse",
+    "summary": "Buffering LLM responses causes 10-second initial wait times; `StreamingResponse` yields tokens in real time.",
+    "legacyOrBad": {
+      "label": "Buffered Response (High Latency)",
+      "snippet": "full_text = await generate_all(); return {'text': full_text} // ❌ User waits 10s for first word",
+      "fullFile": {
+        "filename": "buffered_llm.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nimport asyncio\n\napp = FastAPI()\n\n# ❌ OLD: Buffering the entire generation delays TTFB by 5-10 seconds.\n@app.get('/chat')\nasync def chat():\n  result = ''\n  for i in range(5):\n    await asyncio.sleep(1)\n    result += f' Token_{i}'\n  return {'response': result} # ❌ Client sees nothing until all tokens finish"
+      }
+    },
+    "modernOrGood": {
+      "label": "Real-Time StreamingResponse (SSE)",
+      "snippet": "return StreamingResponse(token_stream(), media_type='text/event-stream') // ✅ NEW: Instant 0ms TTFB",
+      "fullFile": {
+        "filename": "streaming_llm.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nfrom fastapi.responses import StreamingResponse\nimport asyncio\n\napp = FastAPI()\n\nasync def token_generator():\n  for i in range(10):\n    await asyncio.sleep(0.3) # Simulates token generation\n    # SSE protocol requires 'data: ...\\n\\n' format:\n    yield f'data: Token {i}\\n\\n'\n\n# ✅ NEW: Real-time token streaming with chunked transfer encoding\n@app.get('/chat/stream')\nasync def chat_stream():\n  return StreamingResponse(\n    token_generator(),\n    media_type='text/event-stream',\n    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'}\n  )"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens if a client disconnects (closes the browser tab) while a `StreamingResponse` is in the middle of yielding?",
+      "contextIntro": "Interviewers test your knowledge of client disconnect handling in streaming ASGI endpoints.",
+      "detailedAnswer": "When the client disconnects, the next attempt to `send()` over the ASGI connection raises a `ClientDisconnected` exception (or the iterator detects cancellation). To prevent wasting backend resources (like OpenAI tokens or database bandwidth), check `await request.is_disconnected()` inside your generator loop, or catch `asyncio.CancelledError`.",
+      "trapWarning": "If you do not check `request.is_disconnected()`, your generator will continue executing compute and consuming resources until the loop completes."
+    },
+    {
+      "question": "Can `StreamingResponse` take a synchronous generator function?",
+      "contextIntro": "Checks precision regarding synchronous vs asynchronous generators in streaming.",
+      "detailedAnswer": "Yes, `StreamingResponse` can accept a synchronous generator (`def gen(): yield ...`), but Starlette runs it inside an iterator loop that can block the event loop if the generator executes synchronous I/O. Always use an **asynchronous generator (`async def gen(): yield ...`)** for non-blocking I/O streaming.",
+      "trapWarning": "Using a synchronous generator that calls `time.sleep()` will block the entire FastAPI event loop during stream generation."
+    }
+  ]
+}

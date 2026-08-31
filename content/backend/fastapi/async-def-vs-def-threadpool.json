@@ -1,0 +1,58 @@
+{
+  "id": "async-def-vs-def-threadpool",
+  "title": "async def (Event Loop) vs def (anyio Worker Thread Pool Execution)",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (anyio / starlette)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "async-def", "def", "event-loop", "threadpool", "anyio", "concurrency"],
+  "prerequisites": ["Python asyncio event loop", "Blocking vs Non-blocking I/O"],
+  "progressiveExplaining": {
+    "eli5": "If you write `async def`, you are promising: 'I will never freeze or sleep; I will only use non-blocking tools'. If you break this promise and run a slow blocking task inside `async def`, you freeze the entire server for everyone. If you write plain `def`, FastAPI knows you might be slow and sends your function to an external helper thread so the main event loop never stutters.",
+    "junior": "In FastAPI, route handlers can be defined with `async def` or plain `def`. Use `async def` when calling asynchronous libraries using `await` (e.g. `httpx`, `asyncpg`). Use plain `def` for standard synchronous blocking code (e.g. `time.sleep()`, standard `requests`, synchronous database drivers like standard `psycopg2` or `sqlite3`). FastAPI automatically runs plain `def` endpoints in a separate background thread pool (`anyio.to_thread.run_sync`).",
+    "senior": "Architecturally, this dual-mode execution prevents event loop starvation. An `async def` handler executes directly on the single-threaded asyncio event loop. Calling synchronous blocking I/O (e.g. `requests.get()`) inside `async def` blocks the event loop, preventing all concurrent requests from making progress. Plain `def` functions are offloaded to `anyio`'s thread pool worker threads (default max 40 threads), allowing synchronous blocking calls to execute without blocking the main event loop.",
+    "underTheHood": "FastAPI checks `asyncio.iscoroutinefunction(endpoint)`. If `True`, it awaits the coroutine directly: `await endpoint(**solved_params)`. If `False`, it dispatches the function via `anyio.to_thread.run_sync(endpoint_with_params)`. The worker thread acquires the GIL, executes the synchronous function, and posts the result back to the event loop's task queue upon completion."
+  },
+  "rosettaStone": {
+    "fastapi": "`async def` (Event loop direct) vs `def` (anyio thread pool).",
+    "nestjs": "Async controller methods vs offloading CPU/blocking work to worker threads.",
+    "spring": "Spring WebFlux (Netty event loop) vs Spring MVC (Tomcat worker thread pool).",
+    "node": "Event loop execution vs `worker_threads` / `libuv` thread pool offload."
+  },
+  "codeComparison": {
+    "title": "Event Loop Blocking Bug vs Safe anyio Thread Pool Execution",
+    "summary": "Synchronous blocking code inside `async def` freezes the entire server; using plain `def` offloads to worker threads safely.",
+    "legacyOrBad": {
+      "label": "Blocking Call inside async def (Critical Bug)",
+      "snippet": "async def endpoint(): time.sleep(5) # ❌ Freezes the entire server for all users!",
+      "fullFile": {
+        "filename": "server_bad.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nimport time\n\napp = FastAPI()\n\n# ❌ CRITICAL BUG: time.sleep() blocks the single-threaded event loop!\n# While this request runs for 5 seconds, NO OTHER REQUEST can be processed.\n@app.get('/blocking-async')\nasync def blocking_endpoint():\n  time.sleep(5) # ❌ Freezes event loop\n  return {'status': 'done'}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Plain def Threadpool Offload",
+      "snippet": "def safe_endpoint(): time.sleep(5) # ✅ NEW: Offloaded to worker threadpool automatically",
+      "fullFile": {
+        "filename": "server_good.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nimport time\nimport asyncio\n\napp = FastAPI()\n\n# ✅ Plain def: FastAPI automatically offloads this to an anyio worker thread.\n# The main event loop remains 100% responsive to other users!\n@app.get('/safe-sync')\ndef sync_endpoint():\n  time.sleep(5) # Runs on background threadpool\n  return {'status': 'done'}\n\n# ✅ True non-blocking async:\n@app.get('/safe-async')\nasync def async_endpoint():\n  await asyncio.sleep(5) # Non-blocking event loop pause\n  return {'status': 'done'}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What happens under load if you use standard synchronous `def` for all endpoints in FastAPI?",
+      "contextIntro": "Interviewers test your knowledge of thread pool saturation in FastAPI.",
+      "detailedAnswer": "While plain `def` avoids blocking the event loop, it offloads to the `anyio` worker thread pool, which has a default limit of **40 worker threads**. If 100 concurrent requests hit slow synchronous `def` endpoints (each taking 1 second), 40 requests will occupy the threads, and the remaining 60 requests will queue up in the thread pool backlog, increasing latency. For high-concurrency I/O, true non-blocking `async def` with async drivers scales to thousands of concurrent requests.",
+      "trapWarning": "Do not assume plain `def` scales infinitely; it is bounded by the worker thread pool capacity."
+    },
+    {
+      "question": "If you must call a blocking synchronous library from inside an `async def` endpoint, how should you do it?",
+      "contextIntro": "Checks knowledge of manual thread offloading in async code.",
+      "detailedAnswer": "Use `anyio.to_thread.run_sync()` or `asyncio.to_thread()` (Python 3.9+):\n```python\nimport asyncio\n@app.get('/process')\nasync def process():\n  result = await asyncio.to_thread(legacy_blocking_function, arg1)\n  return result\n```",
+      "trapWarning": "Never call a blocking synchronous function directly inside `async def` without `asyncio.to_thread()`."
+    }
+  ]
+}

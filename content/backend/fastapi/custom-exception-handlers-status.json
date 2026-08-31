@@ -1,0 +1,58 @@
+{
+  "id": "custom-exception-handlers-status",
+  "title": "Custom RequestValidationError & HTTP Status Code Mapping",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "exception-handlers", "validation-error", "http-exception", "error-handling"],
+  "prerequisites": ["FastAPI HTTP exceptions", "Pydantic ValidationError structure"],
+  "progressiveExplaining": {
+    "eli5": "When a user submits bad data, FastAPI's default response can be long and technical. A custom exception handler is a polite translator: it catches the error and reformats it into clean, consistent JSON error messages matching your company's exact standard.",
+    "junior": "You register custom exception handlers in FastAPI using `@app.exception_handler(ExceptionClass)`. To customize default 422 validation errors, override `RequestValidationError`: `@app.exception_handler(RequestValidationError) async def validation_handler(request: Request, exc: RequestValidationError): return JSONResponse(status_code=400, content={'errors': ...})`. You can also create custom business domain exceptions.",
+    "senior": "Architecturally, FastAPI handles exceptions through Starlette's `ExceptionMiddleware`. Custom handlers allow decoupling internal domain exceptions (e.g. `ItemOutOfStockError`) from HTTP transport status codes (`409 Conflict`). By intercepting both `HTTPException` and `RequestValidationError`, you ensure all API errors across the application conform to an enterprise RFC 7807 (Problem Details) or custom standard envelope.",
+    "underTheHood": "`ExceptionMiddleware` wraps the ASGI call in a `try...except` block. When an error is raised, it looks up the exception's class hierarchy in `app.exception_handlers`. It invokes the matching async handler `async def handler(request, exc)` and returns the resulting `Response` object before Starlette sends HTTP headers."
+  },
+  "rosettaStone": {
+    "fastapi": "`@app.exception_handler(CustomError)` returning `JSONResponse`.",
+    "nestjs": "`@Catch(CustomError)` implementing `ExceptionFilter`.",
+    "spring": "`@ControllerAdvice` with `@ExceptionHandler(CustomException.class)`.",
+    "express": "Express 4-argument error middleware `app.use((err, req, res, next) => ...)`."
+  },
+  "codeComparison": {
+    "title": "Default Verbose 422 Error vs Clean Standardized Error Envelope",
+    "summary": "Default FastAPI 422 errors expose internal schema details; custom exception handlers standardize error envelopes.",
+    "legacyOrBad": {
+      "label": "Default Verbose 422 Error Response",
+      "snippet": "// Default FastAPI validation response exposes raw Pydantic detail lists",
+      "fullFile": {
+        "filename": "default_error.json",
+        "language": "json",
+        "code": "{\n  \"detail\": [\n    {\n      \"type\": \"string_too_short\",\n      \"loc\": [\"body\", \"password\"],\n      \"msg\": \"String should have at least 8 characters\",\n      \"input\": \"123\",\n      \"ctx\": { \"min_length\": 8 }\n    }\n  ]\n}"
+      }
+    },
+    "modernOrGood": {
+      "label": "Standardized Custom Exception Handler",
+      "snippet": "@app.exception_handler(RequestValidationError) async def handler(req, exc): ... // ✅ NEW",
+      "fullFile": {
+        "filename": "custom_handler.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, Request, status\nfrom fastapi.exceptions import RequestValidationError\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n# ✅ NEW: Normalize validation errors into a clean, custom company envelope\n@app.exception_handler(RequestValidationError)\nasync def validation_exception_handler(request: Request, exc: RequestValidationError):\n  formatted_errors = [\n    {'field': '.'.join(str(loc) for loc in err['loc'] if loc != 'body'), 'message': err['msg']}\n    for err in exc.errors()\n  ]\n  return JSONResponse(\n    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,\n    content={\n      'status': 'error',\n      'code': 'VALIDATION_FAILED',\n      'errors': formatted_errors\n    }\n  )"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `fastapi.HTTPException` and `starlette.exceptions.HTTPException`?",
+      "contextIntro": "Interviewers test your knowledge of FastAPI vs Starlette exception inheritance.",
+      "detailedAnswer": "`fastapi.HTTPException` inherits from `starlette.exceptions.HTTPException`. The difference is that `fastapi.HTTPException` accepts a `headers` parameter and allows passing any JSON-serializable structure to `detail` (dict, list, string), whereas Starlette's only accepts strings. Always import and raise `fastapi.HTTPException` in FastAPI applications.",
+      "trapWarning": "If you register an exception handler specifically for `starlette.exceptions.HTTPException`, it will catch `fastapi.HTTPException` too, but accessing `exc.headers` may require `getattr`."
+    },
+    {
+      "question": "Why does an exception raised inside a background task NOT trigger an `@app.exception_handler`?",
+      "contextIntro": "Checks understanding of lifecycle execution boundaries in ASGI.",
+      "detailedAnswer": "Because `BackgroundTasks` execute **after the HTTP response has already been sent and the connection is closed**. By the time the background task executes, the HTTP status code and response body are already committed to the client socket, so the exception handler cannot construct a new HTTP error response.",
+      "trapWarning": "Always wrap code inside background tasks in custom `try...except` logging blocks."
+    }
+  ]
+}

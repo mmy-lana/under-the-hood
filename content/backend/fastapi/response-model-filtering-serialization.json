@@ -1,0 +1,58 @@
+{
+  "id": "response-model-filtering-serialization",
+  "title": "response_model, response_model_exclude_unset, and Data Serialization",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (Pydantic v2)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "response-model", "serialization", "pydantic", "security", "data-filtering"],
+  "prerequisites": ["Pydantic v2 BaseModel", "FastAPI route decorators"],
+  "progressiveExplaining": {
+    "eli5": "If your database record contains a user's password hash and credit card number, you never want to accidentally return that in a public API. `response_model` is an automatic security filter: it takes your raw database object, strips out all private fields, validates that the remaining public fields are correct, and only sends the safe fields to the user.",
+    "junior": "Use `response_model=MyResponseSchema` in route decorators to filter output: `@app.get('/users/{id}', response_model=UserPublic)`. Even if your function returns a full database entity containing `password_hash`, FastAPI automatically filters the data so only fields declared in `UserPublic` are serialized. Modifiers like `response_model_exclude_unset=True` ensure default values that were not explicitly set are excluded from the JSON output.",
+    "senior": "Architecturally, `response_model` creates a strict egress validation boundary. In FastAPI with Pydantic v2, return values are serialized via `pydantic-core` in Rust (`TypeAdapter.dump_python()` / `model_dump()`). In modern FastAPI, you can use standard Python return type annotations: `def get_user() -> UserPublic:` which automatically acts as the `response_model`. This prevents data leakage, converts ORM models to JSON without circular reference crashes, and documents output types in OpenAPI.",
+    "underTheHood": "When a route finishes, FastAPI checks `route.response_field`. It passes the handler's return value to the compiled Pydantic validator. Pydantic extracts fields matching the response schema (using `from_attributes=True` for ORM objects), applies field serializers (`@field_serializer`), drops un-declared attributes, and encodes the result into a `fastapi.responses.JSONResponse`."
+  },
+  "rosettaStone": {
+    "fastapi": "`@app.get('/users', response_model=UserOut)` or `def get_user() -> UserOut:`.",
+    "nestjs": "ClassSerializerInterceptor with `@Exclude()` on DTO entities.",
+    "spring": "Jackson `@JsonView` or explicit DTO mapping layers.",
+    "express": "Manual object mapping (`{ id: u.id, name: u.name }`)."
+  },
+  "codeComparison": {
+    "title": "Unfiltered Return (Password Leak) vs response_model Filter",
+    "summary": "Returning raw DB models leaks sensitive password hashes; `response_model` enforces an egress security boundary.",
+    "legacyOrBad": {
+      "label": "Unfiltered Database Return",
+      "snippet": "return user_db_object // ❌ Leaks hashed_password and internal flags to public API",
+      "fullFile": {
+        "filename": "users_leak.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\n\napp = FastAPI()\n\n# ❌ DANGEROUS: Returning raw dictionary or ORM object directly leaks\n# sensitive internal fields (password_hash, api_keys, is_admin) to the client!\n@app.get('/user/{id}')\ndef get_user(id: int):\n  user_db = {'id': id, 'username': 'ada', 'password_hash': '$2b$12$e8...'}\n  return user_db # ❌ password_hash is sent over the wire!"
+      }
+    },
+    "modernOrGood": {
+      "label": "response_model Security Boundary",
+      "snippet": "@app.get('/user/{id}', response_model=UserPublic) // ✅ NEW: Filters private fields",
+      "fullFile": {
+        "filename": "users_safe.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nfrom pydantic import BaseModel, EmailStr\n\napp = FastAPI()\n\nclass UserPublic(BaseModel):\n  id: int\n  username: str\n\n# ✅ NEW: FastAPI filters output through UserPublic; password_hash is stripped!\n@app.get('/user/{id}', response_model=UserPublic, response_model_exclude_unset=True)\ndef get_user(id: int):\n  user_db = {'id': id, 'username': 'ada', 'password_hash': '$2b$12$e8...'}\n  return user_db # ✅ Only 'id' and 'username' are sent to the client"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `response_model_exclude_unset` and `response_model_exclude_defaults`?",
+      "contextIntro": "Interviewers test your precision with JSON serialization flags in FastAPI.",
+      "detailedAnswer": "`response_model_exclude_unset=True` excludes fields that were **not explicitly set** when creating the model instance (it only serializes data explicitly provided in the dictionary/ORM object). `response_model_exclude_defaults=True` excludes any field whose value matches its declared default value, regardless of whether it was set.",
+      "trapWarning": "`response_model_exclude_unset` is essential for `PATCH` endpoints where you only want to return fields that were modified."
+    },
+    {
+      "question": "How do you serialize SQLAlchemy ORM models using `response_model` in Pydantic v2?",
+      "contextIntro": "Checks knowledge of ORM mode migration in Pydantic v2.",
+      "detailedAnswer": "In Pydantic v2, add `model_config = ConfigDict(from_attributes=True)` to your response schema (which replaces Pydantic v1's `orm_mode = True`). When returning a SQLAlchemy model instance, Pydantic reads attributes via `getattr` instead of dictionary indexing, serializing nested relations cleanly.",
+      "trapWarning": "In Pydantic v1 it was `orm_mode = True`; in Pydantic v2 it is `from_attributes = True`."
+    }
+  ]
+}

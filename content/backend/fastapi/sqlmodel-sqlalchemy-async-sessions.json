@@ -1,0 +1,58 @@
+{
+  "id": "sqlmodel-sqlalchemy-async-sessions",
+  "title": "SQLModel + SQLAlchemy: Async Sessions, Engine Pooling, and Relations",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (SQLModel / SQLAlchemy 2.0+ / asyncpg)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "sqlmodel", "sqlalchemy", "asyncio", "asyncpg", "database", "connection-pooling"],
+  "prerequisites": ["SQLAlchemy 2.0 async engine", "Pydantic & SQLModel basics"],
+  "progressiveExplaining": {
+    "eli5": "SQLModel combines Pydantic (data validation) and SQLAlchemy (database tables) into one single class, so you don't have to duplicate your code twice. And with Async Sessions, your server can talk to the database over non-blocking pipes without freezing the web server while waiting for SQL queries.",
+    "junior": "SQLModel is an ORM created by FastAPI's author that merges SQLAlchemy 2.0 and Pydantic: `class User(SQLModel, table=True): id: int | None = Field(default=None, primary_key=True)`. Using `create_async_engine('postgresql+asyncpg://...')` and `AsyncSession`, you execute asynchronous database queries: `result = await session.exec(select(User))`, `users = result.all()`.",
+    "senior": "Architecturally, SQLModel eliminates the Dual-Model DTO/ORM duplication tax. In standard SQLAlchemy + Pydantic, developers write separate ORM models and Pydantic schemas, continually mapping between them. With SQLAlchemy 2.0 async engines, `asyncpg` manages a non-blocking connection pool (`QueuePool`). Using `AsyncSession(engine, expire_on_commit=False)` inside a `get_session()` dependency guarantees transactional boundary safety across async FastAPI request handlers.",
+    "underTheHood": "`create_async_engine` wraps the synchronous SQLAlchemy engine in an `AsyncEngine` proxy running on `asyncpg`. When executing `await session.exec()`, SQLAlchemy translates SQLModel AST expressions into raw SQL dialect strings, sends the query over the asynchronous driver socket, and instantiates SQLModel instances populated with both Pydantic validation metadata and SQLAlchemy ORM state trackers (`_sa_instance_state`)."
+  },
+  "rosettaStone": {
+    "fastapi": "SQLModel `AsyncSession` with `select()` and `await session.exec()`.",
+    "nestjs": "TypeORM `Repository` or Prisma Client (`this.prisma.user.findMany()`).",
+    "spring": "Spring Data JPA with Hibernate Reactive / R2DBC.",
+    "go": "Go `sqlc` or GORM with PostgreSQL driver."
+  },
+  "codeComparison": {
+    "title": "Duplicate SQLAlchemy + Pydantic vs Unified SQLModel Async Session",
+    "summary": "Maintaining separate SQLAlchemy models and Pydantic schemas creates synchronization bugs; SQLModel defines both in one class.",
+    "legacyOrBad": {
+      "label": "Separate SQLAlchemy & Pydantic Models",
+      "snippet": "class UserORM(Base): ...; class UserSchema(BaseModel): ... // ❌ 2 separate models to maintain",
+      "fullFile": {
+        "filename": "legacy_models.py",
+        "language": "python",
+        "code": "# ❌ OLD: Duplicate code definition for database table and API schema\nfrom sqlalchemy import Column, Integer, String\nfrom sqlalchemy.orm import declarative_base\nfrom pydantic import BaseModel\n\nBase = declarative_base()\n\nclass UserORM(Base):\n  __tablename__ = 'users'\n  id = Column(Integer, primary_key=True)\n  email = Column(String, unique=True)\n\nclass UserSchema(BaseModel):\n  id: int\n  email: str\n  class Config: orm_mode = True # ❌ Duplication of every single field!"
+      }
+    },
+    "modernOrGood": {
+      "label": "Unified SQLModel with AsyncSession",
+      "snippet": "class User(SQLModel, table=True): ... // ✅ NEW: 1 class is BOTH Table and Pydantic Schema",
+      "fullFile": {
+        "filename": "sqlmodel_async.py",
+        "language": "python",
+        "code": "from sqlmodel import SQLModel, Field, select\nfrom sqlmodel.ext.asyncio.session import AsyncSession\nfrom sqlalchemy.ext.asyncio import create_async_engine\nfrom fastapi import FastAPI, Depends\n\n# ✅ 1 class defines BOTH the database table and the Pydantic validation schema:\nclass User(SQLModel, table=True):\n  id: int | None = Field(default=None, primary_key=True)\n  email: str = Field(index=True, unique=True)\n\nengine = create_async_engine('postgresql+asyncpg://user:pass@localhost/db')\n\nasync def get_session():\n  async with AsyncSession(engine, expire_on_commit=False) as session:\n    yield session\n\napp = FastAPI()\n\n@app.get('/users', response_model=list[User])\nasync def get_users(session: AsyncSession = Depends(get_session)):\n  result = await session.exec(select(User))\n  return result.all()"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why is `expire_on_commit=False` critical when initializing `AsyncSession` in FastAPI?",
+      "contextIntro": "Interviewers test your knowledge of Greenlet / AsyncIO boundaries in SQLAlchemy.",
+      "detailedAnswer": "In SQLAlchemy, committing a transaction (`await session.commit()`) normally 'expires' all loaded entity attributes. If you access an attribute on that object later (e.g. during Pydantic response serialization), SQLAlchemy will attempt to issue a lazy synchronous SQL query to refresh the attribute. In an async environment, this triggers a fatal **`MissingGreenlet: greenlet_spawn has not been called`** exception. Setting `expire_on_commit=False` keeps the loaded data accessible in memory after commit.",
+      "trapWarning": "Always pass `expire_on_commit=False` to `AsyncSession` to prevent `MissingGreenlet` errors during response serialization."
+    },
+    {
+      "question": "How do you handle relationship lazy loading in asynchronous SQLAlchemy / SQLModel?",
+      "contextIntro": "Checks understanding of async relationship loading.",
+      "detailedAnswer": "Lazy loading cannot occur synchronously on attribute access in async code. You must eagerly fetch relationships using **`select(User).options(selectinload(User.items))`** or `joinedload()`. Attempting to access `user.items` without eager loading in an async session will throw a `MissingGreenlet` error.",
+      "trapWarning": "Default relationship loading (`lazy='select'`) will crash in async SQLAlchemy; use `selectinload` for collections."
+    }
+  ]
+}

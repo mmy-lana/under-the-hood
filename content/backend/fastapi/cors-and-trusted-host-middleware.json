@@ -1,0 +1,58 @@
+{
+  "id": "cors-and-trusted-host-middleware",
+  "title": "CORSMiddleware & TrustedHostMiddleware: Header Validations and Host Header Attacks",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (Starlette Middleware)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "cors", "trusted-host", "security", "middleware", "host-header-attack"],
+  "prerequisites": ["Cross-Origin Resource Sharing (CORS)", "HTTP Host Header attacks"],
+  "progressiveExplaining": {
+    "eli5": "CORS middleware is a doorman who decides which other websites are allowed to talk to your API from a browser. `TrustedHostMiddleware` is an identity guard who makes sure the visitor dialed your real phone number, preventing attackers from tricking your server with fake hostnames.",
+    "junior": "`CORSMiddleware` configures Cross-Origin Resource Sharing (CORS) so frontend apps on different domains (e.g. `http://localhost:3000`) can access your API: `app.add_middleware(CORSMiddleware, allow_origins=['https://myfrontend.com'], allow_methods=['*'], allow_headers=['*'])`. `TrustedHostMiddleware` guards against HTTP Host Header attacks by validating that the `Host` header matches an allowed list.",
+    "senior": "Architecturally, `CORSMiddleware` intercepts preflight HTTP `OPTIONS` requests before they reach route handlers, returning `Access-Control-Allow-Origin`, `Access-Control-Allow-Headers`, and `Access-Control-Allow-Credentials`. `TrustedHostMiddleware` executes at the outermost layer of the ASGI stack, checking `scope['headers']` for valid host patterns (`allowed_hosts=['example.com', '*.example.com']`) and returning `400 Bad Request` if poisoned, mitigating password-reset poisoning and cache poisoning vulnerabilities.",
+    "underTheHood": "In `CORSMiddleware`, when an `OPTIONS` request arrives with an `Origin` header, the middleware validates `Origin` against `allow_origins` (or regex). If valid, it short-circuits and immediately returns a `200 OK` response with `Access-Control-*` headers without invoking downstream route handlers. In `TrustedHostMiddleware`, if the parsed host header does not match `allowed_hosts`, it immediately sends a 400 response and closes the ASGI connection."
+  },
+  "rosettaStone": {
+    "fastapi": "`app.add_middleware(CORSMiddleware, allow_origins=[...])`.",
+    "nestjs": "`app.enableCors({ origin: 'https://app.com' })`.",
+    "spring": "`@CrossOrigin` or `CorsConfigurationSource` in Spring Security.",
+    "express": "`app.use(cors({ origin: 'https://app.com' }))`."
+  },
+  "codeComparison": {
+    "title": "Insecure Wildcard CORS vs Secure Origin & Trusted Host Setup",
+    "summary": "`allow_origins=['*']` with credentials is fundamentally insecure; specific origins and `TrustedHostMiddleware` harden production APIs.",
+    "legacyOrBad": {
+      "label": "Insecure Wildcard CORS with Credentials",
+      "snippet": "allow_origins=['*'], allow_credentials=True // ❌ Invalid and insecure configuration",
+      "fullFile": {
+        "filename": "cors_insecure.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\n\napp = FastAPI()\n\n# ❌ INSECURE: Wildcard origins combined with credentials violates CORS specs\n# and exposes API endpoints to cross-origin data theft from malicious websites.\napp.add_middleware(\n  CORSMiddleware,\n  allow_origins=['*'], # ❌ Wildcard\n  allow_credentials=True,\n  allow_methods=['*'],\n  allow_headers=['*']\n)"
+      }
+    },
+    "modernOrGood": {
+      "label": "Hardened Production Security Middleware",
+      "snippet": "allow_origins=['https://app.example.com'], app.add_middleware(TrustedHostMiddleware) // ✅ NEW",
+      "fullFile": {
+        "filename": "cors_secure.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\nfrom fastapi.middleware.trustedhost import TrustedHostMiddleware\n\napp = FastAPI()\n\n# ✅ NEW: Guard against Host Header poisoning\napp.add_middleware(\n  TrustedHostMiddleware,\n  allowed_hosts=['api.example.com', '*.example.com', 'localhost']\n)\n\n# ✅ NEW: Explicit origin whitelist for secure credentialed requests (cookies/tokens)\napp.add_middleware(\n  CORSMiddleware,\n  allow_origins=['https://app.example.com', 'http://localhost:3000'],\n  allow_credentials=True,\n  allow_methods=['GET', 'POST', 'PUT', 'DELETE'],\n  allow_headers=['Authorization', 'Content-Type']\n)"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why will `allow_origins=['*']` fail in modern browsers when `allow_credentials=True` is enabled?",
+      "contextIntro": "Interviewers test your knowledge of the W3C CORS security specification.",
+      "detailedAnswer": "The W3C CORS specification strictly forbids combining `Access-Control-Allow-Origin: *` (wildcard) with `Access-Control-Allow-Credentials: true` (cookies / Authorization headers). If a server returns this combination, **the client browser will reject the response and block JavaScript from reading it**. When `allow_credentials=True`, you must specify explicit, non-wildcard origin URLs (e.g. `['https://app.com']`).",
+      "trapWarning": "FastAPI will raise a runtime warning or browser requests with cookies will fail if both `allow_origins=['*']` and `allow_credentials=True` are set."
+    },
+    {
+      "question": "What security vulnerability does `TrustedHostMiddleware` prevent?",
+      "contextIntro": "Checks knowledge of web security and HTTP Host header attacks.",
+      "detailedAnswer": "It prevents **HTTP Host Header Attacks**. Attackers can send arbitrary `Host: evil.com` headers to a web server. If your application generates password reset links using `request.base_url` or uses host headers in caching proxies, the attacker can poison cache entries or trick the server into sending password reset emails containing phishing links pointing to `evil.com`. `TrustedHostMiddleware` rejects any request with an unrecognized `Host` header with a 400 Bad Request.",
+      "trapWarning": "Always include `localhost` and your staging/production domains in `allowed_hosts`."
+    }
+  ]
+}

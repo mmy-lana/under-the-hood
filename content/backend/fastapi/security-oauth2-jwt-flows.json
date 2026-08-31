@@ -1,0 +1,58 @@
+{
+  "id": "security-oauth2-jwt-flows",
+  "title": "OAuth2PasswordBearer, SecurityScopes, and JWT Token Verification",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (PyJWT / python-jose)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "security", "oauth2", "jwt", "security-scopes", "rbac", "authentication"],
+  "prerequisites": ["JWT (JSON Web Tokens) structure", "FastAPI Dependency Injection"],
+  "progressiveExplaining": {
+    "eli5": "When you log in, the server gives you a signed concert ticket (a JWT). The ticket lists your username and your VIP permissions (`SecurityScopes`). On every request, FastAPI checks the digital signature on the ticket to make sure nobody forged it, and verifies that your ticket has the right backstage badge (`scopes=['admin']`).",
+    "junior": "FastAPI provides `OAuth2PasswordBearer(tokenUrl='token')` to extract Bearer tokens from the `Authorization: Bearer <token>` header. It automatically integrates with Swagger UI `/docs` (showing the Authorize lock button). You decode and verify the JWT using `pyjwt` or `python-jose`. `Security(get_current_user, scopes=['items:read'])` and `SecurityScopes` allow fine-grained permission and scope checks.",
+    "senior": "Architecturally, `OAuth2PasswordBearer` is a dependency class implementing `__call__`. When injected via `Depends()` or `Security()`, it extracts the authorization header, returns the raw token string, and registers the OAuth2 Password Flow in the OpenAPI `components.securitySchemes` schema. `SecurityScopes` captures the required scopes declared at the route level, allowing central authentication dependencies to validate token claims (`scopes` / `roles`) before handler invocation.",
+    "underTheHood": "`OAuth2PasswordBearer` inherits from `OAuth2`. When `/docs` loads, Swagger UI discovers the `tokenUrl` and presents a username/password form that POSTs `application/x-www-form-urlencoded` (`OAuth2PasswordRequestForm`) to `/token`. Upon receiving the token, `jwt.decode(token, SECRET, algorithms=['HS256'])` validates the HMAC/RSA signature, expiration (`exp`), and audience (`aud`)."
+  },
+  "rosettaStone": {
+    "fastapi": "`oauth2_scheme = OAuth2PasswordBearer(tokenUrl='token')` and `Security(get_user, scopes=[...])`.",
+    "nestjs": "`@UseGuards(JwtAuthGuard)` using Passport JWT strategy.",
+    "spring": "Spring Security `OAuth2ResourceServer` with `JwtAuthenticationConverter`.",
+    "express": "`express-jwt` middleware verifying `req.headers.authorization`."
+  },
+  "codeComparison": {
+    "title": "Manual Header Parsing vs FastAPI OAuth2 + SecurityScopes",
+    "summary": "Manual authorization header parsing fails OpenAPI generation and has no scope enforcement; `SecurityScopes` provides declarative RBAC.",
+    "legacyOrBad": {
+      "label": "Manual Header Parsing",
+      "snippet": "token = req.headers.get('Authorization'); jwt.decode(token) // ❌ No Swagger integration or scope validation",
+      "fullFile": {
+        "filename": "auth_manual.py",
+        "language": "python",
+        "code": "# ❌ OLD: Manually parsing headers string, no Swagger /docs auth integration,\n# and permissions must be manually checked in every endpoint.\nfrom fastapi import FastAPI, Header, HTTPException\nimport jwt\n\napp = FastAPI()\n\n@app.get('/admin/data')\ndef get_admin_data(authorization: str = Header(None)):\n  if not authorization or not authorization.startswith('Bearer '):\n    raise HTTPException(status_code=401, detail='Missing Bearer token')\n  token = authorization.split(' ')[1]\n  payload = jwt.decode(token, 'SECRET', algorithms=['HS256'])\n  if 'admin' not in payload.get('roles', []):\n    raise HTTPException(status_code=403, detail='Insufficient permissions')\n  return {'secret': 'data'}"
+      }
+    },
+    "modernOrGood": {
+      "label": "FastAPI Security with SecurityScopes",
+      "snippet": "user = Security(get_current_user, scopes=['admin']) // ✅ NEW: Declarative RBAC + Swagger UI button",
+      "fullFile": {
+        "filename": "auth_modern.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, Depends, HTTPException, Security, status\nfrom fastapi.security import OAuth2PasswordBearer, SecurityScopes\nimport jwt\n\napp = FastAPI()\noauth2_scheme = OAuth2PasswordBearer(tokenUrl='token', scopes={'admin': 'Admin access'})\n\nasync def get_current_user(security_scopes: SecurityScopes, token: str = Depends(oauth2_scheme)):\n  try:\n    payload = jwt.decode(token, 'SECRET_KEY', algorithms=['HS256'])\n  except jwt.PyJWTError:\n    raise HTTPException(status_code=401, detail='Invalid token')\n  \n  token_scopes = payload.get('scopes', [])\n  for scope in security_scopes.scopes:\n    if scope not in token_scopes:\n      raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Not enough permissions')\n  return payload\n\n# ✅ NEW: Declarative permission check with automatic Swagger UI OAuth2 button\n@app.get('/admin/data')\nasync def get_admin_data(current_user = Security(get_current_user, scopes=['admin'])):\n  return {'secret': 'data', 'user': current_user['sub']}"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "What is the difference between `Depends(get_current_user)` and `Security(get_current_user, scopes=['read'])` in FastAPI?",
+      "contextIntro": "Interviewers test your knowledge of security dependency wrappers.",
+      "detailedAnswer": "`Depends()` executes the dependency function but does *not* pass security scopes. `Security()` behaves identically to `Depends()`, but **passes the declared `scopes` array into the `SecurityScopes` parameter** inside the dependency, and documents the required scopes for that specific endpoint in the generated OpenAPI `/docs` specification.",
+      "trapWarning": "Using `Depends()` when your dependency expects `security_scopes: SecurityScopes` will pass an empty scope list."
+    },
+    {
+      "question": "Why does `OAuth2PasswordBearer` require `tokenUrl` to be specified?",
+      "contextIntro": "Checks knowledge of OpenAPI specification contracts.",
+      "detailedAnswer": "`tokenUrl` is required by the **OpenAPI specification** for the OAuth2 Password Flow. Swagger UI (`/docs`) reads `tokenUrl` to determine which backend endpoint it should send user credentials to when developers click the green 'Authorize' button in the documentation.",
+      "trapWarning": "`tokenUrl` is a relative or absolute URL (e.g. `'token'` or `'/api/v1/auth/token'`); it does not generate the login route for you automatically."
+    }
+  ]
+}

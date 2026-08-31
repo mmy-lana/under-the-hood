@@ -1,0 +1,58 @@
+{
+  "id": "websockets-connection-manager",
+  "title": "WebSocket Endpoint Handling, Connection Managers, and Broadcast Loops",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (Starlette WebSockets)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "websockets", "connection-manager", "real-time", "broadcast", "chat"],
+  "prerequisites": ["WebSocket protocol lifecycle", "FastAPI dependency injection"],
+  "progressiveExplaining": {
+    "eli5": "An HTTP request is like sending a postcard (one message, one reply, connection closed). A WebSocket is like picking up a telephone and leaving the line open forever: both sides can talk and listen at any second. A Connection Manager is the telephone operator keeping track of everyone in the call room and broadcasting messages to all connected phones.",
+    "junior": "FastAPI provides native WebSocket support: `@app.websocket('/ws/{client_id}') async def ws_endpoint(websocket: WebSocket, client_id: str): await websocket.accept(); ...`. You read with `await websocket.receive_text()` and send with `await websocket.send_text()`. A `ConnectionManager` class tracks active `WebSocket` instances in a list/set and provides `broadcast(message)` to send data to all connected clients.",
+    "senior": "Architecturally, WebSocket endpoints operate outside the standard HTTP request/response lifecycle. When `websocket.accept()` executes, the ASGI connection upgrades from HTTP to WebSocket (`scope['type'] == 'websocket'`). Connection state is maintained in-process. For multi-server horizontal scaling, the in-memory Connection Manager must be paired with an external pub/sub message broker (e.g. Redis Pub/Sub, RabbitMQ) to broadcast messages across different server instances.",
+    "underTheHood": "Starlette's `WebSocket` class wraps the ASGI `receive` and `send` channels. `websocket.accept()` sends `{'type': 'websocket.accept'}` to complete the handshake. `receive_text()` awaits `receive()` matching `websocket.receive`. When the client closes the connection, `receive()` raises `WebSocketDisconnect(code)`. Handling `WebSocketDisconnect` inside a `try...finally` block ensures the disconnected socket is removed from the manager's active list."
+  },
+  "rosettaStone": {
+    "fastapi": "`@app.websocket('/ws')` with `await websocket.accept()`.",
+    "nestjs": "`@WebSocketGateway()` with `@SubscribeMessage()`.",
+    "spring": "Spring WebSocket `@MessageMapping` with STOMP broker.",
+    "node": "Node.js `ws` package (`wss.on('connection', ws => ...)`)."
+  },
+  "codeComparison": {
+    "title": "Unmanaged Single WebSocket vs Production ConnectionManager",
+    "summary": "Raw WebSockets without cleanup cause memory leaks on disconnect; a ConnectionManager handles lifecycle and broadcasts.",
+    "legacyOrBad": {
+      "label": "Unmanaged WebSocket (Memory Leak)",
+      "snippet": "while True: await ws.receive_text() // ❌ No disconnect handling, leaks on tab close",
+      "fullFile": {
+        "filename": "ws_bad.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, WebSocket\n\napp = FastAPI()\n\n# ❌ OLD: No disconnect handling, no broadcast mechanism, crashes on client close\n@app.websocket('/ws')\nasync def websocket_endpoint(websocket: WebSocket):\n  await websocket.accept()\n  while True:\n    data = await websocket.receive_text() # ❌ Throws unhandled WebSocketDisconnect on close!\n    await websocket.send_text(f'Echo: {data}')"
+      }
+    },
+    "modernOrGood": {
+      "label": "Production ConnectionManager Pattern",
+      "snippet": "class ConnectionManager: ... try: ... except WebSocketDisconnect: manager.disconnect(ws) // ✅ NEW",
+      "fullFile": {
+        "filename": "ws_good.py",
+        "language": "python",
+        "code": "from fastapi import FastAPI, WebSocket, WebSocketDisconnect\n\napp = FastAPI()\n\nclass ConnectionManager:\n  def __init__(self):\n    self.active_connections: list[WebSocket] = []\n\n  async def connect(self, websocket: WebSocket):\n    await websocket.accept()\n    self.active_connections.append(websocket)\n\n  def disconnect(self, websocket: WebSocket):\n    if websocket in self.active_connections:\n      self.active_connections.remove(websocket)\n\n  async def broadcast(self, message: str):\n    for connection in self.active_connections:\n      await connection.send_text(message)\n\nmanager = ConnectionManager()\n\n@app.websocket('/ws/{user_name}')\nasync def chat_endpoint(websocket: WebSocket, user_name: str):\n  await manager.connect(websocket)\n  try:\n    while True:\n      data = await websocket.receive_text()\n      await manager.broadcast(f'{user_name}: {data}')\n  except WebSocketDisconnect:\n    manager.disconnect(websocket)\n    await manager.broadcast(f'{user_name} left the chat.')"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Can you use FastAPI dependency injection (`Depends()`) inside a `@app.websocket()` endpoint?",
+      "contextIntro": "Interviewers test your knowledge of dependency injection across different ASGI protocol scopes.",
+      "detailedAnswer": "Yes. FastAPI's `Depends()` works seamlessly in WebSocket endpoints (e.g. for extracting query parameters, cookies, or validating JWT tokens from query strings: `async def ws(websocket: WebSocket, token: str = Depends(get_token))`). If a dependency raises an `HTTPException`, FastAPI automatically closes the WebSocket with an appropriate close code.",
+      "trapWarning": "HTTP Authorization headers cannot be passed in standard browser JavaScript `new WebSocket(url)` connections; pass auth tokens via cookies or URL query parameters instead."
+    },
+    {
+      "question": "What happens if you broadcast to a dead connection in `manager.broadcast()`?",
+      "contextIntro": "Checks robust error handling in real-time server loops.",
+      "detailedAnswer": "Attempting to `send_text()` to a client that disconnected without triggering a clean close will raise a `RuntimeError: Unexpected ASGI message 'websocket.send'`. Always wrap `connection.send_text()` in a `try...except` block or clean dead connections during broadcast passes.",
+      "trapWarning": "A single failed `send_text()` inside a naive `for connection in self.active_connections:` loop will crash the broadcast loop for all other connected users."
+    }
+  ]
+}

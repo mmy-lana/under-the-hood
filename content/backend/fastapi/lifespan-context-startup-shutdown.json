@@ -1,0 +1,58 @@
+{
+  "id": "lifespan-context-startup-shutdown",
+  "title": "Lifespan Context Manager (@asynccontextmanager) Startup and Shutdown Events",
+  "category": "backend",
+  "subcategory": "fastapi",
+  "versionContext": "FastAPI 0.100+ (Lifespan API)",
+  "lastUpdated": "2026-08-31",
+  "tags": ["fastapi", "lifespan", "startup", "shutdown", "asynccontextmanager", "starlette"],
+  "prerequisites": ["Python `@contextlib.asynccontextmanager`", "Database connection pool initialization"],
+  "progressiveExplaining": {
+    "eli5": "In older FastAPI, startup and shutdown were two separate disconnected functions. The modern `lifespan` manager is a single clean story: everything before `yield` is what happens when the store opens in the morning, and everything after `yield` is how the store locks up at night.",
+    "junior": "The `lifespan` context manager handles application startup and shutdown in FastAPI, replacing deprecated `@app.on_event('startup')` and `@app.on_event('shutdown')`. Define an async context manager: `@asynccontextmanager async def lifespan(app: FastAPI): # startup logic; yield; # shutdown logic`. Pass it to your app: `app = FastAPI(lifespan=lifespan)`.",
+    "senior": "Architecturally, Lifespan implements the ASGI 3.0 Lifespan protocol (`scope['type'] == 'lifespan'`). It unifies startup and shutdown state into a single lexical closure, allowing resources (like Machine Learning models, database pools, or Redis clients) to be initialized, stored in `app.state` or shared variables, and cleaned up in a guaranteed `finally` block upon server termination.",
+    "underTheHood": "When an ASGI server (Uvicorn) boots, it sends `lifespan.startup` to the ASGI application. Starlette enters the `lifespan` async context manager and advances the generator up to `yield`. Once `yield` is reached, Uvicorn begins accepting HTTP traffic. When Uvicorn receives `SIGTERM`, it sends `lifespan.shutdown`, resuming the generator after `yield` to execute cleanup code before process exit."
+  },
+  "rosettaStone": {
+    "fastapi": "`@asynccontextmanager async def lifespan(app: FastAPI): ... yield ...`.",
+    "nestjs": "`OnApplicationBootstrap` and `OnApplicationShutdown` lifecycle hooks.",
+    "spring": "Spring `@PostConstruct` and `@PreDestroy` / `Lifecycle` beans.",
+    "node": "Express server boot with `process.on('SIGTERM')` listeners."
+  },
+  "codeComparison": {
+    "title": "Deprecated @app.on_event vs Modern Lifespan Context Manager",
+    "summary": "Deprecated `on_event` split startup and shutdown across separate decorators; `lifespan` manages lifecycle in a single context manager.",
+    "legacyOrBad": {
+      "label": "Deprecated on_event Decorators",
+      "snippet": "@app.on_event('startup') ... @app.on_event('shutdown') ... // ❌ Deprecated in FastAPI",
+      "fullFile": {
+        "filename": "lifecycle_deprecated.py",
+        "language": "python",
+        "code": "# ❌ OLD: Deprecated @app.on_event syntax.\n# Shared variables must be defined as globals, leading to messy state sharing.\nfrom fastapi import FastAPI\n\napp = FastAPI()\ndb_connection = None\n\n@app.on_event('startup')\nasync def startup_event():\n  global db_connection\n  db_connection = await connect_to_db()\n\n@app.on_event('shutdown')\nasync def shutdown_event():\n  await db_connection.close()"
+      }
+    },
+    "modernOrGood": {
+      "label": "FastAPI Lifespan Context Manager",
+      "snippet": "@asynccontextmanager async def lifespan(app: FastAPI): yield // ✅ NEW: Unified state & teardown",
+      "fullFile": {
+        "filename": "lifecycle_modern.py",
+        "language": "python",
+        "code": "from contextlib import asynccontextmanager\nfrom fastapi import FastAPI\n\n# ✅ NEW: Single async context manager cleanly managing startup, state, and shutdown\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n  # --- STARTUP ---\n  print('Initializing ML models & DB pools...')\n  db_pool = await init_db_pool()\n  ml_model = load_ai_model()\n  \n  # Attach to app.state for access across all routes:\n  app.state.db_pool = db_pool\n  app.state.ml_model = ml_model\n  \n  yield # Application serves requests here\n  \n  # --- SHUTDOWN ---\n  print('Draining DB pool & releasing GPU memory...')\n  await db_pool.close()\n\napp = FastAPI(lifespan=lifespan)\n\n@app.get('/predict')\ndef predict(request: Request):\n  return request.app.state.ml_model.predict([1, 2, 3])"
+      }
+    }
+  },
+  "interviewGotchas": [
+    {
+      "question": "Why was `@app.on_event('startup')` deprecated in favor of `lifespan` in FastAPI / Starlette?",
+      "contextIntro": "Interviewers test your knowledge of ASGI protocol evolution and state management.",
+      "detailedAnswer": "`@app.on_event` split initialization and teardown into disconnected functions, forcing shared resources (like database pools or ML models) to be stored in error-prone global variables. `lifespan` uses a standard Python async context manager (`@asynccontextmanager`), keeping setup and teardown within the same lexical scope and guaranteeing that exceptions in startup cleanly trigger teardown logic in `finally` blocks.",
+      "trapWarning": "Using `@app.on_event` in modern FastAPI will emit deprecation warnings."
+    },
+    {
+      "question": "How do you share state initialized inside `lifespan` with route handlers?",
+      "contextIntro": "Checks knowledge of state attachment on `app.state`.",
+      "detailedAnswer": "Attach initialized resources to **`app.state`**: `app.state.redis = redis_client`. Inside any route handler, access it via the `Request` object: `request.app.state.redis`, or inject it using a dependency `def get_redis(request: Request): return request.app.state.redis`.",
+      "trapWarning": "Avoid using module-level global variables for state initialized in lifespan."
+    }
+  ]
+}
