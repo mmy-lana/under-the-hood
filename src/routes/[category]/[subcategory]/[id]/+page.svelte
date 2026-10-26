@@ -56,7 +56,8 @@
 
 <svelte:head>
   <title>{topic.title} — Under The Hood</title>
-  <meta name="description" content={topic.progressiveExplaining.senior} />
+  <!-- SEO-002: capped at 160 chars (server-derived first sentence). -->
+  <meta name="description" content={data.description} />
 </svelte:head>
 
 <article>

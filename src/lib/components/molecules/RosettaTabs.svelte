@@ -11,8 +11,14 @@
 
   const frameworks = $derived(Object.keys(rosetta));
 
-  let active = $state<string>('');
+  // PERF-002: start on the first framework so prerendered HTML already shows
+  // the active panel — the old empty-string start made every panel render
+  // hidden until an `$effect` flipped one visible after hydration (CLS).
+  // The initial-value capture below is intended (SSR-accurate starting state).
+  // svelte-ignore state_referenced_locally
+  let active = $state<string>(Object.keys(rosetta)[0] ?? '');
 
+  // Safety net for dynamically changing `rosetta` props; no-op in normal use.
   $effect(() => {
     if (!frameworks.includes(active)) {
       const first = frameworks[0];

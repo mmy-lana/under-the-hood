@@ -30,7 +30,10 @@
   --border: #dfd5c0;
   --text: #23201c;
   --text-muted: #6e675f;
-  --accent: #b45309;
+  /* A11Y-002: #b45309 measured 4.09:1 on --surface (AA needs 4.5:1 for the
+     11–14px accent text). #92400e keeps the warm-sienna hue and measures
+     5.77:1 on surface, 6.35:1 on canvas, 4.64:1 on accent/15 tints. */
+  --accent: #92400e;
   color-scheme: light;
 }
 :root[data-theme='obsidian'] {
@@ -52,6 +55,19 @@
   color-scheme: light;
 }
 
+/* Page canvas (UI-001): actually paint the themed canvas on the document so
+   the reading surface matches SPEC §2 in every theme (Warm Paper #F7F2E8,
+   Obsidian #0F172A, Studio #FAFAFA). Without this rule the page falls back to
+   the UA default canvas (white / #121212) and only cards carry theme colors.
+   Fallbacks cover a missing data-theme attribute before the boot script runs. */
+html {
+  background-color: var(--canvas, #f7f2e8);
+}
+body {
+  background-color: var(--canvas, #f7f2e8);
+  color: var(--text, #23201c);
+}
+
 /* Shiki output: force the constant dark canvas regardless of active theme.
    Width rules keep the dark bg + line-number gutter from clipping inside
    horizontally-scrolling .code-block viewports (SPEC §4). Scoped to Shiki
@@ -67,6 +83,13 @@
   width: fit-content;
   min-width: 100%;
   color: var(--code-text);
+}
+/* A11Y-002: dark-plus colors punctuation tokens #808080 — 4.22:1 on the
+   mandated #1e1e1e code canvas (AA needs 4.5:1 for 14px text). Lift that one
+   dim token color to #909090 (5.22:1); every other dark-plus token already
+   measures >= 5:1. */
+.shiki span[style*='#808080' i] {
+  color: #909090 !important;
 }
 .shiki .line {
   display: block;
@@ -94,10 +117,36 @@
   margin-right: 1rem;
   padding-right: 0.75rem;
   text-align: right;
-  color: rgba(148, 163, 184, 0.45);
+  /* A11Y-004: 0.45 alpha measured 2.39:1 on #1e1e1e (AA needs 4.5:1);
+     0.8 composited = rgb(124,136,153) => 4.64:1. */
+  color: rgba(148, 163, 184, 0.8);
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   user-select: none;
   font-variant-numeric: tabular-nums;
+}
+
+/* Theme-aware semantic text colors (A11Y-002). Tailwind's `dark:` variants key
+   off the OS color-scheme, but this app themes via `data-theme`, so those
+   variants left red/green text at ~2.9:1 whenever Obsidian met a light OS.
+   These classes are driven by the same data-theme selectors as every other
+   token and are verified >= 4.5:1 against their rendered backgrounds. */
+.text-danger {
+  color: #b91c1c;
+}
+.text-diff-legacy {
+  color: #b91c1c;
+}
+.text-diff-modern {
+  color: #146c3b;
+}
+:root[data-theme='obsidian'] .text-danger {
+  color: #f87171;
+}
+:root[data-theme='obsidian'] .text-diff-legacy {
+  color: #f87171;
+}
+:root[data-theme='obsidian'] .text-diff-modern {
+  color: #4ade80;
 }
 
 /* Native form controls need explicit colors in dark mode. */
@@ -130,6 +179,14 @@ h4 {
 }
 .reading-prose {
   text-wrap: pretty;
+  overflow-wrap: break-word;
+}
+
+/* Long unbreakable tokens in authored titles (e.g. `response_model_exclude_unset`,
+   `provideExperimentalZonelessChangeDetection()`) must wrap instead of forcing
+   document-level horizontal overflow at narrow viewports (UI-002). Inherited by
+   all descendants; `white-space: pre` code blocks are unaffected (they scroll). */
+body {
   overflow-wrap: break-word;
 }
 

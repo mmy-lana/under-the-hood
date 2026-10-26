@@ -99,11 +99,13 @@
 {#snippet Tree()}
   {#each groups as group (group.category)}
     <div class="mb-4">
-      <h3 class="px-3 pb-1 text-xs font-bold uppercase tracking-wider text-text-muted">
+      <!-- A11Y-003: nav chrome, not document structure — a heading here put
+           h3 before the page h1 and broke the heading outline on every route. -->
+      <p class="px-3 pb-1 text-xs font-bold uppercase tracking-wider text-text-muted">
         <a href={`/#${group.category}`} class="transition-colors hover:text-accent" data-sveltekit-preload-data="hover">
           {group.category}
         </a>
-      </h3>
+      </p>
       {#each group.subcategories as [name, items] (name)}
         {@const isOpen = openSubcats[name] ?? false}
         <div class="mb-2">
@@ -156,6 +158,9 @@
 {#if open}
   <div class="fixed inset-0 z-40 bg-black/50 xl:hidden" role="presentation" onclick={onclose}></div>
 {/if}
+<!-- A11Y-001: `inert` (below) keeps the closed drawer's links/buttons out of the
+     tab order — aria-hidden alone cannot: focusable descendants of an
+     aria-hidden subtree are still reachable and were visited while hidden. -->
 <aside
   bind:this={drawerEl}
   class={cn(
@@ -165,6 +170,7 @@
   style="padding-bottom: env(safe-area-inset-bottom); padding-top: env(safe-area-inset-top)"
   aria-label="Table of contents"
   aria-hidden={!open}
+  inert={!open}
   onkeydown={onDrawerKeydown}
 >
   <div class="sticky top-0 flex items-center justify-between border-b border-border bg-surface px-3 py-2">

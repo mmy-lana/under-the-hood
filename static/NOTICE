@@ -1,0 +1,36 @@
+Under The Hood — Third-Party Notices
+====================================
+
+This site's built output bundles portions of the following open-source
+software. These notices are provided to satisfy the attribution and
+notice-retention obligations of their licenses (LIC-001).
+
+1. fuse.js
+   Version:     7.5.0
+   License:     Apache License 2.0
+   Copyright:   Copyright 2017 Kirollos Risk
+   Homepage:    https://github.com/krisk/Fuse
+   Usage:       Client-side fuzzy search palette (bundled into site JS).
+   Notes:       Unmodified (as consumed from npm). The Apache-2.0 license text
+                is available at https://www.apache.org/licenses/LICENSE-2.0
+
+2. @lucide/svelte (Lucide icons)
+   Version:     1.37.0
+   License:     ISC
+   Copyright:   Copyright (c) for portions of Lucide are held by Cole Bemis
+                2013-2022 as part of Feather (MIT). All other copyright (c)
+                for Lucide are held by Lucide Contributors 2022.
+   Homepage:    https://lucide.dev
+   Usage:       UI icon components (bundled into site JS).
+
+3. shiki
+   Version:     4.4.3
+   License:     MIT
+   Copyright:   Copyright (c) 2021 Pine Wu (and contributors)
+   Homepage:    https://github.com/shikijs/shiki
+   Usage:       Build-time syntax highlighting only — NOT bundled into the
+                shipped site JavaScript.
+
+The site's own source code is licensed under the MIT License (see LICENSE).
+Full license texts for the packages above are distributed with each package
+on npm and linked from their homepages.

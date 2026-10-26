@@ -13,10 +13,6 @@ export function isCmdK(event: KeyboardEventLike): boolean {
   return (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k';
 }
 
-export function isEscape(event: KeyboardEventLike): boolean {
-  return event.key === 'Escape';
-}
-
 /**
  * Move focus to the first focusable element inside a container. Returns false
  * if nothing focusable was found.

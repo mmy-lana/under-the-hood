@@ -1,2 +1,6 @@
+# Release-age gate (SUP-001): refuse to resolve packages published within the
+# last 24 hours unless explicitly excluded below — shrinks the typosquat /
+# protestware exposure window for new installs.
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@lucide/svelte@1.37.0'

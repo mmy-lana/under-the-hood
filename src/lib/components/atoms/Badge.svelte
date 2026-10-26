@@ -19,13 +19,13 @@
 
 <span
   class={cn(
-    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap',
+    'inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-normal',
     tones[tone]
   )}
 >
   {#if Icon}
     <Icon class="h-3 w-3" aria-hidden="true" />
   {/if}
-  <span class="translate-none">{label}</span>
+  <span class="min-w-0 break-words translate-none">{label}</span>
   {@render children?.()}
 </span>

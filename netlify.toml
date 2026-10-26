@@ -4,3 +4,33 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+# ---------------------------------------------------------------------------
+# Security headers (SEC-001).
+#
+# Cache-control note: Netlify concatenates same-named headers from multiple
+# matching rules into one multi-value header, so `Cache-Control` is declared
+# ONLY in the `/_app/immutable/*` rule below. HTML and `__data.json` responses
+# intentionally rely on Netlify's default `public, max-age=0, must-revalidate`,
+# which is the "no-cache HTML" policy this site needs (always revalidate).
+#
+# CSP note: `script-src` needs `'unsafe-inline'` because @sveltejs/adapter-static
+# embeds dynamic, per-page hydration/bootstrap <script> blocks in every
+# prerendered page — their contents differ per page and cannot be hash-pinned.
+# Per CSP3, adding hashes would disable 'unsafe-inline' and break hydration.
+# If a third-party analytics script is ever enabled on the hosting project,
+# its origin must be added to `script-src`/`connect-src` explicitly.
+# ---------------------------------------------------------------------------
+[[headers]]
+  for = "/_app/immutable/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

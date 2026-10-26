@@ -21,3 +21,5 @@ AUDIT.md
 *.log
 SPEC.md
 CURATED.md
+repomix-output.xml
+.full-review.md

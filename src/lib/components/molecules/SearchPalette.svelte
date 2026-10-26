@@ -114,22 +114,38 @@
     }
   }
 
-  /** Wrap Fuse match ranges (inclusive end) in <mark>. Trusted build-time text. */
+  /**
+   * Escape HTML metacharacters in build-time content before it is embedded in
+   * the `<mark>`-annotated string consumed by `{@html}` (BUG-001). Content is
+   * repo-authored, but titles legitimately contain `<…>` tokens (e.g.
+   * `ManuallyDrop<T>`); without escaping, `{@html}` would parse them as real
+   * elements (corrupting the rendered title) and would also be an HTML
+   * injection sink if content ever comes from an untrusted contributor.
+   */
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** Wrap Fuse match ranges (inclusive end) in <mark>. Escaped build-time text. */
   function markedTitle(hit: SearchHit): string {
     const text = hit.item.title;
     const ranges = hit.matches
       .filter((m) => m.key === 'title')
       .flatMap((m) => m.indices);
-    if (ranges.length === 0) return text;
+    if (ranges.length === 0) return escapeHtml(text);
     let out = '';
     let cursor = 0;
     for (const [start, end] of ranges as RangeTuple[]) {
       const safeStart = Math.max(cursor, start);
-      if (safeStart > cursor) out += text.slice(cursor, safeStart);
-      out += `<mark>${text.slice(safeStart, end + 1)}</mark>`;
+      if (safeStart > cursor) out += escapeHtml(text.slice(cursor, safeStart));
+      out += `<mark>${escapeHtml(text.slice(safeStart, end + 1))}</mark>`;
       cursor = end + 1;
     }
-    out += text.slice(cursor);
+    out += escapeHtml(text.slice(cursor));
     return out;
   }
 
@@ -138,16 +154,16 @@
     const ranges = hit.matches
       .filter((m) => m.key === 'subcategory' || m.key === 'category')
       .flatMap((m) => m.indices);
-    if (ranges.length === 0) return path;
+    if (ranges.length === 0) return escapeHtml(path);
     let out = '';
     let cursor = 0;
     for (const [start, end] of ranges as RangeTuple[]) {
       const safeStart = Math.max(cursor, start);
-      if (safeStart > cursor) out += path.slice(cursor, safeStart);
-      out += `<mark>${path.slice(safeStart, end + 1)}</mark>`;
+      if (safeStart > cursor) out += escapeHtml(path.slice(cursor, safeStart));
+      out += `<mark>${escapeHtml(path.slice(safeStart, end + 1))}</mark>`;
       cursor = end + 1;
     }
-    out += path.slice(cursor);
+    out += escapeHtml(path.slice(cursor));
     return out;
   }
 

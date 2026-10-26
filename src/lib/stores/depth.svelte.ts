@@ -58,8 +58,4 @@ export function initDepthFromUrl(): void {
   }
 }
 
-export function isDepthTierValue(value: string | null | undefined): value is DepthTier {
-  return isDepthTier(value);
-}
-
 export { DEPTH_TIERS };

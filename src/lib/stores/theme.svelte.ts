@@ -51,7 +51,3 @@ export function setTheme(next: ThemeName): void {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', THEME_COLORS[next]);
 }
-
-export function isThemeName(value: string | null | undefined): value is ThemeName {
-  return value === 'paper' || value === 'obsidian' || value === 'studio';
-}

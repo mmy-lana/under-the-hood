@@ -2,7 +2,13 @@
   "name": "under-the-hood",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -31,7 +37,7 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.0.0",
-    "vite": "^8.0.0"
+    "vite": "^8.3.5"
   },
   "dependencies": {
     "@lucide/svelte": "^1.37.0",

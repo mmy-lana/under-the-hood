@@ -108,6 +108,3 @@ export async function highlight(code: string, lang: string): Promise<string> {
     throw error;
   }
 }
-
-/** Highlight a code snippet without loading any extra machinery (same pipeline). */
-export { highlight as highlightSnippet };

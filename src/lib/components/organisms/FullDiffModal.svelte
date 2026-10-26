@@ -145,9 +145,11 @@
       <span
         class={cn(
           'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap',
+          // text-diff-* are data-theme-driven (A11Y-002) — `dark:` variants key
+          // off the OS scheme and dropped these labels to ~3:1 in Obsidian.
           tint === 'legacy'
-            ? 'bg-[rgba(248,81,73,0.15)] text-red-600 dark:text-red-400'
-            : 'bg-[rgba(63,185,80,0.15)] text-green-600 dark:text-green-400'
+            ? 'bg-[rgba(248,81,73,0.15)] text-diff-legacy'
+            : 'bg-[rgba(63,185,80,0.15)] text-diff-modern'
         )}
         translate="no"
       >

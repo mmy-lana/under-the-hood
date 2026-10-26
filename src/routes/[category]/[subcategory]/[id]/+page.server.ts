@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { allTopics, findTopic } from '$lib/content';
+import { allTopics, findTopic, topicSummaries } from '$lib/content';
 import type { TopicSchema } from '$lib/content/schema';
 import { highlight } from '$lib/shiki/highlight';
 import type { DiffPaneData } from '$lib/types';
@@ -12,7 +12,7 @@ interface TopicRouteParams {
   id: string;
 }
 
-/** Enumerate every topic so adapter-static (strict mode) can prerender all 30. */
+/** Enumerate every topic so adapter-static (strict mode) can prerender all of them. */
 export function entries(): Array<TopicRouteParams> {
   return allTopics.map((t) => ({
     category: t.category,
@@ -44,11 +44,23 @@ const ROSETTA_LANG: Record<string, string> = {
   ruby: 'ruby',
   html: 'html',
   htmx: 'html',
-  css: 'css'
+  css: 'css',
+  // Additional keys observed in content JSONs (UI-004).
+  browser: 'javascript',
+  typescript: 'typescript',
+  vite: 'typescript',
+  npm: 'bash',
+  pnpm: 'bash',
+  yarn: 'bash',
+  c: 'cpp'
 };
 
 export interface TopicPageData {
   topic: TopicSchema;
+  /** SEO-002: meta description derived from the senior depth, capped at 160 chars. */
+  description: string;
+  /** PERF-001: list-view summaries for the root layout sidebar + search index. */
+  summaries: TopicSchema[];
   html: {
     legacySnippet: string;
     modernSnippet: string;
@@ -60,6 +72,17 @@ export interface TopicPageData {
   modernPane: DiffPaneData;
   prev?: TopicSchema;
   next?: TopicSchema;
+}
+
+/**
+ * SEO-002: search engines truncate descriptions around 150–160 characters, so
+ * derive one from the senior depth's first sentence and hard-cap it at 160.
+ */
+function metaDescription(text: string): string {
+  const sentence = (text.split(/(?<=\.)\s/)[0] ?? text).trim();
+  if (sentence.length <= 160) return sentence;
+  const cut = sentence.slice(0, 157);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), 0) || 157)}…`;
 }
 
 export async function load({
@@ -85,7 +108,7 @@ export async function load({
 
   const rosettaEntries = await Promise.all(
     Object.entries(topic.rosettaStone ?? {}).map(async ([framework, code]) => {
-      const lang = ROSETTA_LANG[framework.toLowerCase()] ?? 'typescript';
+      const lang = ROSETTA_LANG[framework.toLowerCase()] ?? 'text';
       return [framework, await highlight(code, lang)] as const;
     })
   );
@@ -94,11 +117,16 @@ export async function load({
   );
 
   const index = allTopics.findIndex((t) => t.id === topic.id);
-  const prev = index > 0 ? allTopics[index - 1] : undefined;
-  const next = index < allTopics.length - 1 ? allTopics[index + 1] : undefined;
+  // PERF-001: prev/next links only render id/title/category/subcategory, so
+  // ship summaries instead of full topic bodies.
+  const summaries = topicSummaries(allTopics);
+  const prev = index > 0 ? summaries[index - 1] : undefined;
+  const next = index < summaries.length - 1 ? summaries[index + 1] : undefined;
 
   return {
     topic,
+    description: metaDescription(topic.progressiveExplaining.senior),
+    summaries,
     html: {
       legacySnippet: legacySnippetHtml,
       modernSnippet: modernSnippetHtml,

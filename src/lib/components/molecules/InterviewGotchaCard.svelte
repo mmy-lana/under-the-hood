@@ -11,13 +11,14 @@
 
   let { gotcha, index, defaultOpen = false }: InterviewGotchaCardProps = $props();
 
-  let open = $state(false);
+  // PERF-002: initialise from the prop so the prerendered HTML already shows
+  // the default-open card — the old `$effect` flip happened post-hydration and
+  // pushed everything below it down (CLS 0.34 on restored-scroll loads).
+  // The initial-value capture below is intended (SSR-accurate starting state).
+  // svelte-ignore state_referenced_locally
+  let open = $state(defaultOpen);
   const regionId = $derived(`gotcha-${index}`);
   const buttonId = $derived(`gotcha-button-${index}`);
-
-  $effect(() => {
-    if (defaultOpen) open = true;
-  });
 </script>
 
 <article class="overflow-hidden rounded-xl border border-border bg-surface">
@@ -66,7 +67,10 @@
       </section>
 
       <section class="rounded-md border border-red-500/30 bg-red-500/5 p-3">
-        <h4 class="mb-1 flex items-center gap-2 text-sm font-semibold text-red-600 dark:text-red-400">
+        <!-- text-danger: data-theme-driven color (A11Y-002); the old
+             `text-red-600 dark:text-red-400` keyed off the OS scheme and fell
+             to 2.9:1 when Obsidian met a light OS. -->
+        <h4 class="mb-1 flex items-center gap-2 text-sm font-semibold text-danger">
           <AlertTriangle class="h-4 w-4" aria-hidden="true" />
           Trap
         </h4>

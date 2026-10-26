@@ -11,8 +11,8 @@
 ---
 
 ## Live Demo
-* **Main Domain**: [mmylana.my.id](https://mmylana.my.id)
-* **Dedicated Subdomain**: `underthehood.mmylana.my.id` *(Deployment configuration in progress)*
+* **Production deployment**: [underthehood.mmylana.my.id](https://underthehood.mmylana.my.id)
+* **Author's portfolio**: [mmylana.my.id](https://mmylana.my.id) — a separate personal site, not this project.
 
 ---
 
@@ -46,9 +46,10 @@ Most framework documentations suffer from two extremes:
   *  `Context`: The real-world scenario and why interviewers test this.
   *  `The Mechanical Answer`: Concrete technical breakdown.
   *  `Trap Warning`: The common naive assumption candidates make.
-* **0ms Static Performance (Zero Client-Side JS Overhead)**:
-  * Pre-rendered using SvelteKit SSG (`@sveltejs/adapter-static`).
-  * Shiki syntax highlighting runs **strictly at build time** — older mobile devices and laptops parse zero runtime highlighter bundles.
+* **Static Performance (heavy lifting at build time)**:
+  * Pre-rendered using SvelteKit SSG (`@sveltejs/adapter-static`) — every page is fully readable HTML before any JavaScript runs.
+  * Shiki syntax highlighting runs **strictly at build time** — no runtime highlighter bundle ships to the browser.
+  * Client-side JS is limited to SvelteKit hydration plus the search palette (~200 KB of JS in total; the main layout chunk is ~65 KB).
 * **Instant Fuzzy Search (`⌘K` / `Ctrl+K`)**: Fast client-side search powered by Fuse.js with highlighted matches (`<mark>`).
 * **Scalable Accordion Sidebar**: Subcategories auto-collapse and expand only the active topic's framework to effortlessly support 50+ topics per stack.
 
@@ -61,20 +62,23 @@ Most framework documentations suffer from two extremes:
 * **Styling**: Tailwind CSS v4 (CSS theme variables and responsive container queries)
 * **Syntax Highlighting**: Shiki (build-time static HTML tokenization)
 * **Search**: `fuse.js`
-* **Icons**: `lucide-svelte`
+* **Icons**: `@lucide/svelte`
 
 ---
 
-##  Seed Content Library (30 Included Topics)
+##  Seed Content Library (285 Topics)
 
-### Frontend (15 Topics)
+15 topics per subcategory across 19 stacks — 165 frontend and 120 backend. Highlights:
+
+### Frontend (165 topics · 11 stacks)
 * **Angular**: `@for` vs `*ngFor`, `@defer` Deferrable Views, Signals vs RxJS Observables
-* **React**: React 19 Compiler Auto-Memoization, Server Components Boundary (RSC), `useEffect` vs DOM Paint Cycle
-* **Vue**: Vue 3 Proxy vs Vue 2 `defineProperty`, `<script setup>` Compiler Mechanics, `v-memo` DOM Patch Bailout
+* **React**: React Compiler Auto-Memoization, Server Components Boundary (RSC), `useEffect` vs DOM Paint Cycle
+* **Vue**: Proxy & Reflect Reactivity Trapping, `<script setup>` Compiler Mechanics, `v-memo` DOM Patch Bailout
 * **Svelte**: Svelte 5 Runes vs Svelte 4 `let`, Svelte 5 `{#snippet}` vs Slots, No Virtual DOM Architecture
 * **Next.js**: App Router Caching Layers, Server Actions RPC Protocol, Streaming SSR with Suspense
+* **Also covered**: CSS engine mechanics, JavaScript semantics, browser internals, SolidJS, HTMX, Bun
 
-### Backend (15 Topics)
+### Backend (120 topics · 8 stacks)
 * **Java & Spring Boot**: JVM Stack vs Heap & Escape Analysis, Virtual Threads (Project Loom), Spring Bean Lifecycle & CGLIB Proxies
 * **Go (Golang)**: `hchan` Ring Buffer & Mutex Locking, GMP Scheduler & Work Stealing, Slices 3-Word Header & Aliasing
 * **Node.js & NestJS**: Event Loop Phases & Microtask Drain, Buffer Memory vs Streams Backpressure, NestJS Dependency Injection Container
@@ -210,6 +214,10 @@ Ideas and features planned for future releases:
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
+
+Third-party software bundled into the built site is listed in [`NOTICE`](static/NOTICE) (also served at `/NOTICE` and linked from the site footer).
+
+See [`SECURITY.md`](SECURITY.md) for private vulnerability reporting and [`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup and the content schema.
 
 ---
 
